@@ -82,11 +82,14 @@ let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
 let projectMinimumCheckoutDistanceRows = [];
 let locationAccuracyThresholdMeters = 30;
+let mixedZoneIntervalMinutes = 20;
 let locationSettingsDirty = false;
 let pendingUsersTotal = 0;
 let administratorsTotal = 0;
 let eventsTotal = 0;
+let eventsRows = null;
 let formsTotal = 0;
+let formsRows = null;
 let lastDashboardRefreshAt = null;
 let userTextareaRefreshFrame = null;
 let databaseEventsLoaded = false;
@@ -106,6 +109,7 @@ let reportsSearchInProgress = false;
 let reportsExportInProgress = false;
 let reportsHasLoadedResult = false;
 let reportsExportQueryString = "";
+let reportsResultsPayload = null;
 let reportsSearchUsersByChave = new Map();
 const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
 const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
@@ -525,8 +529,14 @@ const TAB_LABELS = {
   eventos: "Eventos",
   "banco-dados": "Banco de Dados",
 };
+const ADMIN_MOBILE_VIEWPORT_QUERY = "(max-width: 800px)";
 const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"]);
 const LIMITED_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout"]);
+const MOBILE_FILTER_PANEL_KEYS = Object.freeze(["checkin", "checkout", "inactive", "relatorios"]);
+let adminViewportMediaQueryList = null;
+let adminResponsiveSyncFrame = null;
+let adminResponsiveStateKey = "";
+const adminMobileFilterPanelState = Object.create(null);
 
 function getDefaultAllowedTabsForScope(scope) {
   return [...(scope === "limited" ? LIMITED_ADMIN_ALLOWED_TABS : DEFAULT_ADMIN_ALLOWED_TABS)];
@@ -560,6 +570,230 @@ function isAdminTabAllowed(tab) {
 
 function getFirstAllowedAdminTab() {
   return allowedAdminTabs[0] || "checkin";
+}
+
+function getAdminViewportMediaQueryList() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return null;
+  }
+
+  if (!adminViewportMediaQueryList) {
+    adminViewportMediaQueryList = window.matchMedia(ADMIN_MOBILE_VIEWPORT_QUERY);
+  }
+
+  return adminViewportMediaQueryList;
+}
+
+function isMobileAdminViewport() {
+  const mediaQueryList = getAdminViewportMediaQueryList();
+  if (mediaQueryList) {
+    return mediaQueryList.matches;
+  }
+
+  if (typeof window !== "undefined" && typeof window.innerWidth === "number") {
+    return window.innerWidth <= 800;
+  }
+
+  return false;
+}
+
+function isLimitedMobileAdminView() {
+  return isMobileAdminViewport() && adminAccessScope === "limited";
+}
+
+function getPresenceResponsiveVariant(tableKey) {
+  const normalizedTableKey = String(tableKey || "").trim();
+  if (!["checkin", "checkout"].includes(normalizedTableKey)) {
+    return "desktop";
+  }
+
+  if (isLimitedMobileAdminView()) {
+    return "mobile-limited";
+  }
+
+  return isMobileAdminViewport() ? "mobile" : "desktop";
+}
+
+function buildAdminResponsiveStateSnapshot() {
+  const mobileViewport = isMobileAdminViewport();
+  const limitedMobileView = mobileViewport && adminAccessScope === "limited";
+
+  return {
+    viewport: mobileViewport ? "mobile" : "desktop",
+    accessScope: adminAccessScope,
+    mobileMode: limitedMobileView ? "limited" : mobileViewport ? "mobile" : "desktop",
+    isMobileViewport: mobileViewport,
+    isLimitedMobileView: limitedMobileView,
+  };
+}
+
+function buildAdminResponsiveStateKey(snapshot) {
+  return `${snapshot.viewport}:${snapshot.accessScope}:${snapshot.mobileMode}`;
+}
+
+function getAdminMobileFilterPanelExpanded(panelKey) {
+  const normalizedPanelKey = String(panelKey || "").trim();
+  if (!MOBILE_FILTER_PANEL_KEYS.includes(normalizedPanelKey)) {
+    return true;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(adminMobileFilterPanelState, normalizedPanelKey)) {
+    adminMobileFilterPanelState[normalizedPanelKey] = false;
+  }
+
+  return adminMobileFilterPanelState[normalizedPanelKey];
+}
+
+function setAdminMobileFilterPanelExpanded(panelKey, expanded) {
+  const normalizedPanelKey = String(panelKey || "").trim();
+  if (!MOBILE_FILTER_PANEL_KEYS.includes(normalizedPanelKey)) {
+    return;
+  }
+
+  adminMobileFilterPanelState[normalizedPanelKey] = Boolean(expanded);
+}
+
+function syncAdminTabStrip(snapshot = buildAdminResponsiveStateSnapshot()) {
+  const tabs = document.querySelector(".tabs");
+  if (!tabs) {
+    return;
+  }
+
+  tabs.dataset.adminViewport = snapshot.viewport;
+  tabs.dataset.adminActiveTab = activeTab;
+  const activeButton = tabs.querySelector(`button[data-tab="${activeTab}"]`);
+  if (snapshot.isMobileViewport && activeButton && typeof activeButton.scrollIntoView === "function") {
+    activeButton.scrollIntoView({ block: "nearest", inline: "center" });
+  }
+}
+
+function syncAdminMobileFilterPanel(panelKey) {
+  const normalizedPanelKey = String(panelKey || "").trim();
+  if (!MOBILE_FILTER_PANEL_KEYS.includes(normalizedPanelKey)) {
+    return;
+  }
+
+  const panel = document.querySelector(`[data-filter-panel="${normalizedPanelKey}"]`);
+  const toggleButtons = document.querySelectorAll(`[data-filter-toggle="${normalizedPanelKey}"]`);
+  const mobileViewport = isMobileAdminViewport();
+  const expanded = mobileViewport ? getAdminMobileFilterPanelExpanded(normalizedPanelKey) : true;
+
+  if (panel) {
+    panel.hidden = !expanded;
+  }
+
+  toggleButtons.forEach((button) => {
+    const openLabel = String(button.dataset.filterOpenLabel || "Mostrar filtros");
+    const closeLabel = String(button.dataset.filterCloseLabel || "Ocultar filtros");
+    button.hidden = !mobileViewport;
+    button.classList.toggle("hidden", !mobileViewport);
+    button.textContent = expanded ? closeLabel : openLabel;
+    button.setAttribute("aria-expanded", String(expanded));
+  });
+}
+
+function syncAdminMobileFilterPanels() {
+  MOBILE_FILTER_PANEL_KEYS.forEach((panelKey) => {
+    syncAdminMobileFilterPanel(panelKey);
+  });
+}
+
+function toggleAdminMobileFilterPanel(panelKey) {
+  const normalizedPanelKey = String(panelKey || "").trim();
+  if (!MOBILE_FILTER_PANEL_KEYS.includes(normalizedPanelKey)) {
+    return;
+  }
+
+  setAdminMobileFilterPanelExpanded(normalizedPanelKey, !getAdminMobileFilterPanelExpanded(normalizedPanelKey));
+  syncAdminMobileFilterPanels();
+}
+
+function syncAdminShellResponsiveState(snapshot = buildAdminResponsiveStateSnapshot()) {
+  syncAdminTabStrip(snapshot);
+  syncAdminMobileFilterPanels();
+}
+
+function syncAdminResponsiveDatasets(snapshot = buildAdminResponsiveStateSnapshot()) {
+  [document.body, authShell, adminShell, sessionBar].filter(Boolean).forEach((element) => {
+    element.dataset.adminViewport = snapshot.viewport;
+    element.dataset.adminAccessScope = snapshot.accessScope;
+    element.dataset.adminMobileMode = snapshot.mobileMode;
+  });
+
+  ["checkin", "checkout"].forEach((tableKey) => {
+    const variant = getPresenceResponsiveVariant(tableKey);
+    const controls = document.querySelector(`.presence-controls[data-presence-table="${tableKey}"]`);
+    if (controls) {
+      controls.dataset.presenceRenderVariant = variant;
+    }
+
+    const section = document.getElementById(`tab-${tableKey}`);
+    if (section) {
+      section.dataset.presenceRenderVariant = variant;
+    }
+
+    const body = document.getElementById(presenceTableStates[tableKey]?.bodyId || "");
+    const table = body?.closest("table");
+    if (table) {
+      table.dataset.presenceRenderVariant = variant;
+    }
+  });
+
+  const eventsTable = document.querySelector(".events-table");
+  if (eventsTable) {
+    eventsTable.dataset.eventsRenderVariant = snapshot.viewport === "mobile" ? "mobile" : "desktop";
+  }
+}
+
+function syncAdminResponsiveState(options = {}) {
+  const { force = false } = options;
+  const snapshot = buildAdminResponsiveStateSnapshot();
+  const nextStateKey = buildAdminResponsiveStateKey(snapshot);
+
+  syncAdminResponsiveDatasets(snapshot);
+  syncAdminShellResponsiveState(snapshot);
+  if (!force && nextStateKey === adminResponsiveStateKey) {
+    return false;
+  }
+
+  adminResponsiveStateKey = nextStateKey;
+  syncPresenceTimeLabels();
+  const canViewFormsTime = syncFormsTimeColumnVisibility();
+  const canViewEventsTime = syncEventsPrimaryColumnLabel();
+
+  Object.entries(presenceTableStates).forEach(([tableKey, state]) => {
+    const body = document.getElementById(state.bodyId);
+    if (!body || (!state.rawRows.length && !body.children.length)) {
+      return;
+    }
+
+    applyPresenceTableState(tableKey);
+  });
+
+  if (formsRows !== null) {
+    renderFormsTable(formsRows, { canViewTime: canViewFormsTime });
+  }
+  if (eventsRows !== null) {
+    renderEventsTable(eventsRows, { canViewTime: canViewEventsTime });
+  }
+  if (reportsResultsPayload !== null) {
+    renderReportsResults(reportsResultsPayload);
+  }
+
+  updateOperationalChrome();
+  return true;
+}
+
+function scheduleAdminResponsiveSync(options = {}) {
+  const { force = false } = options;
+  if (adminResponsiveSyncFrame !== null) {
+    window.cancelAnimationFrame(adminResponsiveSyncFrame);
+  }
+
+  adminResponsiveSyncFrame = window.requestAnimationFrame(() => {
+    adminResponsiveSyncFrame = null;
+    syncAdminResponsiveState({ force });
+  });
 }
 
 function applyAdminTabVisibility() {
@@ -599,6 +833,8 @@ function applyAdminTabVisibility() {
     activeSection.hidden = false;
     activeSection.classList.add("active");
   }
+
+  syncAdminTabStrip();
 }
 
 function setAdminAccessState(admin) {
@@ -609,9 +845,7 @@ function setAdminAccessState(admin) {
     allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
   }
   applyAdminTabVisibility();
-  syncPresenceTimeLabels();
-  syncFormsTimeColumnVisibility();
-  syncEventsPrimaryColumnLabel();
+  syncAdminResponsiveState({ force: true });
 }
 
 function resetAdminAccessState() {
@@ -619,13 +853,15 @@ function resetAdminAccessState() {
   allowedAdminTabs = getDefaultAllowedTabsForScope(adminAccessScope);
   adminCanViewActivityTime = true;
   applyAdminTabVisibility();
-  syncPresenceTimeLabels();
-  syncFormsTimeColumnVisibility();
-  syncEventsPrimaryColumnLabel();
+  syncAdminResponsiveState({ force: true });
 }
 
 function canCurrentAdminViewActivityTime() {
   return adminCanViewActivityTime;
+}
+
+function isLimitedMobilePresenceVariant(tableKey, responsiveVariant = getPresenceResponsiveVariant(tableKey)) {
+  return ["checkin", "checkout"].includes(String(tableKey || "").trim()) && responsiveVariant === "mobile-limited";
 }
 
 function getFormsColumnCount(includeTime = canCurrentAdminViewActivityTime()) {
@@ -662,25 +898,133 @@ function syncEventsPrimaryColumnLabel() {
   return canViewTime;
 }
 
-function getPresencePrimaryColumnLabel() {
+function getPresencePrimaryColumnLabel(tableKey) {
+  if (getPresenceResponsiveVariant(tableKey) !== "desktop") {
+    return "Data";
+  }
+
   return canCurrentAdminViewActivityTime() ? "Horário" : "Data";
 }
 
-function getPresencePrimaryFilterLabel() {
+function getPresencePrimaryFilterLabel(tableKey) {
+  if (getPresenceResponsiveVariant(tableKey) !== "desktop") {
+    return "Filtrar Data";
+  }
+
   return canCurrentAdminViewActivityTime() ? "Filtrar Horário" : "Filtrar Data";
+}
+
+function getPresenceNameColumnLabel(tableKey) {
+  return isLimitedMobilePresenceVariant(tableKey) ? "Nome do Usuário" : "Nome";
+}
+
+function getPresenceNameFilterLabel(tableKey) {
+  return isLimitedMobilePresenceVariant(tableKey) ? "Filtrar Nome do Usuário" : "Filtrar Nome";
+}
+
+function getVisiblePresenceFilterKeys(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return [];
+  }
+
+  if (isLimitedMobilePresenceVariant(tableKey)) {
+    return ["time", "nome", "local"];
+  }
+
+  return state.filterColumns;
+}
+
+function getVisiblePresenceSortKeys(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return [];
+  }
+
+  if (isLimitedMobilePresenceVariant(tableKey)) {
+    return ["time", "nome", "local"];
+  }
+
+  return state.filterColumns;
+}
+
+function sanitizePresenceSortState(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  if (!state) {
+    return;
+  }
+
+  const visibleSortKeys = getVisiblePresenceSortKeys(tableKey);
+  if (visibleSortKeys.includes(state.sortKey)) {
+    return;
+  }
+
+  const fallbackSortKey = visibleSortKeys.includes(state.defaultSortKey)
+    ? state.defaultSortKey
+    : (visibleSortKeys[0] || state.defaultSortKey);
+  state.sortKey = fallbackSortKey;
+  state.sortDirection = getPresenceDefaultSortDirection(fallbackSortKey);
+}
+
+function syncPresenceResponsiveControls(tableKey) {
+  const state = getPresenceTableState(tableKey);
+  const container = document.querySelector(`.presence-controls[data-presence-table="${tableKey}"]`);
+  if (!state || !container) {
+    return;
+  }
+
+  sanitizePresenceSortState(tableKey);
+  const visibleFilterKeys = new Set(getVisiblePresenceFilterKeys(tableKey));
+  container.querySelectorAll("[data-presence-filter]").forEach((control) => {
+    const key = String(control.dataset.presenceFilter || "").trim();
+    const field = control.closest(".presence-control-field");
+    const isVisible = visibleFilterKeys.has(key);
+
+    control.disabled = !isVisible;
+    control.setAttribute("aria-hidden", String(!isVisible));
+
+    if (field) {
+      field.hidden = !isVisible;
+      field.classList.toggle("hidden", !isVisible);
+    }
+
+    if (!isVisible) {
+      state.filters[key] = "";
+      control.value = "";
+    }
+  });
+
+  const clearButton = container.querySelector("[data-presence-clear]");
+  if (clearButton instanceof HTMLButtonElement) {
+    const hasVisibleActiveFilters = getVisiblePresenceFilterKeys(tableKey)
+      .some((key) => String(state.filters[key] || "").trim());
+    clearButton.disabled = !hasVisibleActiveFilters;
+  }
 }
 
 function syncPresenceTimeLabels() {
   ["checkin", "checkout"].forEach((tableKey) => {
     const headerLabel = document.querySelector(`[data-presence-primary-header-label="${tableKey}"]`);
     if (headerLabel) {
-      headerLabel.textContent = getPresencePrimaryColumnLabel();
+      headerLabel.textContent = getPresencePrimaryColumnLabel(tableKey);
     }
 
     const filterLabel = document.querySelector(`[data-presence-primary-filter-label="${tableKey}"]`);
     if (filterLabel) {
-      filterLabel.textContent = getPresencePrimaryFilterLabel();
+      filterLabel.textContent = getPresencePrimaryFilterLabel(tableKey);
     }
+
+    const nameHeaderLabel = document.querySelector(`[data-presence-name-header-label="${tableKey}"]`);
+    if (nameHeaderLabel) {
+      nameHeaderLabel.textContent = getPresenceNameColumnLabel(tableKey);
+    }
+
+    const nameFilterLabel = document.querySelector(`[data-presence-name-filter-label="${tableKey}"]`);
+    if (nameFilterLabel) {
+      nameFilterLabel.textContent = getPresenceNameFilterLabel(tableKey);
+    }
+
+    syncPresenceResponsiveControls(tableKey);
   });
 }
 
@@ -1198,7 +1542,10 @@ function showAuthShell(message = "", kind = "info") {
   locationSettingsDirty = false;
   lastDashboardRefreshAt = null;
   closeChangePasswordModal();
+  eventsRows = null;
   formsTotal = 0;
+  formsRows = null;
+  reportsResultsPayload = null;
   databaseEventsLoaded = false;
   if (databaseEventsRefreshTimer !== null) {
     window.clearTimeout(databaseEventsRefreshTimer);
@@ -1230,6 +1577,7 @@ function showAuthShell(message = "", kind = "info") {
   setAuthStatus(message, kind);
   resetReportsView();
   clearStatus();
+  syncAdminResponsiveState({ force: true });
   updateOperationalChrome();
 }
 
@@ -1241,6 +1589,7 @@ function showAdminShell(admin) {
   sessionBar.classList.remove("hidden");
   sessionUserLabel.textContent = `${admin.nome_completo} (${admin.chave})`;
   setAuthStatus("");
+  syncAdminResponsiveState({ force: true });
   updateOperationalChrome();
 }
 
@@ -1467,16 +1816,20 @@ function makeEventCell(value, extraClass = "") {
   return `<span class="${className}">${escapeHtml(value ?? "-")}</span>`;
 }
 
-function makeEventDateTimeCell(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE) {
+function makeEventDateTimeCell(value, timezoneName = DEFAULT_DISPLAY_TIMEZONE, options = {}) {
   const { date, time } = formatDateTimeLines(value, timezoneName);
-  return makeEventDateTimeCellFromParts(date, time);
+  return makeEventDateTimeCellFromParts(date, time, options);
 }
 
-function makeEventDateTimeCellFromParts(dateLabel, timeLabel) {
+function makeEventDateTimeCellFromParts(dateLabel, timeLabel, options = {}) {
   const normalizedDate = String(dateLabel ?? "").trim() || "-";
   const normalizedTime = String(timeLabel ?? "").trim();
+  const inline = Boolean(options.inline && normalizedTime);
+  const className = inline
+    ? "event-cell event-datetime-cell event-datetime-cell--inline"
+    : "event-cell event-datetime-cell";
   return `
-    <span class="event-cell event-datetime-cell">
+    <span class="${className}">
       <span class="event-datetime-line">${escapeHtml(normalizedDate)}</span>
       ${normalizedTime ? `<span class="event-datetime-line">${escapeHtml(normalizedTime)}</span>` : ""}
     </span>
@@ -1884,6 +2237,7 @@ function switchTab(tab) {
   targetButton.classList.add("active");
   document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
   targetTab.classList.add("active");
+  syncAdminTabStrip();
   updateOperationalChrome();
   refreshActiveTab().catch((error) => setStatus(error.message, false));
 }
@@ -2264,7 +2618,8 @@ function getPresenceActivityDayKey(row) {
 function buildPresencePrimaryDisplayParts(row, options = {}) {
   const { includeElapsedDays = false } = options;
   const baseDateLabel = getPresenceActivityDateLabel(row) || "-";
-  const timeLabel = getPresenceActivityTimeLabel(row);
+  const responsiveVariant = options.responsiveVariant || "desktop";
+  const timeLabel = responsiveVariant === "desktop" ? getPresenceActivityTimeLabel(row) : "";
   const elapsedDays = includeElapsedDays
     ? getCalendarDayDiffFromDayKey(getPresenceActivityDayKey(row), row?.timezone_name)
     : 0;
@@ -2297,23 +2652,55 @@ function buildPresencePrimaryDisplay(row, options = {}) {
   };
 }
 
+function shouldUseInlinePresenceDateTime(displayParts, options = {}) {
+  return options.responsiveVariant === "desktop" && Boolean(displayParts?.timeLabel);
+}
+
 function buildPresencePrimaryCell(row, options = {}) {
   const displayParts = buildPresencePrimaryDisplayParts(row, options);
+  const responsiveVariant = options.responsiveVariant || "desktop";
   return {
-    html: makeEventDateTimeCellFromParts(displayParts.dateLabel, displayParts.timeLabel),
+    html: makeEventDateTimeCellFromParts(displayParts.dateLabel, displayParts.timeLabel, {
+      inline: shouldUseInlinePresenceDateTime(displayParts, { responsiveVariant }),
+    }),
     elapsedDays: displayParts.elapsedDays,
     isStale: displayParts.isStale,
   };
 }
 
+function buildPresenceMobileMetadata(row, options = {}) {
+  return "";
+}
+
+function buildLimitedPresenceMobileCard(row, timeCell) {
+  const localLabel = escapeHtml(formatLocal(row.local));
+  return `<article class="presence-mobile-card presence-mobile-card--limited"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><strong class="presence-mobile-card-name">${escapeHtml(row.nome)}</strong><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
+}
+
+function buildPresenceMobileCard(row, timeCell, options = {}) {
+  if (options.responsiveVariant === "mobile-limited") {
+    return buildLimitedPresenceMobileCard(row, timeCell);
+  }
+
+  const localLabel = escapeHtml(formatLocal(row.local));
+  buildPresenceMobileMetadata(row, options);
+  return `<article class="presence-mobile-card presence-mobile-card--compact"><div class="presence-mobile-card-primary">${timeCell.html}</div><p class="presence-mobile-card-main"><strong class="presence-mobile-card-name">${escapeHtml(row.nome)}</strong><span class="presence-mobile-card-context"> @ </span><span class="presence-mobile-card-local">${localLabel}</span></p></article>`;
+}
+
 function buildPresenceRow(row, options = {}) {
-  const { highlightMissingCheckout = false, includeElapsedDays = false } = options;
+  const { highlightMissingCheckout = false, includeElapsedDays = false, responsiveVariant = "desktop" } = options;
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
-  const timeCell = buildPresencePrimaryCell(row, { includeElapsedDays });
+  const timeCell = buildPresencePrimaryCell(row, { includeElapsedDays, responsiveVariant });
   const staleCheckin = timeCell.elapsedDays > 0;
   if (highlightMissingCheckout && staleCheckin) {
     tr.classList.add("attention-user-row");
+  }
+
+  if (responsiveVariant !== "desktop") {
+    tr.classList.add("presence-mobile-row");
+    tr.innerHTML = `<td colspan="7" class="presence-mobile-card-cell">${buildPresenceMobileCard(row, timeCell, { responsiveVariant })}</td>`;
+    return tr;
   }
 
   tr.innerHTML = `<td>${timeCell.html}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td>${escapeHtml(row.projeto)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
@@ -2375,7 +2762,10 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
   }
 
   if (key === "time") {
-    return buildPresencePrimaryDisplay(row, { includeElapsedDays: tableKey === "checkin" }).formatted;
+    return buildPresencePrimaryDisplay(row, {
+      includeElapsedDays: tableKey === "checkin",
+      responsiveVariant: getPresenceResponsiveVariant(tableKey),
+    }).formatted;
   }
   if (key === "nome") {
     return row.nome || "";
@@ -2425,7 +2815,8 @@ function hasActivePresenceFilters(tableKey) {
   if (!state) {
     return false;
   }
-  return Object.values(state.filters).some((value) => String(value || "").trim());
+  return getVisiblePresenceFilterKeys(tableKey)
+    .some((key) => String(state.filters[key] || "").trim());
 }
 
 function getPresenceEmptyMessage(tableKey) {
@@ -2448,7 +2839,8 @@ function filterPresenceRows(tableKey, rows, filters) {
   if (!state) {
     return rows;
   }
-  return rows.filter((row) => state.filterColumns.every((key) => {
+  const visibleFilterKeys = getVisiblePresenceFilterKeys(tableKey);
+  return rows.filter((row) => visibleFilterKeys.every((key) => {
     const rawFilterValue = String(filters[key] || "").trim();
     if (!rawFilterValue) {
       return true;
@@ -2536,6 +2928,8 @@ function syncPresenceControls(tableKey) {
     const key = control.dataset.presenceFilter;
     control.value = state.filters[key] || "";
   });
+
+  syncPresenceResponsiveControls(tableKey);
 }
 
 function syncPresenceSortHeaders(tableKey) {
@@ -2544,8 +2938,16 @@ function syncPresenceSortHeaders(tableKey) {
     return;
   }
 
+  const visibleSortKeys = new Set(getVisiblePresenceSortKeys(tableKey));
+
   document.querySelectorAll(`.sortable-header[data-sort-table="${tableKey}"]`).forEach((button) => {
+    const isVisible = visibleSortKeys.has(button.dataset.sortKey);
     const isActive = button.dataset.sortKey === state.sortKey;
+    button.hidden = !isVisible;
+    button.disabled = !isVisible;
+    button.classList.toggle("hidden", !isVisible);
+    button.tabIndex = isVisible ? 0 : -1;
+    button.setAttribute("aria-hidden", String(!isVisible));
     button.classList.toggle("is-active", isActive);
     const indicator = button.querySelector(".sort-indicator");
     if (indicator) {
@@ -2553,6 +2955,8 @@ function syncPresenceSortHeaders(tableKey) {
     }
     const parentHeader = button.closest("th");
     if (parentHeader) {
+      parentHeader.hidden = !isVisible;
+      parentHeader.classList.toggle("hidden", !isVisible);
       parentHeader.setAttribute("aria-sort", isActive ? (state.sortDirection === "asc" ? "ascending" : "descending") : "none");
     }
   });
@@ -2576,7 +2980,9 @@ function applyPresenceTableState(tableKey) {
     return;
   }
 
+  sanitizePresenceSortState(tableKey);
   refreshPresenceFilterOptions(tableKey);
+  syncPresenceResponsiveControls(tableKey);
   const filteredRows = filterPresenceRows(tableKey, state.rawRows, state.filters);
   const sortedRows = sortPresenceRows(tableKey, filteredRows, state.sortKey, state.sortDirection);
   if (tableKey === "inactive") {
@@ -2586,6 +2992,7 @@ function applyPresenceTableState(tableKey) {
   } else {
     renderPresenceTable(state.bodyId, sortedRows, {
       ...state.renderOptions,
+      responsiveVariant: getPresenceResponsiveVariant(tableKey),
       emptyMessage: getPresenceEmptyMessage(tableKey),
     });
   }
@@ -2609,10 +3016,22 @@ function formatInactivityDays(days) {
   return days === 1 ? "1 dia" : `${days} dias`;
 }
 
-function buildInactiveRow(row) {
+function buildInactiveMobileCard(row) {
+  const latestActivityLabel = `${formatAction(row.latest_action)} - ${formatDateTime(row.latest_time, row.timezone_name)}`;
+  return `<article class="admin-mobile-card inactive-mobile-card"><strong class="admin-mobile-card-title admin-mobile-card-title--alert">${escapeHtml(row.nome)}</strong><div class="admin-mobile-card-grid"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Chave</span><span class="admin-mobile-card-value">${escapeHtml(row.chave)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto)}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Última Atividade</span><span class="admin-mobile-card-value">${escapeHtml(latestActivityLabel)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Inatividade</span><span class="admin-mobile-card-value">${escapeHtml(formatInactivityDays(row.inactivity_days))}</span></div></div><div class="admin-mobile-card-actions"><button type="button" data-user-remove="${escapeHtml(row.id)}">Remover</button></div></article>`;
+}
+
+function buildInactiveRow(row, options = {}) {
   const tr = document.createElement("tr");
   tr.dataset.userId = String(row.id);
   tr.classList.add("inactive-user-row");
+
+  if (options.mobile) {
+    tr.classList.add("inactive-mobile-row");
+    tr.innerHTML = `<td colspan="7" class="inactive-mobile-card-cell">${buildInactiveMobileCard(row)}</td>`;
+    return tr;
+  }
+
   tr.innerHTML = `
     <td>${escapeHtml(row.nome)}</td>
     <td>${escapeHtml(row.chave)}</td>
@@ -2633,8 +3052,9 @@ function renderInactiveTable(rows, options = {}) {
   }
 
   const body = document.getElementById("inactiveBody");
+  const mobile = isMobileAdminViewport();
   body.innerHTML = "";
-  rows.forEach((row) => body.appendChild(buildInactiveRow(row)));
+  rows.forEach((row) => body.appendChild(buildInactiveRow(row, { mobile })));
   applyResponsiveLabels("inactiveBody");
   updateInactiveTitle(rows.length);
 }
@@ -2664,6 +3084,63 @@ function renderMissingCheckoutTable(rows, options = {}) {
   rows.forEach((row) => body.appendChild(buildMissingCheckoutRow(row)));
   applyResponsiveLabels("missingCheckoutBody");
   updateMissingCheckoutTitle(rows.length);
+}
+
+function buildFormsMobileCard(row, options = {}) {
+  const canViewTime = options.canViewTime !== false;
+  const receivedAtHtml = makeEventDateTimeCellFromParts(row.recebimento_date_label, row.recebimento_time_label);
+  const eventDateTimeHtml = makeEventDateTimeCellFromParts(row.data ?? "-", canViewTime ? (row.hora ?? "") : "");
+  const eventDateTimeLabel = canViewTime ? "Data e Hora" : "Data";
+  const informeValue = String(row.informe ?? "-").trim() || "-";
+
+  return `<article class="admin-mobile-card forms-mobile-card"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Recebimento</span><div class="admin-mobile-card-datetime">${receivedAtHtml}</div></div><strong class="admin-mobile-card-title">${escapeHtml(row.nome ?? "-")}</strong><div class="admin-mobile-card-grid"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Atividade</span><span class="admin-mobile-card-value">${escapeHtml(row.atividade ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Chave</span><span class="admin-mobile-card-value">${escapeHtml(row.chave ?? "-")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">${eventDateTimeLabel}</span><div class="admin-mobile-card-datetime">${eventDateTimeHtml}</div></div></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Informe</span><p class="forms-mobile-card-copy">${escapeHtml(informeValue)}</p></div></article>`;
+}
+
+function buildFormsRow(row, options = {}) {
+  const canViewTime = options.canViewTime !== false;
+  const tr = document.createElement("tr");
+
+  if (options.mobile) {
+    tr.classList.add("forms-mobile-row");
+    tr.innerHTML = `<td colspan="${getFormsColumnCount(canViewTime)}" class="forms-mobile-card-cell">${buildFormsMobileCard(row, { canViewTime })}</td>`;
+    return tr;
+  }
+
+  const cells = [
+    `<td>${makeEventDateTimeCellFromParts(row.recebimento_date_label, row.recebimento_time_label)}</td>`,
+    `<td>${makeEventCell(row.chave ?? "-")}</td>`,
+    `<td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td>`,
+    `<td>${makeEventCell(row.projeto ?? "-")}</td>`,
+    `<td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td>`,
+    `<td>${makeEventCell(row.atividade ?? "-")}</td>`,
+    `<td>${makeEventCell(row.informe ?? "-")}</td>`,
+    `<td>${makeEventCell(row.data ?? "-")}</td>`,
+  ];
+  if (canViewTime) {
+    cells.push(`<td>${makeEventCell(row.hora ?? "-")}</td>`);
+  }
+  tr.innerHTML = cells.join("");
+  return tr;
+}
+
+function renderFormsTable(rows, options = {}) {
+  const body = document.getElementById("formsBody");
+  if (!body) {
+    return false;
+  }
+
+  const canViewTime = options.canViewTime !== false;
+  const mobile = isMobileAdminViewport();
+  body.innerHTML = "";
+
+  if (!rows.length) {
+    renderEmptyStateRow("formsBody", getFormsColumnCount(canViewTime), "Nenhum evento do provider encontrado no historico sincronizado.");
+    return true;
+  }
+
+  rows.forEach((row) => body.appendChild(buildFormsRow(row, { canViewTime, mobile })));
+  applyResponsiveLabels("formsBody");
+  return true;
 }
 
 function createLocationCoordinateEntry(value = "", overrides = {}) {
@@ -2755,6 +3232,10 @@ function getLocationAccuracyThresholdInput() {
   return document.getElementById("locationAccuracyThresholdMeters");
 }
 
+function getMixedZoneIntervalInput() {
+  return document.getElementById("mixedZoneIntervalMinutes");
+}
+
 function getLocationSettingsSaveButton() {
   return document.getElementById("saveLocationSettingsButton");
 }
@@ -2772,6 +3253,19 @@ function normalizeLocationAccuracyThreshold(value) {
     throw new Error("O erro máximo para considerar a coordenada do usuário deve ser um inteiro entre 1 e 9999 metros.");
   }
   return String(meters);
+}
+
+function normalizeMixedZoneIntervalMinutes(value) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("O intervalo de tempo para Zona Mista deve ser um inteiro em minutos.");
+  }
+
+  const minutes = Number(normalized);
+  if (!Number.isInteger(minutes) || minutes < 1) {
+    throw new Error("O intervalo de tempo para Zona Mista deve ser um inteiro maior que zero em minutos.");
+  }
+  return String(minutes);
 }
 
 function normalizeLocationName(value) {
@@ -3176,6 +3670,12 @@ function renderLocationSettings() {
     accuracyInput.value = normalizedAccuracy;
     accuracyInput.dataset.persistedValue = normalizedAccuracy;
   }
+  const mixedZoneInput = getMixedZoneIntervalInput();
+  if (mixedZoneInput) {
+    const normalizedMixedZoneInterval = String(mixedZoneIntervalMinutes);
+    mixedZoneInput.value = normalizedMixedZoneInterval;
+    mixedZoneInput.dataset.persistedValue = normalizedMixedZoneInterval;
+  }
   locationSettingsDirty = false;
   updateLocationSettingsSaveButton();
 }
@@ -3189,16 +3689,37 @@ function updateLocationSettingsSaveButton() {
 
 function haveLocationSettingsChanged() {
   const accuracyInput = getLocationAccuracyThresholdInput();
-  if (!accuracyInput) {
+  const mixedZoneInput = getMixedZoneIntervalInput();
+  if (!accuracyInput && !mixedZoneInput) {
     return false;
   }
 
-  const persistedAccuracy = accuracyInput.dataset.persistedValue ?? String(locationAccuracyThresholdMeters);
+  let changed = false;
+
+  if (accuracyInput) {
+    const persistedAccuracy = accuracyInput.dataset.persistedValue ?? String(locationAccuracyThresholdMeters);
+
+    try {
+      changed = normalizeLocationAccuracyThreshold(accuracyInput.value) !== persistedAccuracy;
+    } catch {
+      changed = String(accuracyInput.value ?? "").trim() !== persistedAccuracy;
+    }
+  }
+
+  if (changed) {
+    return true;
+  }
+
+  if (!mixedZoneInput) {
+    return false;
+  }
+
+  const persistedMixedZoneInterval = mixedZoneInput.dataset.persistedValue ?? String(mixedZoneIntervalMinutes);
 
   try {
-    return normalizeLocationAccuracyThreshold(accuracyInput.value) !== persistedAccuracy;
+    return normalizeMixedZoneIntervalMinutes(mixedZoneInput.value) !== persistedMixedZoneInterval;
   } catch {
-    return String(accuracyInput.value ?? "").trim() !== persistedAccuracy;
+    return String(mixedZoneInput.value ?? "").trim() !== persistedMixedZoneInterval;
   }
 }
 
@@ -3429,30 +3950,39 @@ async function removeLocationRow(rowId) {
 
 async function saveLocationSettings() {
   const accuracyInput = getLocationAccuracyThresholdInput();
+  const mixedZoneInput = getMixedZoneIntervalInput();
   const saveButton = getLocationSettingsSaveButton();
-  if (!accuracyInput) {
+  if (!accuracyInput || !mixedZoneInput) {
     locationSettingsDirty = false;
     updateLocationSettingsSaveButton();
     return;
   }
 
   const normalizedAccuracy = normalizeLocationAccuracyThreshold(accuracyInput.value);
+  const normalizedMixedZoneInterval = normalizeMixedZoneIntervalMinutes(mixedZoneInput.value);
   accuracyInput.value = normalizedAccuracy;
-  if (normalizedAccuracy === String(locationAccuracyThresholdMeters)) {
+  mixedZoneInput.value = normalizedMixedZoneInterval;
+  if (
+    normalizedAccuracy === String(locationAccuracyThresholdMeters)
+    && normalizedMixedZoneInterval === String(mixedZoneIntervalMinutes)
+  ) {
     locationSettingsDirty = false;
     updateLocationSettingsSaveButton();
     return;
   }
 
   accuracyInput.disabled = true;
+  mixedZoneInput.disabled = true;
   if (saveButton) {
     saveButton.disabled = true;
   }
   try {
     const response = await postJson("/api/admin/locations/settings", {
       location_accuracy_threshold_meters: Number(normalizedAccuracy),
+      mixed_zone_interval_minutes: Number(normalizedMixedZoneInterval),
     });
     locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
+    mixedZoneIntervalMinutes = response.mixed_zone_interval_minutes;
     renderLocationSettings();
     setStatus(response.message, true);
   } catch (error) {
@@ -3460,6 +3990,7 @@ async function saveLocationSettings() {
     throw error;
   } finally {
     accuracyInput.disabled = false;
+    mixedZoneInput.disabled = false;
     updateLocationSettingsSaveButton();
   }
 }
@@ -3470,6 +4001,7 @@ async function loadLocations() {
     fetchJson("/api/admin/locations/auto-checkout-distances"),
   ]);
   locationAccuracyThresholdMeters = locationsResponse.location_accuracy_threshold_meters;
+  mixedZoneIntervalMinutes = locationsResponse.mixed_zone_interval_minutes ?? mixedZoneIntervalMinutes;
   locationRows = locationsResponse.items.map((row) =>
     createLocationRow({
       id: row.id,
@@ -3943,23 +4475,9 @@ async function removeProject(projectId) {
 async function loadEvents() {
   const canViewTime = syncEventsPrimaryColumnLabel();
   const rows = await fetchJson("/api/admin/events");
-  eventsTotal = Array.isArray(rows) ? rows.length : 0;
-  const body = document.getElementById("eventsBody");
-  body.innerHTML = "";
-  rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    const eventDetails = {
-      message: row.message ?? "-",
-      details: formatEventDetails(row.details),
-    };
-    const eventDateTime = formatDateTimeLines(row.event_time, row.timezone_name);
-    const eventDateLabel = row.event_date_label || eventDateTime.date;
-    const eventTimeLabel = canViewTime ? (row.event_time_label || eventDateTime.time) : "";
-    tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCellFromParts(eventDateLabel, eventTimeLabel)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
-    tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
-    body.appendChild(tr);
-  });
-  applyResponsiveLabels("eventsBody");
+  eventsRows = Array.isArray(rows) ? rows : [];
+  eventsTotal = eventsRows.length;
+  renderEventsTable(eventsRows, { canViewTime });
   updateDashboardSummary();
 }
 
@@ -3968,41 +4486,18 @@ async function loadForms() {
   const body = document.getElementById("formsBody");
   if (!body) {
     formsTotal = 0;
+    formsRows = null;
     updateFormsClearButtonState();
     updateDashboardSummary();
     return;
   }
 
   const rows = await fetchJson("/api/admin/forms");
-  formsTotal = Array.isArray(rows) ? rows.length : 0;
+  formsRows = Array.isArray(rows) ? rows : [];
+  formsTotal = formsRows.length;
   setTextContentIfPresent("formsTitle", `Forms (${formsTotal})`);
   updateFormsClearButtonState();
-  body.innerHTML = "";
-  if (formsTotal === 0) {
-    renderEmptyStateRow("formsBody", getFormsColumnCount(canViewTime), "Nenhum evento do provider encontrado no historico sincronizado.");
-    updateDashboardSummary();
-    return;
-  }
-
-  rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    const cells = [
-      `<td>${makeEventDateTimeCellFromParts(row.recebimento_date_label, row.recebimento_time_label)}</td>`,
-      `<td>${makeEventCell(row.chave ?? "-")}</td>`,
-      `<td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td>`,
-      `<td>${makeEventCell(row.projeto ?? "-")}</td>`,
-      `<td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td>`,
-      `<td>${makeEventCell(row.atividade ?? "-")}</td>`,
-      `<td>${makeEventCell(row.informe ?? "-")}</td>`,
-      `<td>${makeEventCell(row.data ?? "-")}</td>`,
-    ];
-    if (canViewTime) {
-      cells.push(`<td>${makeEventCell(row.hora ?? "-")}</td>`);
-    }
-    tr.innerHTML = cells.join("");
-    body.appendChild(tr);
-  });
-  applyResponsiveLabels("formsBody");
+  renderFormsTable(formsRows, { canViewTime });
   updateDashboardSummary();
 }
 
@@ -4028,6 +4523,7 @@ function resetReportsView(options = {}) {
   reportsExportInProgress = false;
   reportsHasLoadedResult = false;
   reportsExportQueryString = "";
+  reportsResultsPayload = null;
   if (reportsSearchChaveInput) {
     reportsSearchChaveInput.value = "";
   }
@@ -4084,6 +4580,7 @@ function syncReportsSearchInputs(source = null) {
 function renderReportsState(title, message) {
   reportsHasLoadedResult = false;
   reportsExportQueryString = "";
+  reportsResultsPayload = null;
   setTextContentIfPresent("reportsPersonTitle", title);
   setTextContentIfPresent("reportsPersonMeta", message);
   const body = document.getElementById("reportsResultsBody");
@@ -4146,6 +4643,19 @@ function getReportsResultTableColumns(includeTime = canCurrentAdminViewActivityT
   return columns;
 }
 
+function buildReportsResultMobileCardMarkup(row, options = {}) {
+  const includeTime = options.includeTime ?? canCurrentAdminViewActivityTime();
+  const timeMarkup = includeTime
+    ? `<div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Horário</span><span class="admin-mobile-card-value">${escapeHtml(getReportEventTimeLine(row))}</span></div>`
+    : "";
+
+  return `<article class="admin-mobile-card reports-result-card"><strong class="admin-mobile-card-title">${escapeHtml(row.action_label || formatAction(row.action))}</strong><div class="admin-mobile-card-grid">${timeMarkup}<div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Origem</span><span class="admin-mobile-card-value">${escapeHtml(row.source_label || row.source || "-")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Local</span><span class="admin-mobile-card-value">${escapeHtml(row.local_label || formatLocal(row.local))}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Assiduidade</span><span class="admin-mobile-card-value">${escapeHtml(row.assiduidade ?? "Normal")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Fuso horário</span><span class="admin-mobile-card-value">${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</span></div></div></article>`;
+}
+
+function buildReportsResultCardsMarkup(rows, options = {}) {
+  return `<div class="reports-results-cards">${rows.map((row) => buildReportsResultMobileCardMarkup(row, options)).join("")}</div>`;
+}
+
 function buildReportsResultRowMarkup(row, columns) {
   return `<tr>${columns.map((column) => `<td>${escapeHtml(column.getValue(row))}</td>`).join("")}</tr>`;
 }
@@ -4165,11 +4675,23 @@ function buildReportsResultTableMarkup(tbodyId, rows, options = {}) {
   return `<div class="table-wrap"><table class="${tableClasses.join(" ")}"><colgroup>${colgroupMarkup}</colgroup><thead><tr>${headerMarkup}</tr></thead><tbody id="${escapeHtml(tbodyId)}">${rowsMarkup}</tbody></table></div>`;
 }
 
+function buildReportsResultGroupMarkup(group, groupIndex, options = {}) {
+  const includeTime = options.includeTime ?? canCurrentAdminViewActivityTime();
+  const mobile = options.mobile === true;
+  const contentMarkup = mobile
+    ? buildReportsResultCardsMarkup(group.rows, { includeTime })
+    : buildReportsResultTableMarkup(`reportsGroupBody${groupIndex}`, group.rows, { includeTime });
+  const groupLabel = group.rows.length === 1 ? "1 evento" : `${group.rows.length} eventos`;
+  return `<section class="reports-group"><div class="section-header reports-group-header"><h4>${escapeHtml(group.date)}</h4><span class="reports-group-count">${escapeHtml(groupLabel)}</span></div>${contentMarkup}</section>`;
+}
+
 function renderReportsResults(payload) {
   const body = document.getElementById("reportsResultsBody");
   if (!body) {
     return false;
   }
+
+  reportsResultsPayload = payload;
 
   const person = payload?.person || {};
   const events = Array.isArray(payload?.events) ? payload.events : [];
@@ -4188,6 +4710,7 @@ function renderReportsResults(payload) {
   const groups = [];
   const groupsByDate = new Map();
   const canViewTime = canCurrentAdminViewActivityTime();
+  const mobile = isMobileAdminViewport();
   events.forEach((row) => {
     const groupKey = row.event_date || formatDateTimeLines(row.event_time, row.timezone_name).date;
     if (!groupsByDate.has(groupKey)) {
@@ -4198,15 +4721,16 @@ function renderReportsResults(payload) {
     groupsByDate.get(groupKey).rows.push(row);
   });
 
-  body.innerHTML = groups.map((group, groupIndex) => {
-    const tbodyId = `reportsGroupBody${groupIndex}`;
-    const groupLabel = group.rows.length === 1 ? "1 evento" : `${group.rows.length} eventos`;
-    return `<section class="reports-group"><div class="section-header"><h4>${escapeHtml(group.date)}</h4><span>${escapeHtml(groupLabel)}</span></div>${buildReportsResultTableMarkup(tbodyId, group.rows, { includeTime: canViewTime })}</section>`;
-  }).join("");
+  body.innerHTML = groups.map((group, groupIndex) => buildReportsResultGroupMarkup(group, groupIndex, {
+    includeTime: canViewTime,
+    mobile,
+  })).join("");
 
-  groups.forEach((_, groupIndex) => {
-    applyResponsiveLabels(`reportsGroupBody${groupIndex}`);
-  });
+  if (!mobile) {
+    groups.forEach((_, groupIndex) => {
+      applyResponsiveLabels(`reportsGroupBody${groupIndex}`);
+    });
+  }
   return true;
 }
 
@@ -4293,6 +4817,7 @@ async function submitReportsSearch() {
   setReportsStatus("");
   try {
     const payload = await fetchJson(`/api/admin/reports/events?${query.toString()}`);
+    reportsResultsPayload = payload;
     reportsHasLoadedResult = renderReportsResults(payload);
     reportsExportQueryString = reportsHasLoadedResult ? query.toString() : "";
     updateReportsActionButtons();
@@ -4307,6 +4832,66 @@ async function submitReportsSearch() {
     reportsSearchButton.textContent = idleLabel;
     syncReportsSearchInputs();
   }
+}
+
+function buildEventMobileCard(row, options = {}) {
+  const canViewTime = options.canViewTime !== false;
+  const eventDetails = {
+    message: row.message ?? "-",
+    details: formatEventDetails(row.details),
+  };
+  const eventDateTime = formatDateTimeLines(row.event_time, row.timezone_name);
+  const eventDateLabel = row.event_date_label || eventDateTime.date;
+  const eventTimeLabel = canViewTime ? (row.event_time_label || eventDateTime.time) : "";
+  return {
+    markup: `<article class="admin-mobile-card events-mobile-card"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">${canViewTime ? "Horário" : "Data"}</span><div class="admin-mobile-card-datetime">${makeEventDateTimeCellFromParts(eventDateLabel, eventTimeLabel)}</div></div><strong class="admin-mobile-card-title">${escapeHtml(formatAction(row.action))}</strong><div class="admin-mobile-card-grid"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Origem</span><span class="admin-mobile-card-value">${escapeHtml(row.source ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Status</span><span class="admin-mobile-card-value">${escapeHtml(row.status ?? "-")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Local</span><span class="admin-mobile-card-value">${escapeHtml(formatLocal(row.local))}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">ID</span><span class="admin-mobile-card-value">${escapeHtml(row.id)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Chave</span><span class="admin-mobile-card-value">${escapeHtml(row.chave ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.project ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Device</span><span class="admin-mobile-card-value">${escapeHtml(row.device_id ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">RFID</span><span class="admin-mobile-card-value">${escapeHtml(row.rfid ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">HTTP</span><span class="admin-mobile-card-value">${escapeHtml(row.http_status ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Tentativas</span><span class="admin-mobile-card-value">${escapeHtml(row.retry_count ?? 0)}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Ontime</span><span class="admin-mobile-card-value">${escapeHtml(formatOntime(row.ontime))}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Fuso horário</span><span class="admin-mobile-card-value">${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</span></div></div><div class="admin-mobile-card-actions"><button type="button" class="event-details-button">Detalhes</button></div></article>`,
+    details: eventDetails,
+  };
+}
+
+function buildEventRow(row, options = {}) {
+  const canViewTime = options.canViewTime !== false;
+  const tr = document.createElement("tr");
+  const eventDetails = {
+    message: row.message ?? "-",
+    details: formatEventDetails(row.details),
+  };
+  const eventDateTime = formatDateTimeLines(row.event_time, row.timezone_name);
+  const eventDateLabel = row.event_date_label || eventDateTime.date;
+  const eventTimeLabel = canViewTime ? (row.event_time_label || eventDateTime.time) : "";
+
+  if (options.mobile) {
+    const mobileCard = buildEventMobileCard(row, { canViewTime });
+    tr.classList.add("events-mobile-row");
+    tr.innerHTML = `<td colspan="15" class="events-mobile-card-cell">${mobileCard.markup}</td>`;
+    tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(mobileCard.details));
+    return tr;
+  }
+
+  tr.innerHTML = `<td>${makeEventCell(row.id)}</td><td>${makeEventDateTimeCellFromParts(eventDateLabel, eventTimeLabel)}</td><td>${makeEventCell(row.source)}</td><td>${makeEventCell(formatAction(row.action))}</td><td>${makeEventCell(row.status)}</td><td>${makeEventCell(row.device_id ?? "-")}</td><td>${makeEventCell(formatLocal(row.local))}</td><td>${makeEventCell(row.rfid ?? "-")}</td><td>${makeEventCell(row.chave ?? "-")}</td><td>${makeEventCell(row.project ?? "-")}</td><td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td><td>${makeEventCell(formatOntime(row.ontime))}</td><td>${makeEventCell(row.http_status ?? "-")}</td><td>${makeEventCell(row.retry_count ?? 0)}</td><td>${makeEventDetailsButton()}</td>`;
+  tr.querySelector(".event-details-button").addEventListener("click", () => openEventDetails(eventDetails));
+  return tr;
+}
+
+function renderEventsTable(rows, options = {}) {
+  const body = document.getElementById("eventsBody");
+  if (!body) {
+    return false;
+  }
+
+  const mobile = isMobileAdminViewport();
+  const canViewTime = options.canViewTime !== false;
+  body.innerHTML = "";
+  if (!rows.length) {
+    renderEmptyStateRow("eventsBody", 15, "Nenhum evento encontrado.");
+    return true;
+  }
+
+  rows.forEach((row) => body.appendChild(buildEventRow(row, { mobile, canViewTime })));
+  if (!mobile) {
+    applyResponsiveLabels("eventsBody");
+  }
+  return true;
 }
 
 function updateFormsClearButtonState() {
@@ -4912,6 +5497,7 @@ async function bootstrapAdmin() {
   startAutoRefresh();
   startRealtimeUpdates();
   await refreshAllTables();
+  syncAdminResponsiveState({ force: true });
   setStatus("Painel administrativo carregado.", true);
 }
 
@@ -4929,6 +5515,12 @@ function bindLocationSettingsInput(inputId) {
 function bindActions() {
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
+  document.querySelectorAll("[data-filter-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      toggleAdminMobileFilterPanel(button.dataset.filterToggle);
+    });
   });
 
   document.querySelectorAll(".presence-controls").forEach((container) => {
@@ -5257,7 +5849,28 @@ function bindActions() {
       }
     }
   });
-  window.addEventListener("resize", scheduleUserFieldTextareaRefresh);
+  const handleAdminResponsiveViewportChange = () => {
+    scheduleUserFieldTextareaRefresh();
+    scheduleAdminResponsiveSync();
+  };
+
+  window.addEventListener("resize", handleAdminResponsiveViewportChange);
+  window.addEventListener("orientationchange", () => {
+    scheduleAdminResponsiveSync({ force: true });
+  });
+
+  const adminViewportMediaQuery = getAdminViewportMediaQueryList();
+  if (adminViewportMediaQuery) {
+    const handleViewportMediaQueryChange = () => {
+      scheduleAdminResponsiveSync({ force: true });
+    };
+
+    if (typeof adminViewportMediaQuery.addEventListener === "function") {
+      adminViewportMediaQuery.addEventListener("change", handleViewportMediaQueryChange);
+    } else if (typeof adminViewportMediaQuery.addListener === "function") {
+      adminViewportMediaQuery.addListener(handleViewportMediaQueryChange);
+    }
+  }
 
   document.getElementById("eventArchivesBody").addEventListener("click", (event) => {
     const target = event.target;
@@ -5295,6 +5908,7 @@ function bindActions() {
     saveLocationSettings().catch((error) => setStatus(error.message, false));
   });
   bindLocationSettingsInput("locationAccuracyThresholdMeters");
+  bindLocationSettingsInput("mixedZoneIntervalMinutes");
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const body = event.currentTarget;
@@ -5479,6 +6093,7 @@ function bindActions() {
 
 async function bootstrap() {
   bindActions();
+  syncAdminResponsiveState({ force: true });
   updateOperationalChrome();
   updateDashboardSummary();
   try {

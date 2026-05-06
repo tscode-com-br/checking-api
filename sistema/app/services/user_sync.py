@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..models import CheckEvent, Project, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
 from .checking_history import record_checking_history
-from .time_utils import now_sgt, resolve_system_timezone_name, resolve_timezone, resolve_project_timezone_name
+from .time_utils import now_sgt, resolve_system_timezone_name, resolve_timezone
 from .user_activity import mark_user_active
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
@@ -29,6 +29,13 @@ class ResolvedUserActivity:
     local: str | None
     ontime: bool | None
     source: str | None = None
+
+
+@dataclass(frozen=True)
+class LoadedUserActivityInputs:
+    sync_events_by_user_id: dict[int, list[UserSyncEvent]]
+    check_events_by_rfid: dict[str, list[CheckEvent]]
+    project_timezone_names: dict[str, str]
 
 
 def normalize_user_key(value: str) -> str:
@@ -208,6 +215,87 @@ def filter_sync_events_by_sources(
     return [event for event in events if not is_sync_source_included(event.source, ignored_sources)]
 
 
+def _normalize_rfid(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _group_sync_events_by_user_id(events: list[UserSyncEvent]) -> dict[int, list[UserSyncEvent]]:
+    grouped: dict[int, list[UserSyncEvent]] = {}
+    for event in events:
+        grouped.setdefault(event.user_id, []).append(event)
+    return grouped
+
+
+def _group_check_events_by_rfid(events: list[CheckEvent]) -> dict[str, list[CheckEvent]]:
+    grouped: dict[str, list[CheckEvent]] = {}
+    for event in events:
+        normalized_rfid = _normalize_rfid(event.rfid)
+        if not normalized_rfid:
+            continue
+        grouped.setdefault(normalized_rfid, []).append(event)
+    return grouped
+
+
+def list_user_sync_events_for_users(
+    db: Session,
+    *,
+    user_ids: set[int],
+) -> dict[int, list[UserSyncEvent]]:
+    normalized_user_ids = sorted({user_id for user_id in user_ids if user_id is not None})
+    if not normalized_user_ids:
+        return {}
+
+    events = db.execute(
+        select(UserSyncEvent)
+        .where(
+            UserSyncEvent.user_id.in_(normalized_user_ids),
+            UserSyncEvent.action.in_(("checkin", "checkout")),
+        )
+        .order_by(UserSyncEvent.user_id, desc(UserSyncEvent.event_time), desc(UserSyncEvent.id))
+    ).scalars().all()
+    return _group_sync_events_by_user_id(events)
+
+
+def list_check_activity_events_for_rfids(
+    db: Session,
+    *,
+    rfids: set[str],
+) -> dict[str, list[CheckEvent]]:
+    normalized_rfids = sorted({_normalize_rfid(rfid) for rfid in rfids if _normalize_rfid(rfid)})
+    if not normalized_rfids:
+        return {}
+
+    events = db.execute(
+        select(CheckEvent)
+        .where(
+            CheckEvent.rfid.in_(normalized_rfids),
+            CheckEvent.action.in_(("checkin", "checkout")),
+            CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
+        )
+        .order_by(CheckEvent.rfid, desc(CheckEvent.event_time), desc(CheckEvent.id))
+    ).scalars().all()
+    return _group_check_events_by_rfid(events)
+
+
+def load_user_activity_inputs(db: Session, *, users: list[User]) -> LoadedUserActivityInputs:
+    sync_events_by_user_id = list_user_sync_events_for_users(
+        db,
+        user_ids={user.id for user in users if user.id is not None},
+    )
+    check_events_by_rfid = list_check_activity_events_for_rfids(
+        db,
+        rfids={_normalize_rfid(user.rfid) for user in users if _normalize_rfid(user.rfid)},
+    )
+    project_names = {user.projeto for user in users if user.projeto}
+    for events in sync_events_by_user_id.values():
+        project_names.update(event.projeto for event in events if event.projeto)
+    return LoadedUserActivityInputs(
+        sync_events_by_user_id=sync_events_by_user_id,
+        check_events_by_rfid=check_events_by_rfid,
+        project_timezone_names=_load_project_timezone_names(db, project_names),
+    )
+
+
 def list_user_sync_events(
     db: Session,
     *,
@@ -225,11 +313,14 @@ def list_user_sync_events(
     ).scalars().all()
 
 
-def select_preferred_sync_event(db: Session, events: list[UserSyncEvent]) -> UserSyncEvent | None:
+def select_preferred_sync_event_from_events(
+    events: list[UserSyncEvent],
+    *,
+    project_timezone_names: dict[str, str],
+) -> UserSyncEvent | None:
     if not events:
         return None
 
-    project_timezone_names = _load_project_timezone_names(db, {event.projeto for event in events if event.projeto})
     normalized_events = {
         event.id: _normalize_sync_event_time(event, project_timezone_names=project_timezone_names)
         for event in events
@@ -262,6 +353,14 @@ def select_preferred_sync_event(db: Session, events: list[UserSyncEvent]) -> Use
         reverse=True,
     )
     return same_day_events[0]
+
+
+def select_preferred_sync_event(db: Session, events: list[UserSyncEvent]) -> UserSyncEvent | None:
+    project_timezone_names = _load_project_timezone_names(db, {event.projeto for event in events if event.projeto})
+    return select_preferred_sync_event_from_events(
+        events,
+        project_timezone_names=project_timezone_names,
+    )
 
 
 def create_user_sync_event(
@@ -310,12 +409,13 @@ def get_latest_sync_event(
     action: str,
     ignored_sources: frozenset[str] = frozenset(),
 ) -> UserSyncEvent | None:
-    return select_preferred_sync_event(
-        db,
+    events = list_user_sync_events(db, user_id=user_id, action=action)
+    return select_preferred_sync_event_from_events(
         filter_sync_events_by_sources(
-            list_user_sync_events(db, user_id=user_id, action=action),
+            events,
             ignored_sources=ignored_sources,
-        )
+        ),
+        project_timezone_names=_load_project_timezone_names(db, {event.projeto for event in events if event.projeto}),
     )
 
 
@@ -325,11 +425,25 @@ def get_latest_user_sync_event(
     user_id: int,
     ignored_sources: frozenset[str] = frozenset(),
 ) -> UserSyncEvent | None:
+    events = list_user_sync_events(db, user_id=user_id)
+    project_timezone_names = _load_project_timezone_names(db, {event.projeto for event in events if event.projeto})
     candidates = [
         event
         for event in (
-            get_latest_sync_event(db, user_id=user_id, action="checkin", ignored_sources=ignored_sources),
-            get_latest_sync_event(db, user_id=user_id, action="checkout", ignored_sources=ignored_sources),
+            select_preferred_sync_event_from_events(
+                filter_sync_events_by_sources(
+                    [event for event in events if event.action == "checkin"],
+                    ignored_sources=ignored_sources,
+                ),
+                project_timezone_names=project_timezone_names,
+            ),
+            select_preferred_sync_event_from_events(
+                filter_sync_events_by_sources(
+                    [event for event in events if event.action == "checkout"],
+                    ignored_sources=ignored_sources,
+                ),
+                project_timezone_names=project_timezone_names,
+            ),
         )
         if event is not None
     ]
@@ -384,17 +498,9 @@ def get_latest_check_event(
     action: str,
     ignored_sources: frozenset[str] = frozenset(),
 ) -> CheckEvent | None:
-    events = db.execute(
-        select(CheckEvent)
-        .where(
-            CheckEvent.rfid == rfid,
-            CheckEvent.action == action,
-            CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
-        )
-        .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
-    ).scalars().all()
+    events = list_check_activity_events_for_rfids(db, rfids={rfid}).get(_normalize_rfid(rfid), [])
     for event in events:
-        if not is_sync_source_included(event.source, ignored_sources):
+        if event.action == action and not is_sync_source_included(event.source, ignored_sources):
             return event
     return None
 
@@ -405,15 +511,7 @@ def get_latest_check_activity_event(
     rfid: str,
     ignored_sources: frozenset[str] = frozenset(),
 ) -> CheckEvent | None:
-    events = db.execute(
-        select(CheckEvent)
-        .where(
-            CheckEvent.rfid == rfid,
-            CheckEvent.action.in_(("checkin", "checkout")),
-            CheckEvent.status.in_(SYNC_EVENT_FALLBACK_STATUSES),
-        )
-        .order_by(desc(CheckEvent.event_time), desc(CheckEvent.id))
-    ).scalars().all()
+    events = list_check_activity_events_for_rfids(db, rfids={rfid}).get(_normalize_rfid(rfid), [])
     for event in events:
         if not is_sync_source_included(event.source, ignored_sources):
             return event
@@ -457,9 +555,58 @@ def resolve_latest_user_activity(
     ignored_check_event_sources: frozenset[str] = frozenset(),
     include_current_state: bool = True,
 ) -> ResolvedUserActivity | None:
-    candidates: list[tuple[datetime, int, ResolvedUserActivity]] = []
+    return resolve_latest_user_activity_from_inputs(
+        user=user,
+        inputs=load_user_activity_inputs(db, users=[user]),
+        ignored_sync_sources=ignored_sync_sources,
+        ignored_check_event_sources=ignored_check_event_sources,
+        include_current_state=include_current_state,
+    )
 
-    latest_sync = get_latest_user_sync_event(db, user_id=user.id, ignored_sources=ignored_sync_sources)
+
+def resolve_latest_user_activity_from_inputs(
+    *,
+    user: User,
+    inputs: LoadedUserActivityInputs,
+    ignored_sync_sources: frozenset[str] = frozenset(),
+    ignored_check_event_sources: frozenset[str] = frozenset(),
+    include_current_state: bool = True,
+) -> ResolvedUserActivity | None:
+    candidates: list[tuple[datetime, int, ResolvedUserActivity]] = []
+    sync_events = inputs.sync_events_by_user_id.get(user.id, []) if user.id is not None else []
+    check_events = inputs.check_events_by_rfid.get(_normalize_rfid(user.rfid), []) if user.rfid else []
+
+    latest_sync_candidates = [
+        event
+        for event in (
+            select_preferred_sync_event_from_events(
+                filter_sync_events_by_sources(
+                    [event for event in sync_events if event.action == "checkin"],
+                    ignored_sources=ignored_sync_sources,
+                ),
+                project_timezone_names=inputs.project_timezone_names,
+            ),
+            select_preferred_sync_event_from_events(
+                filter_sync_events_by_sources(
+                    [event for event in sync_events if event.action == "checkout"],
+                    ignored_sources=ignored_sync_sources,
+                ),
+                project_timezone_names=inputs.project_timezone_names,
+            ),
+        )
+        if event is not None
+    ]
+    latest_sync = None
+    if latest_sync_candidates:
+        latest_sync_candidates.sort(
+            key=lambda event: (
+                _normalize_sync_event_time(event, project_timezone_names=inputs.project_timezone_names),
+                get_sync_source_priority(event.source),
+                event.id,
+            ),
+            reverse=True,
+        )
+        latest_sync = latest_sync_candidates[0]
     if latest_sync is not None:
         candidates.append(
             (
@@ -490,32 +637,52 @@ def resolve_latest_user_activity(
             )
         )
 
-    if user.rfid:
-        latest_check_event = get_latest_check_activity_event(
-            db,
-            rfid=user.rfid,
-            ignored_sources=ignored_check_event_sources,
-        )
-        if latest_check_event is not None:
-            candidates.append(
-                (
-                    latest_check_event.event_time,
-                    1,
-                    ResolvedUserActivity(
-                        action=latest_check_event.action,
-                        event_time=latest_check_event.event_time,
-                        local=resolve_activity_local(local=latest_check_event.local, source=latest_check_event.source),
-                        ontime=(latest_check_event.ontime if latest_check_event.ontime is not None else True),
-                        source=latest_check_event.source,
-                    ),
-                )
+    for latest_check_event in check_events:
+        if is_sync_source_included(latest_check_event.source, ignored_check_event_sources):
+            continue
+        candidates.append(
+            (
+                latest_check_event.event_time,
+                1,
+                ResolvedUserActivity(
+                    action=latest_check_event.action,
+                    event_time=latest_check_event.event_time,
+                    local=resolve_activity_local(local=latest_check_event.local, source=latest_check_event.source),
+                    ontime=(latest_check_event.ontime if latest_check_event.ontime is not None else True),
+                    source=latest_check_event.source,
+                ),
             )
+        )
+        break
 
     if not candidates:
         return None
 
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return candidates[0][2]
+
+
+def resolve_latest_user_activities(
+    db: Session,
+    *,
+    users: list[User],
+    ignored_sync_sources: frozenset[str] = frozenset(),
+    ignored_check_event_sources: frozenset[str] = frozenset(),
+    include_current_state: bool = True,
+) -> dict[int, ResolvedUserActivity | None]:
+    inputs = load_user_activity_inputs(db, users=users)
+    payload: dict[int, ResolvedUserActivity | None] = {}
+    for user in users:
+        if user.id is None:
+            continue
+        payload[user.id] = resolve_latest_user_activity_from_inputs(
+            user=user,
+            inputs=inputs,
+            ignored_sync_sources=ignored_sync_sources,
+            ignored_check_event_sources=ignored_check_event_sources,
+            include_current_state=include_current_state,
+        )
+    return payload
 
 
 def resolve_latest_internal_user_activity(db: Session, *, user: User) -> ResolvedUserActivity | None:
@@ -570,52 +737,74 @@ def ensure_current_user_state_event(db: Session, *, user: User, skip_if_provider
     )
 
 
-def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateResponse:
-    user = find_user_by_chave(db, chave)
+def _build_mobile_sync_state_by_chave(
+    db: Session,
+    *,
+    chave: str,
+) -> tuple[MobileSyncStateResponse, str]:
+    normalized_key = normalize_user_key(chave)
+    user = find_user_by_chave(db, normalized_key)
     if user is None:
-        return MobileSyncStateResponse(found=False, chave=normalize_user_key(chave))
+        return MobileSyncStateResponse(found=False, chave=normalized_key), resolve_system_timezone_name()
 
-    latest_checkin = get_latest_sync_event(db, user_id=user.id, action="checkin")
-    latest_checkout = get_latest_sync_event(db, user_id=user.id, action="checkout")
-    latest_activity = resolve_latest_user_activity(db, user=user)
-    fallback_checkin = get_latest_check_event(db, rfid=user.rfid, action="checkin") if user.rfid else None
-    fallback_checkout = get_latest_check_event(db, rfid=user.rfid, action="checkout") if user.rfid else None
+    inputs = load_user_activity_inputs(db, users=[user])
+    sync_events = inputs.sync_events_by_user_id.get(user.id, []) if user.id is not None else []
+    check_events = inputs.check_events_by_rfid.get(_normalize_rfid(user.rfid), []) if user.rfid else []
+
+    latest_checkin = select_preferred_sync_event_from_events(
+        [event for event in sync_events if event.action == "checkin"],
+        project_timezone_names=inputs.project_timezone_names,
+    )
+    latest_checkout = select_preferred_sync_event_from_events(
+        [event for event in sync_events if event.action == "checkout"],
+        project_timezone_names=inputs.project_timezone_names,
+    )
+    latest_activity = resolve_latest_user_activity_from_inputs(user=user, inputs=inputs)
+    fallback_checkin = next((event for event in check_events if event.action == "checkin"), None)
+    fallback_checkout = next((event for event in check_events if event.action == "checkout"), None)
     current_action = latest_activity.action if latest_activity is not None else None
     current_event_time = latest_activity.event_time if latest_activity is not None else user.time
     current_local = latest_activity.local if latest_activity is not None and latest_activity.local is not None else user.local
 
-    return MobileSyncStateResponse(
-        found=True,
-        chave=user.chave,
-        nome=user.nome,
-        projeto=user.projeto,
-        current_action=current_action,
-        current_event_time=current_event_time,
-        current_local=current_local,
-        last_checkin_at=(
-            latest_checkin.event_time
-            if latest_checkin is not None
-            else (
-                fallback_checkin.event_time
-                if fallback_checkin is not None
-                else (current_event_time if current_action == "checkin" else None)
-            )
+    return (
+        MobileSyncStateResponse(
+            found=True,
+            chave=user.chave,
+            nome=user.nome,
+            projeto=user.projeto,
+            current_action=current_action,
+            current_event_time=current_event_time,
+            current_local=current_local,
+            last_checkin_at=(
+                latest_checkin.event_time
+                if latest_checkin is not None
+                else (
+                    fallback_checkin.event_time
+                    if fallback_checkin is not None
+                    else (current_event_time if current_action == "checkin" else None)
+                )
+            ),
+            last_checkout_at=(
+                latest_checkout.event_time
+                if latest_checkout is not None
+                else (
+                    fallback_checkout.event_time
+                    if fallback_checkout is not None
+                    else (current_event_time if current_action == "checkout" else None)
+                )
+            ),
         ),
-        last_checkout_at=(
-            latest_checkout.event_time
-            if latest_checkout is not None
-            else (
-                fallback_checkout.event_time
-                if fallback_checkout is not None
-                else (current_event_time if current_action == "checkout" else None)
-            )
-        ),
+        _resolve_cached_project_timezone_name(user.projeto, project_timezone_names=inputs.project_timezone_names),
     )
 
 
+def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateResponse:
+    state, _ = _build_mobile_sync_state_by_chave(db, chave=chave)
+    return state
+
+
 def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistoryResponse:
-    state = build_mobile_sync_state(db, chave=normalize_user_key(chave))
-    project_timezone_name = resolve_project_timezone_name(db, state.projeto)
+    state, project_timezone_name = _build_mobile_sync_state_by_chave(db, chave=normalize_user_key(chave))
     return WebCheckHistoryResponse(
         found=state.found,
         chave=state.chave,

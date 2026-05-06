@@ -22,7 +22,7 @@ test('admin tables expose country and timezone columns for project-aware renderi
   assert.match(adminHtml, /id="projectTimezoneOptions"/);
   assert.match(adminHtml, /id="saveProjectButton"/);
   assert.match(adminHtml, /id="cancelProjectEditButton"/);
-  assert.match(adminHtml, /<tr><th>Nome do Projeto<\/th><th>País<\/th><th>Fuso horário<\/th><th>Ações<\/th><\/tr>/);
+  assert.match(adminHtml, /<tr><th>Nome do Projeto<\/th><th>País<\/th><th>Endereço<\/th><th>ZIP Code<\/th><th>Fuso horário<\/th><th>Ações<\/th><\/tr>/);
   assert.match(adminHtml, /<tr><th>ID<\/th><th data-events-primary-header-label>Horário<\/th><th>Origem<\/th><th>Ação<\/th><th>Status<\/th><th>Device<\/th><th>Local<\/th><th>RFID<\/th><th>Chave<\/th><th>Projeto<\/th><th>Fuso horário<\/th><th>Ontime<\/th><th>HTTP<\/th><th>Tentativas<\/th><th>Detalhes<\/th><\/tr>/);
   assert.match(adminHtml, /data-sort-table="checkin"[\s\S]*<th>Fuso horário<\/th>[\s\S]*data-sort-table="checkout"/);
   assert.match(adminHtml, /data-sort-table="inactive"[\s\S]*<th>Fuso horário<\/th>[\s\S]*<span>Última Atividade<\/span>/);
@@ -44,13 +44,13 @@ test('admin javascript formats and renders timestamps using per-row timezone met
   assert.match(adminJs, /function startProjectEdit\(projectId\) \{/);
   assert.match(adminJs, /async function saveProject\(\) \{/);
   assert.match(adminJs, /async function putJson\(url, body\) \{/);
-  assert.match(adminJs, /function makeEventDateTimeCellFromParts\(dateLabel, timeLabel\) \{/);
+  assert.match(adminJs, /function makeEventDateTimeCellFromParts\(dateLabel, timeLabel, options = \{\}\) \{/);
   assert.match(adminJs, /function deriveProjectCountryCode\(countryName, fallbackCode = ""\) \{/);
   assert.match(adminJs, /function syncProjectTimezoneInput\(selectedValue = "", preferredCountryName = DEFAULT_PROJECT_COUNTRY_NAME\) \{/);
   assert.match(adminJs, /function getEventsPrimaryColumnLabel\(\) \{/);
   assert.match(adminJs, /function syncEventsPrimaryColumnLabel\(\) \{/);
   assert.match(adminJs, /eventsHeader\.textContent = getEventsPrimaryColumnLabel\(\);/);
-  assert.match(adminJs, /buildPresencePrimaryDisplay\(row, \{ includeElapsedDays: tableKey === "checkin" \}\)\.formatted/);
+  assert.match(adminJs, /buildPresencePrimaryDisplay\(row, \{[\s\S]*includeElapsedDays: tableKey === "checkin",[\s\S]*responsiveVariant: getPresenceResponsiveVariant\(tableKey\),[\s\S]*\}\)\.formatted/);
   assert.match(adminJs, /formatDateTime\(row\.latest_time, row\.timezone_name\)/);
   assert.match(adminJs, /makeEventDateTimeCell\(row\.event_time, row\.timezone_name\)/);
   assert.match(adminJs, /const eventDateTime = formatDateTimeLines\(row\.event_time, row\.timezone_name\);/);

@@ -1,0 +1,49 @@
+{
+  "wait_time": {
+    "min_seconds": 0.1,
+    "max_seconds": 0.5
+  },
+  "location": {
+    "latitude": 1.265936,
+    "longitude": 103.621066,
+    "accuracy_meters": 8,
+    "fallback_local": "Escritório Principal"
+  },
+  "generated_users": {
+    "prefix": "I",
+    "count": 32,
+    "start_index": 1,
+    "password": "abc123",
+    "project": "P80",
+    "register_missing": true,
+    "name_prefix": "Phase10 Integrated",
+    "email_domain": "load.invalid"
+  },
+  "web_check": {
+    "include_page_open": true,
+    "include_project_catalog": true,
+    "include_location_options": true,
+    "include_location_resolution": true,
+    "action_cycle": [
+      "checkin",
+      "checkout"
+    ],
+    "informe": "normal"
+  },
+  "admin": {
+    "chave": "HR70",
+    "senha": "eAcacdLe2"
+  },
+  "transport": {
+    "chave": "HR70",
+    "senha": "eAcacdLe2",
+    "route_kind": "home_to_work"
+  },
+  "forms_backlog": {
+    "ready_path": "/api/health/ready",
+    "producer_action_cycle": [
+      "checkin",
+      "checkout"
+    ]
+  }
+}

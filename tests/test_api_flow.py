@@ -1,13 +1,19 @@
 import asyncio
+import http.cookiejar
 import io
 import logging
+import math
 import os
 import json
 import pytest
 import shutil
 import socket
+import subprocess
+import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 import uuid
 from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta
@@ -20,7 +26,7 @@ from cryptography.fernet import Fernet
 from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 import uvicorn
 
 # Override settings before app import.
@@ -48,6 +54,8 @@ if test_transport_exports_dir.exists():
 from fastapi.testclient import TestClient
 
 from sistema.app.main import app, should_serve_static_site
+from sistema.app import database as database_module
+from sistema.app import http_runtime as http_runtime_module
 from sistema.app.core.config import settings
 from sistema.app.database import Base, SessionLocal, engine
 from sistema.app.models import (
@@ -70,8 +78,11 @@ from sistema.app.models import (
 )
 from sistema.app.routers import admin as admin_router
 from sistema.app.services.admin_updates import AdminUpdatesBroker, admin_updates_broker, notify_transport_data_changed
+from sistema.app.services.transport_ai_llm_settings import TransportAILlmSettingsEncryptionError
 from sistema.app.services.forms_worker import FormsWorker
 from sistema.app.services.forms_queue import process_forms_submission_queue_once
+from sistema.app.services import forms_queue as forms_queue_module
+from sistema.app import forms_worker_healthcheck as forms_worker_healthcheck_module
 from sistema.app.services import forms_worker as forms_worker_module
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport as transport_service_module
@@ -85,7 +96,12 @@ from sistema.app.services.admin_project_scope import (
     normalize_admin_monitored_project_names,
     resolve_effective_admin_monitored_projects,
 )
-from sistema.app.schemas import AdminManagementRow, AdminProfileUpdateRequest, TransportProposalDecision
+from sistema.app.schemas import (
+    AdminManagementRow,
+    AdminProfileUpdateRequest,
+    HealthComponentResponse,
+    TransportProposalDecision,
+)
 from sistema.app.services.admin_auth import ensure_default_admin, profile_can_view_activity_time, user_can_view_activity_time
 from sistema.app.services.managed_locations import dump_location_projects
 from sistema.app.services.passwords import hash_password, verify_password
@@ -156,6 +172,20 @@ def ensure_web_user_exists(*, chave: str, projeto: str = "P80", nome: str = "Ori
         db.commit()
 
 
+def ensure_web_transport_address(
+    *,
+    chave: str,
+    end_rua: str = "10 Marina Boulevard",
+    zip_code: str = "123456",
+) -> None:
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, chave)
+        assert user is not None
+        user.end_rua = end_rua
+        user.zip = zip_code
+        db.commit()
+
+
 def ensure_project_exists(project_name: str) -> None:
     normalized_name = str(project_name).strip().upper()
     assert normalized_name
@@ -208,6 +238,46 @@ def login_web_password(client: TestClient, *, chave: str, senha: str):
         "/api/web/auth/login",
         json={"chave": chave, "senha": senha},
     )
+
+
+def get_http_request_logs(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
+    logs: list[dict[str, object]] = []
+    for record in caplog.records:
+        if record.name != "checking.http":
+            continue
+        try:
+            payload = json.loads(record.getMessage())
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") == "http_request":
+            logs.append(payload)
+    return logs
+
+
+def get_forms_queue_logs(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
+    logs: list[dict[str, object]] = []
+    for record in caplog.records:
+        if record.name != "checking.forms_queue":
+            continue
+        try:
+            payload = json.loads(record.getMessage())
+        except json.JSONDecodeError:
+            continue
+        logs.append(payload)
+    return logs
+
+
+def get_database_logs(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
+    logs: list[dict[str, object]] = []
+    for record in caplog.records:
+        if record.name != "checking.db":
+            continue
+        try:
+            payload = json.loads(record.getMessage())
+        except json.JSONDecodeError:
+            continue
+        logs.append(payload)
+    return logs
 
 
 def make_test_key(prefix: str) -> str:
@@ -1044,6 +1114,147 @@ def live_app_server():
         thread.join(timeout=10)
 
 
+def build_cookie_opener() -> urllib.request.OpenerDirector:
+    cookie_jar = http.cookiejar.CookieJar()
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+
+
+def perform_live_json_request(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+    query: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+    timeout_seconds: float = 5.0,
+) -> tuple[int, object, int]:
+    resolved_url = f"{base_url}{path}"
+    if query:
+        resolved_url = f"{resolved_url}?{urllib.parse.urlencode(query, doseq=True)}"
+
+    request_body = None
+    if payload is not None:
+        request_body = json.dumps(payload).encode("utf-8")
+
+    request = urllib.request.Request(resolved_url, data=request_body, method=method.upper())
+    request.add_header("Accept", "application/json")
+    if request_body is not None:
+        request.add_header("Content-Type", "application/json")
+    for header_name, header_value in (headers or {}).items():
+        request.add_header(header_name, header_value)
+
+    started_at = time.perf_counter()
+    opener_to_use = opener or urllib.request.build_opener()
+    with opener_to_use.open(request, timeout=timeout_seconds) as response:
+        raw_body = response.read()
+        status_code = int(getattr(response, "status", response.getcode()))
+    latency_ms = int(round((time.perf_counter() - started_at) * 1000))
+
+    decoded_body = raw_body.decode("utf-8") if raw_body else ""
+    try:
+        parsed_body: object = json.loads(decoded_body) if decoded_body else {}
+    except json.JSONDecodeError:
+        parsed_body = decoded_body
+    return status_code, parsed_body, latency_ms
+
+
+def wait_for_condition(
+    predicate,
+    *,
+    timeout_seconds: float,
+    interval_seconds: float = 0.05,
+    description: str,
+):
+    deadline = time.monotonic() + timeout_seconds
+    last_value = None
+    while time.monotonic() < deadline:
+        last_value = predicate()
+        if last_value:
+            return last_value
+        time.sleep(interval_seconds)
+    raise AssertionError(f"Timed out waiting for {description}. Last observed value: {last_value!r}")
+
+
+def summarize_latency_samples(samples: list[int]) -> dict[str, int]:
+    assert samples
+    ordered = sorted(int(sample) for sample in samples)
+    p95_index = max(math.ceil(len(ordered) * 0.95) - 1, 0)
+    return {
+        "average_ms": int(round(sum(ordered) / len(ordered))),
+        "count": len(ordered),
+        "max_ms": ordered[-1],
+        "min_ms": ordered[0],
+        "p95_ms": ordered[p95_index],
+    }
+
+
+def start_controlled_slow_forms_worker_subprocess(*, processing_delay_seconds: float) -> subprocess.Popen[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    worker_script = f"""
+import time
+
+from sqlalchemy import func, select
+
+from sistema.app.database import SessionLocal
+from sistema.app.models import FormsSubmission
+from sistema.app.services.forms_queue import process_forms_submission_queue_once
+from sistema.app.services.forms_worker import FormsWorker
+
+
+def slow_submit(self, action, chave, projeto, ontime=True):
+    time.sleep({processing_delay_seconds!r})
+    return {{
+        \"success\": True,
+        \"message\": \"controlled slow queue success\",
+        \"retry_count\": 1,
+        \"audit_events\": [
+            {{
+                \"source\": \"forms\",
+                \"action\": \"forms\",
+                \"status\": \"completed\",
+                \"message\": \"Controlled slow queue success\",
+                \"details\": \"sleep_seconds={processing_delay_seconds!r}\",
+            }}
+        ],
+    }}
+
+
+FormsWorker.submit_with_retries = slow_submit
+
+empty_observations = 0
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline:
+    processed = process_forms_submission_queue_once(max_items=1)
+    if processed:
+        empty_observations = 0
+        continue
+
+    with SessionLocal() as db:
+        backlog_count = db.execute(
+            select(func.count())
+            .select_from(FormsSubmission)
+            .where(FormsSubmission.status.in_((\"pending\", \"processing\")))
+        ).scalar_one()
+
+    if backlog_count == 0:
+        empty_observations += 1
+        if empty_observations >= 5:
+            break
+    else:
+        empty_observations = 0
+    time.sleep(0.05)
+"""
+    return subprocess.Popen(
+        [sys.executable, "-c", worker_script],
+        cwd=str(repo_root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
 def get_user_by_rfid(db, rfid: str) -> User:
     user = find_user_by_rfid(db, rfid)
     assert user is not None
@@ -1645,7 +1856,163 @@ def test_health():
     with TestClient(app) as client:
         res = client.get("/api/health")
         assert res.status_code == 200
-        assert res.json()["status"] == "ok"
+        payload = res.json()
+        assert payload["status"] == "ok"
+        assert payload["ready"] is True
+        assert payload["overall_status"] == "ok"
+        assert payload["components"]["database"]["status"] == "ok"
+        assert payload["components"]["static_sites"]["status"] == "ok"
+        assert payload["components"]["transport_ai_operational_readiness"]["status"] in {"ok", "disabled"}
+        assert payload["components"]["transport_ai_settings_encryption"]["status"] in {"ok", "disabled"}
+        assert payload["components"]["forms_worker"]["status"] == "disabled"
+
+
+def test_health_live():
+    with TestClient(app) as client:
+        res = client.get("/api/health/live")
+        assert res.status_code == 200
+        assert res.json() == {"status": "ok", "app": settings.app_name}
+
+
+def test_health_ready():
+    with TestClient(app) as client:
+        res = client.get("/api/health/ready")
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["status"] == "ok"
+        assert payload["ready"] is True
+        assert payload["overall_status"] == "ok"
+        assert payload["components"]["database"]["status"] == "ok"
+        assert payload["components"]["static_sites"]["status"] == "ok"
+        assert payload["components"]["transport_ai_operational_readiness"]["status"] in {"ok", "disabled"}
+        assert payload["components"]["transport_ai_settings_encryption"]["status"] in {"ok", "disabled"}
+        assert "forms_worker" not in payload["components"]
+
+
+def test_health_ready_returns_503_when_database_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "sistema.app.routers.health._build_database_component",
+        lambda: HealthComponentResponse(status="failed", detail="database unavailable"),
+    )
+
+    with TestClient(app) as client:
+        res = client.get("/api/health/ready")
+
+    assert res.status_code == 503
+    payload = res.json()
+    assert payload["status"] == "unready"
+    assert payload["ready"] is False
+    assert payload["overall_status"] == "unready"
+    assert payload["components"]["database"]["status"] == "failed"
+
+
+def test_health_ready_returns_503_when_transport_ai_settings_encryption_is_unavailable(monkeypatch):
+    monkeypatch.setattr(settings, "transport_ai_enabled", True)
+    monkeypatch.setattr(settings, "transport_ai_agent_mode", "agent")
+    monkeypatch.setattr(settings, "transport_ai_operational_approval_evidence", "phase8-loadtest-2026-05-05")
+    monkeypatch.setattr(settings, "transport_ai_max_concurrent_runs", 1)
+    monkeypatch.setattr(settings, "transport_ai_max_runtime_seconds", 180)
+    monkeypatch.setattr(
+        "sistema.app.routers.health.validate_transport_ai_settings_encryption_availability",
+        lambda: (_ for _ in ()).throw(
+            TransportAILlmSettingsEncryptionError("Transport AI settings encryption key is not configured.")
+        ),
+    )
+
+    with TestClient(app) as client:
+        res = client.get("/api/health/ready")
+
+    assert res.status_code == 503
+    payload = res.json()
+    assert payload["status"] == "unready"
+    assert payload["ready"] is False
+    assert payload["overall_status"] == "unready"
+    assert payload["components"]["transport_ai_settings_encryption"]["status"] == "failed"
+    assert payload["components"]["transport_ai_settings_encryption"]["detail"] == "Transport AI settings encryption key is not configured."
+
+
+def test_health_ready_returns_503_when_transport_ai_operational_readiness_is_unavailable(monkeypatch):
+    monkeypatch.setattr(settings, "transport_ai_enabled", True)
+    monkeypatch.setattr(settings, "transport_ai_agent_mode", "deterministic")
+    monkeypatch.setattr(settings, "transport_ai_operational_approval_evidence", None)
+    monkeypatch.setattr(settings, "transport_ai_max_concurrent_runs", 1)
+    monkeypatch.setattr(settings, "transport_ai_max_runtime_seconds", 180)
+
+    with TestClient(app) as client:
+        res = client.get("/api/health/ready")
+
+    assert res.status_code == 503
+    payload = res.json()
+    assert payload["status"] == "unready"
+    assert payload["ready"] is False
+    assert payload["overall_status"] == "unready"
+    assert payload["components"]["transport_ai_operational_readiness"]["status"] == "failed"
+    assert "transport_ai_operational_approval_missing" in payload["components"]["transport_ai_operational_readiness"]["detail"]
+
+
+def test_health_surfaces_forms_worker_degradation_without_failing_api(monkeypatch):
+    monkeypatch.setattr(
+        "sistema.app.routers.health._build_forms_worker_component",
+        lambda: HealthComponentResponse(status="degraded", detail="forms worker heartbeat stale"),
+    )
+
+    with TestClient(app) as client:
+        res = client.get("/api/health")
+
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["status"] == "ok"
+    assert payload["ready"] is True
+    assert payload["overall_status"] == "degraded"
+    assert payload["components"]["forms_worker"]["status"] == "degraded"
+
+
+def test_http_request_logging_middleware_emits_structured_fields_and_request_id(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level(logging.INFO, logger="checking.http"):
+        with TestClient(app) as client:
+            caplog.clear()
+            health_response = client.get("/api/health")
+            assert health_response.status_code == 200
+            health_request_id = health_response.headers.get("X-Request-ID")
+            assert health_request_id
+
+            health_logs = get_http_request_logs(caplog)
+            assert health_logs
+            health_log = health_logs[-1]
+            assert health_log == {
+                "authenticated_kind": None,
+                "client_surface": "health",
+                "event": "http_request",
+                "is_critical_route": True,
+                "latency_ms": health_log["latency_ms"],
+                "method": "GET",
+                "path": "/api/health",
+                "request_id": health_request_id,
+                "status_code": 200,
+            }
+            assert isinstance(health_log["latency_ms"], int)
+            assert health_log["latency_ms"] >= 0
+
+            caplog.clear()
+            login_response = login_admin(client)
+            assert login_response.status_code == 200, login_response.text
+            session_response = client.get("/api/admin/auth/session")
+            assert session_response.status_code == 200
+            session_request_id = session_response.headers.get("X-Request-ID")
+            assert session_request_id
+
+            session_logs = get_http_request_logs(caplog)
+            assert session_logs
+            session_log = next(payload for payload in reversed(session_logs) if payload["path"] == "/api/admin/auth/session")
+            assert session_log["method"] == "GET"
+            assert session_log["path"] == "/api/admin/auth/session"
+            assert session_log["status_code"] == 200
+            assert session_log["client_surface"] == "admin"
+            assert session_log["authenticated_kind"] == "admin_session"
+            assert session_log["is_critical_route"] is False
+            assert session_log["request_id"] == session_request_id
+            assert isinstance(session_log["latency_ms"], int)
+            assert session_log["latency_ms"] >= 0
 
 
 def test_vehicle_schema_and_user_transport_fields_persist_expected_values():
@@ -4061,6 +4428,118 @@ def test_admin_updates_broker_publishes_payload():
         broker.unsubscribe(subscriber_id)
 
 
+def test_http_runtime_builds_gunicorn_command_from_environment(monkeypatch):
+    monkeypatch.setenv("APP_HOST", "127.0.0.1")
+    monkeypatch.setenv("APP_PORT", "18080")
+    monkeypatch.setenv("APP_WORKERS", "2")
+    monkeypatch.setenv("APP_KEEPALIVE_SECONDS", "5")
+    monkeypatch.setenv("APP_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("APP_GRACEFUL_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("APP_MAX_REQUESTS", "1000")
+    monkeypatch.setenv("APP_MAX_REQUESTS_JITTER", "100")
+
+    command = http_runtime_module.build_http_server_command()
+
+    assert command == [
+        sys.executable,
+        "-m",
+        "gunicorn.app.wsgiapp",
+        "sistema.app.main:app",
+        "--worker-class",
+        "uvicorn.workers.UvicornWorker",
+        "--workers",
+        "2",
+        "--bind",
+        "127.0.0.1:18080",
+        "--keep-alive",
+        "5",
+        "--timeout",
+        "90",
+        "--graceful-timeout",
+        "30",
+        "--max-requests",
+        "1000",
+        "--max-requests-jitter",
+        "100",
+    ]
+
+
+def test_http_runtime_execs_server_without_migration_preflight(monkeypatch):
+    startup_calls: list[tuple[str, object]] = []
+
+    def fake_execv(executable, argv):
+        startup_calls.append(("execv", (executable, argv)))
+        raise SystemExit(0)
+
+    monkeypatch.setattr(
+        http_runtime_module,
+        "build_http_server_command",
+        lambda: [
+            sys.executable,
+            "-m",
+            "gunicorn.app.wsgiapp",
+            "sistema.app.main:app",
+        ],
+    )
+    monkeypatch.setattr(http_runtime_module.os, "execv", fake_execv)
+
+    with pytest.raises(SystemExit):
+        http_runtime_module.main()
+
+    assert startup_calls == [
+        (
+            "execv",
+            (
+                sys.executable,
+                [
+                    sys.executable,
+                    "-m",
+                    "gunicorn.app.wsgiapp",
+                    "sistema.app.main:app",
+                ],
+            ),
+        ),
+    ]
+
+
+def test_admin_updates_broker_dispatches_cross_worker_payload_without_local_duplicates(monkeypatch):
+    source_broker = AdminUpdatesBroker("checking_admin_updates")
+    target_broker = AdminUpdatesBroker("checking_admin_updates")
+    source_subscriber_id, source_queue = source_broker.subscribe()
+    target_subscriber_id, target_queue = target_broker.subscribe()
+    published_payloads: list[str] = []
+
+    def fake_publish_payload_to_postgres(payload: str) -> bool:
+        published_payloads.append(payload)
+        target_broker._dispatch_remote_payload(payload)
+        source_broker._dispatch_remote_payload(payload)
+        return True
+
+    monkeypatch.setattr(source_broker, "_supports_cross_worker", lambda: True)
+    monkeypatch.setattr(source_broker, "_publish_payload_to_postgres", fake_publish_payload_to_postgres)
+
+    try:
+        source_broker.publish("event", metadata={"scope": "admin"})
+
+        source_payload = source_queue.get_nowait()
+        target_payload = target_queue.get_nowait()
+        source_event = json.loads(source_payload)
+        target_event = json.loads(target_payload)
+
+        assert published_payloads == [source_payload]
+        assert source_event["reason"] == "event"
+        assert source_event["scope"] == "admin"
+        assert target_event["reason"] == "event"
+        assert target_event["scope"] == "admin"
+        assert target_event["event_id"] == source_event["event_id"]
+
+        with pytest.raises(asyncio.QueueEmpty):
+            source_queue.get_nowait()
+    finally:
+        source_broker.unsubscribe(source_subscriber_id)
+        target_broker.unsubscribe(target_subscriber_id)
+
+
 def test_pending_registration_flow():
     with TestClient(app) as client:
         ensure_admin_session(client)
@@ -4589,6 +5068,670 @@ def test_forms_queue_processing_persists_failure_state(monkeypatch):
             assert queued.status == "failed"
             assert queued.retry_count == 2
             assert queued.last_error == "mocked queue failure"
+
+
+def test_forms_queue_diagnostics_endpoint_reports_backlog_and_recent_processing_metrics():
+    reference_time = now_sgt()
+
+    with SessionLocal() as db:
+        db.execute(delete(FormsSubmission))
+        db.add_all(
+            [
+                FormsSubmission(
+                    request_id=f"diag-pending-{uuid.uuid4().hex}",
+                    rfid="DIAGP1",
+                    action="checkin",
+                    chave="DP01",
+                    projeto="P80",
+                    device_id="ESP32-DIAG",
+                    local="main",
+                    ontime=True,
+                    status="pending",
+                    retry_count=0,
+                    last_error=None,
+                    created_at=reference_time - timedelta(seconds=90),
+                    updated_at=reference_time - timedelta(seconds=90),
+                    processed_at=None,
+                ),
+                FormsSubmission(
+                    request_id=f"diag-processing-{uuid.uuid4().hex}",
+                    rfid="DIAGP2",
+                    action="checkout",
+                    chave="DP02",
+                    projeto="P80",
+                    device_id="ESP32-DIAG",
+                    local="main",
+                    ontime=True,
+                    status="processing",
+                    retry_count=1,
+                    last_error=None,
+                    created_at=reference_time - timedelta(seconds=30),
+                    updated_at=reference_time - timedelta(seconds=5),
+                    processed_at=None,
+                ),
+                FormsSubmission(
+                    request_id=f"diag-success-{uuid.uuid4().hex}",
+                    rfid="DIAGS1",
+                    action="checkin",
+                    chave="DS01",
+                    projeto="P80",
+                    device_id="ESP32-DIAG",
+                    local="main",
+                    ontime=True,
+                    status="success",
+                    retry_count=0,
+                    last_error=None,
+                    created_at=reference_time - timedelta(seconds=80),
+                    updated_at=reference_time - timedelta(seconds=20),
+                    processed_at=reference_time - timedelta(seconds=20),
+                ),
+                FormsSubmission(
+                    request_id=f"diag-failed-{uuid.uuid4().hex}",
+                    rfid="DIAGF1",
+                    action="checkout",
+                    chave="DF01",
+                    projeto="P80",
+                    device_id="ESP32-DIAG",
+                    local="main",
+                    ontime=True,
+                    status="failed",
+                    retry_count=2,
+                    last_error="timeout",
+                    created_at=reference_time - timedelta(seconds=40),
+                    updated_at=reference_time - timedelta(seconds=10),
+                    processed_at=reference_time - timedelta(seconds=10),
+                ),
+            ]
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+        response = client.get("/api/admin/forms/queue/diagnostics")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["backlog_count"] == 2
+    assert payload["pending_count"] == 1
+    assert payload["processing_count"] == 1
+    assert payload["success_count"] == 1
+    assert payload["failed_count"] == 1
+    assert payload["oldest_backlog_age_seconds"] >= 90
+    assert payload["oldest_pending_age_seconds"] >= 90
+    assert payload["oldest_processing_age_seconds"] >= 30
+    assert payload["recent_average_processing_ms"] == 45000
+    assert payload["recent_processed_sample_size"] == 2
+    assert payload["worker"]["enabled"] is False
+    assert payload["worker"]["running"] is False
+    assert payload["worker"]["status"] == "stopped"
+    assert payload["worker"]["poll_interval_seconds"] == 0.25
+
+
+def test_forms_queue_processing_emits_structured_logs(monkeypatch, caplog: pytest.LogCaptureFixture):
+    with SessionLocal() as db:
+        db.execute(delete(FormsSubmission))
+        db.add(
+            FormsSubmission(
+                request_id=f"diag-log-{uuid.uuid4().hex}",
+                rfid="DIAGLOG1",
+                action="checkin",
+                chave="DL01",
+                projeto="P80",
+                device_id="ESP32-DIAG",
+                local="main",
+                ontime=True,
+                status="pending",
+                retry_count=0,
+                last_error=None,
+                created_at=now_sgt() - timedelta(seconds=5),
+                updated_at=now_sgt() - timedelta(seconds=5),
+                processed_at=None,
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        lambda self, action, chave, projeto, ontime=True: {
+            "success": True,
+            "message": "mocked queue success",
+            "retry_count": 1,
+            "audit_events": [
+                {
+                    "source": "forms",
+                    "action": "forms",
+                    "status": "completed",
+                    "message": "Microsoft Forms completed",
+                    "details": "steps=ok",
+                }
+            ],
+        },
+    )
+
+    with caplog.at_level(logging.INFO, logger="checking.forms_queue"):
+        caplog.clear()
+        processed = process_forms_submission_queue_once(max_items=1)
+
+    assert processed == 1
+    queue_logs = get_forms_queue_logs(caplog)
+    assert queue_logs
+
+    reserved_log = next(payload for payload in queue_logs if payload["event"] == "forms_queue_reserved")
+    processed_log = next(payload for payload in queue_logs if payload["event"] == "forms_queue_processed")
+    assert reserved_log["status"] == "processing"
+    assert isinstance(reserved_log["submission_id"], int)
+    assert processed_log["status"] == "success"
+    assert processed_log["action"] == "checkin"
+    assert processed_log["retry_count"] == 1
+    assert processed_log["error_code"] is None
+    assert processed_log["turnaround_ms"] >= 0
+
+
+def test_http_app_lifespan_does_not_start_forms_worker(monkeypatch):
+    start_calls: list[str] = []
+    stop_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "sistema.app.services.forms_queue.forms_submission_worker.start",
+        lambda: start_calls.append("start"),
+    )
+    monkeypatch.setattr(
+        "sistema.app.services.forms_queue.forms_submission_worker.stop",
+        lambda: stop_calls.append("stop"),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200, response.text
+    assert start_calls == []
+    assert stop_calls == []
+
+
+def test_http_app_lifespan_starts_and_stops_realtime_brokers(monkeypatch):
+    lifecycle_calls: list[str] = []
+
+    monkeypatch.setattr("sistema.app.main.start_realtime_brokers", lambda: lifecycle_calls.append("start"))
+    monkeypatch.setattr("sistema.app.main.stop_realtime_brokers", lambda: lifecycle_calls.append("stop"))
+
+    with TestClient(app) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200, response.text
+    assert lifecycle_calls == ["start", "stop"]
+
+
+def test_forms_queue_reservation_retries_when_candidate_was_claimed(monkeypatch):
+    selected_rows = iter(
+        [
+            SimpleNamespace(id=101, request_id="forms-race-1"),
+            SimpleNamespace(id=202, request_id="forms-race-2"),
+        ]
+    )
+    claim_calls: list[int] = []
+
+    monkeypatch.setattr(
+        forms_queue_module,
+        "_select_next_pending_submission_row",
+        lambda db: next(selected_rows, None),
+    )
+
+    def fake_claim(db, *, submission_id: int, updated_at):
+        claim_calls.append(submission_id)
+        return submission_id == 202
+
+    monkeypatch.setattr(forms_queue_module, "_claim_submission_for_processing", fake_claim)
+
+    reserved_id = forms_queue_module._reserve_next_submission_id()
+
+    assert reserved_id == 202
+    assert claim_calls == [101, 202]
+
+
+def test_forms_queue_diagnostics_uses_persisted_worker_health_snapshot(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(settings, "event_archives_dir", str(tmp_path))
+    reference_time = now_sgt()
+    forms_queue_module._write_forms_worker_health_snapshot(
+        {
+            "enabled": True,
+            "running": True,
+            "status": "running",
+            "thread_name": "forms-submission-worker",
+            "process_id": 4321,
+            "started_at": reference_time - timedelta(seconds=30),
+            "last_heartbeat_at": reference_time,
+            "last_loop_started_at": reference_time - timedelta(seconds=2),
+            "last_loop_completed_at": reference_time - timedelta(seconds=1),
+            "last_loop_processed_count": 4,
+            "consecutive_error_count": 0,
+            "current_backoff_seconds": 0.0,
+            "restart_count": 2,
+            "last_error": None,
+        }
+    )
+
+    with SessionLocal() as db:
+        diagnostics = forms_queue_module.get_forms_queue_diagnostics(db=db)
+
+    assert diagnostics["worker"]["enabled"] is True
+    assert diagnostics["worker"]["running"] is True
+    assert diagnostics["worker"]["status"] == "running"
+    assert diagnostics["worker"]["process_id"] == 4321
+    assert diagnostics["worker"]["restart_count"] == 2
+    assert diagnostics["worker"]["heartbeat_age_seconds"] == 0
+    assert diagnostics["worker"]["stale"] is False
+
+
+def test_forms_worker_healthcheck_reports_stale_snapshot_as_unhealthy(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    monkeypatch.setattr(settings, "event_archives_dir", str(tmp_path))
+    stale_time = now_sgt() - timedelta(seconds=settings.forms_worker_health_stale_seconds + 5)
+    forms_queue_module._write_forms_worker_health_snapshot(
+        {
+            "enabled": True,
+            "running": True,
+            "status": "running",
+            "thread_name": "forms-submission-worker",
+            "process_id": 999,
+            "started_at": stale_time - timedelta(seconds=10),
+            "last_heartbeat_at": stale_time,
+            "last_loop_started_at": stale_time,
+            "last_loop_completed_at": stale_time,
+            "last_loop_processed_count": 0,
+            "consecutive_error_count": 0,
+            "current_backoff_seconds": 0.0,
+            "restart_count": 0,
+            "last_error": None,
+        }
+    )
+
+    exit_code = forms_worker_healthcheck_module.main()
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "unhealthy"
+    assert payload["reason"] == "forms worker heartbeat stale"
+
+
+def test_forms_worker_error_backoff_grows_exponentially_and_caps():
+    assert forms_queue_module._compute_exponential_backoff_seconds(base_seconds=1.0, max_seconds=15.0, attempt=1) == 1.0
+    assert forms_queue_module._compute_exponential_backoff_seconds(base_seconds=1.0, max_seconds=15.0, attempt=2) == 2.0
+    assert forms_queue_module._compute_exponential_backoff_seconds(base_seconds=1.0, max_seconds=15.0, attempt=4) == 8.0
+    assert forms_queue_module._compute_exponential_backoff_seconds(base_seconds=1.0, max_seconds=15.0, attempt=6) == 15.0
+
+
+def test_run_forms_submission_worker_forever_restarts_after_unexpected_thread_exit(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(settings, "event_archives_dir", str(tmp_path))
+
+    class DeadThread:
+        name = "forms-submission-worker"
+
+        def is_alive(self) -> bool:
+            return False
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self._stop_event = threading.Event()
+            self._thread = None
+            self.start_calls = 0
+            self.stop_calls = 0
+            self.backoff_waits: list[float] = []
+
+        def start(self) -> None:
+            self.start_calls += 1
+            self._thread = DeadThread()
+            if self.start_calls >= 2:
+                self._stop_event.set()
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+            self._stop_event.set()
+            self._thread = None
+
+        def stop_requested(self) -> bool:
+            return self._stop_event.is_set()
+
+        def mark_supervisor_restart_wait(self, *, backoff_seconds: float) -> None:
+            self.backoff_waits.append(backoff_seconds)
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "running": False,
+                "status": "stopped",
+                "thread_name": "forms-submission-worker",
+                "started_at": now_sgt(),
+                "last_loop_started_at": None,
+                "last_loop_completed_at": None,
+                "last_loop_processed_count": 0,
+                "consecutive_error_count": 0,
+                "current_backoff_seconds": 0.0,
+                "restart_count": max(self.start_calls - 1, 0),
+                "last_error": "thread exited unexpectedly",
+            }
+
+    fake_worker = FakeWorker()
+    monkeypatch.setattr(forms_queue_module, "forms_submission_worker", fake_worker)
+    monkeypatch.setattr(
+        forms_queue_module,
+        "_compute_exponential_backoff_seconds",
+        lambda **kwargs: 0.0,
+    )
+
+    forms_queue_module.run_forms_submission_worker_forever()
+
+    assert fake_worker.start_calls >= 2
+    assert fake_worker.stop_calls == 1
+    assert fake_worker.backoff_waits == [0.0]
+
+
+def test_forms_backlog_pressure_keeps_http_routes_responsive():
+    backlog_size = 20
+    processing_delay_seconds = 0.15
+    web_key = make_test_key("W")
+    mobile_key = make_test_key("M")
+    web_password = "iso1234"
+
+    ensure_web_user_exists(chave=web_key, projeto="P80", nome="Isolacao Web")
+    ensure_web_user_exists(chave=mobile_key, projeto="P80", nome="Isolacao Mobile")
+
+    with TestClient(app) as client:
+        register_response = register_web_password(
+            client,
+            chave=web_key,
+            senha=web_password,
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert register_response.status_code == 200, register_response.text
+
+    with SessionLocal() as db:
+        db.execute(delete(FormsSubmission))
+        reference_time = now_sgt()
+        db.add_all(
+            [
+                FormsSubmission(
+                    request_id=f"forms-isolation-{index}-{uuid.uuid4().hex}",
+                    rfid=f"ISO{index:03d}",
+                    action="checkin" if index % 2 == 0 else "checkout",
+                    chave=f"Q{index:03d}",
+                    projeto="P80",
+                    device_id="ESP32-ISOLATION",
+                    local="controlled-backlog",
+                    ontime=True,
+                    status="pending",
+                    retry_count=0,
+                    last_error=None,
+                    created_at=reference_time - timedelta(seconds=backlog_size - index),
+                    updated_at=reference_time - timedelta(seconds=backlog_size - index),
+                    processed_at=None,
+                )
+                for index in range(backlog_size)
+            ]
+        )
+        db.commit()
+        initial_diagnostics = forms_queue_module.get_forms_queue_diagnostics(db=db)
+
+    assert initial_diagnostics["backlog_count"] == backlog_size
+    assert initial_diagnostics["pending_count"] == backlog_size
+
+    worker_process: subprocess.Popen[str] | None = None
+    worker_stdout = ""
+    worker_stderr = ""
+    try:
+        with live_app_server() as base_url:
+            worker_process = start_controlled_slow_forms_worker_subprocess(
+                processing_delay_seconds=processing_delay_seconds,
+            )
+
+            def read_diagnostics() -> dict[str, object]:
+                with SessionLocal() as db:
+                    return forms_queue_module.get_forms_queue_diagnostics(db=db)
+
+            pressure_diagnostics = wait_for_condition(
+                lambda: (
+                    snapshot
+                    if (snapshot := read_diagnostics())["processing_count"] >= 1
+                    and snapshot["backlog_count"] >= backlog_size - 2
+                    else None
+                ),
+                timeout_seconds=10,
+                description="forms backlog pressure to begin",
+            )
+
+            route_samples: dict[str, list[int]] = {
+                "admin_checkin": [],
+                "admin_login": [],
+                "admin_projects": [],
+                "health": [],
+                "mobile_state": [],
+                "web_login": [],
+                "web_state": [],
+            }
+
+            for _ in range(5):
+                health_status, health_payload, health_latency = perform_live_json_request(base_url, "/api/health")
+                assert health_status == 200
+                assert health_payload["status"] == "ok"
+                route_samples["health"].append(health_latency)
+
+                web_opener = build_cookie_opener()
+                web_login_status, web_login_payload, web_login_latency = perform_live_json_request(
+                    base_url,
+                    "/api/web/auth/login",
+                    method="POST",
+                    payload={"chave": web_key, "senha": web_password},
+                    opener=web_opener,
+                )
+                assert web_login_status == 200
+                assert web_login_payload["authenticated"] is True
+                route_samples["web_login"].append(web_login_latency)
+
+                web_state_status, web_state_payload, web_state_latency = perform_live_json_request(
+                    base_url,
+                    "/api/web/check/state",
+                    query={"chave": web_key},
+                    opener=web_opener,
+                )
+                assert web_state_status == 200
+                assert web_state_payload["chave"] == web_key
+                route_samples["web_state"].append(web_state_latency)
+
+                admin_opener = build_cookie_opener()
+                admin_login_status, admin_login_payload, admin_login_latency = perform_live_json_request(
+                    base_url,
+                    "/api/admin/auth/login",
+                    method="POST",
+                    payload={"chave": ADMIN_LOGIN_CHAVE, "senha": ADMIN_LOGIN_SENHA},
+                    opener=admin_opener,
+                )
+                assert admin_login_status == 200
+                assert admin_login_payload["ok"] is True
+                route_samples["admin_login"].append(admin_login_latency)
+
+                admin_projects_status, admin_projects_payload, admin_projects_latency = perform_live_json_request(
+                    base_url,
+                    "/api/admin/projects",
+                    opener=admin_opener,
+                )
+                assert admin_projects_status == 200
+                assert isinstance(admin_projects_payload, list)
+                route_samples["admin_projects"].append(admin_projects_latency)
+
+                admin_checkin_status, admin_checkin_payload, admin_checkin_latency = perform_live_json_request(
+                    base_url,
+                    "/api/admin/checkin",
+                    opener=admin_opener,
+                )
+                assert admin_checkin_status == 200
+                assert isinstance(admin_checkin_payload, list)
+                route_samples["admin_checkin"].append(admin_checkin_latency)
+
+                mobile_state_status, mobile_state_payload, mobile_state_latency = perform_live_json_request(
+                    base_url,
+                    "/api/mobile/state",
+                    query={"chave": mobile_key},
+                    headers=MOBILE_HEADERS,
+                )
+                assert mobile_state_status == 200
+                assert mobile_state_payload["chave"] == mobile_key
+                route_samples["mobile_state"].append(mobile_state_latency)
+
+            during_diagnostics = read_diagnostics()
+            drained_diagnostics = wait_for_condition(
+                lambda: (
+                    snapshot
+                    if (snapshot := read_diagnostics())["backlog_count"] == 0
+                    else None
+                ),
+                timeout_seconds=20,
+                description="forms backlog drain to finish",
+            )
+
+        if worker_process is not None:
+            worker_stdout, worker_stderr = worker_process.communicate(timeout=10)
+    finally:
+        if worker_process is not None and worker_process.poll() is None:
+            worker_process.terminate()
+            worker_stdout, worker_stderr = worker_process.communicate(timeout=10)
+        with SessionLocal() as db:
+            db.execute(delete(FormsSubmission))
+            db.commit()
+
+    assert worker_process is not None
+    assert worker_process.returncode == 0, worker_stderr or worker_stdout
+    assert pressure_diagnostics["processing_count"] >= 1
+    assert during_diagnostics["backlog_count"] > 0
+    assert drained_diagnostics["backlog_count"] == 0
+
+    latency_summary = {route_name: summarize_latency_samples(samples) for route_name, samples in route_samples.items()}
+    latency_budgets_ms = {
+        "admin_checkin": 1500,
+        "admin_login": 1500,
+        "admin_projects": 1500,
+        "health": 500,
+        "mobile_state": 1000,
+        "web_login": 1500,
+        "web_state": 1000,
+    }
+    for route_name, budget_ms in latency_budgets_ms.items():
+        assert latency_summary[route_name]["max_ms"] < budget_ms, {
+            "route": route_name,
+            "budget_ms": budget_ms,
+            **latency_summary[route_name],
+        }
+
+    print(
+        json.dumps(
+            {
+                "event": "forms_isolation_validation",
+                "initial_backlog": initial_diagnostics["backlog_count"],
+                "pressure_backlog": pressure_diagnostics["backlog_count"],
+                "pressure_processing": pressure_diagnostics["processing_count"],
+                "backlog_after_requests": during_diagnostics["backlog_count"],
+                "backlog_after_drain": drained_diagnostics["backlog_count"],
+                "latency_summary": latency_summary,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
+
+def test_database_diagnostics_endpoint_reports_query_and_pool_metrics():
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        checkin_response = client.get("/api/admin/checkin")
+        assert checkin_response.status_code == 200, checkin_response.text
+
+        diagnostics_response = client.get("/api/admin/diagnostics/database")
+        assert diagnostics_response.status_code == 200, diagnostics_response.text
+
+    payload = diagnostics_response.json()
+    assert payload["pool"]["dialect"] == "sqlite"
+    assert payload["pool"]["pool_class"]
+    assert payload["pool"]["configured_pool_timeout_seconds"] is None
+    assert payload["pool"]["configured_pool_recycle_seconds"] is None
+    assert payload["pool"]["pool_pre_ping"] is True
+    assert payload["pool"]["checked_out"] >= 1
+    assert payload["pool"]["total_connect_events"] >= 1
+    assert payload["latency"]["query_count_total"] >= 1
+    assert payload["latency"]["recent_query_sample_size"] >= 1
+    assert payload["latency"]["recent_average_query_ms"] is not None
+    hot_path = next(item for item in payload["latency"]["hot_paths"] if item["path"] == "/api/admin/checkin")
+    assert hot_path["recent_query_count"] >= 1
+    assert hot_path["total_query_count"] >= 1
+    assert payload["server_connections"]["source"] == "unsupported"
+    assert payload["recommended_alert_thresholds"] == {
+        "pool_usage_warning_ratio": 0.8,
+        "pool_usage_critical_ratio": 1.0,
+        "recent_query_p95_warning_ms": 150,
+        "recent_query_p95_critical_ms": 300,
+        "slow_query_log_threshold_ms": 250,
+        "postgres_active_connections_warning": 24,
+        "postgres_active_connections_critical": 32,
+        "postgres_waiting_connections_warning": 1,
+        "postgres_waiting_connections_critical": 3,
+        "postgres_idle_in_transaction_warning": 1,
+    }
+
+
+def test_database_engine_kwargs_apply_explicit_queue_pool_settings_for_postgres():
+    pool_config = database_module.resolve_database_pool_config(
+        database_url="postgresql+psycopg://postgres:postgres@localhost:5432/checking",
+        pool_size=6,
+        max_overflow=2,
+        pool_timeout_seconds=5,
+        pool_recycle_seconds=1800,
+    )
+
+    sample_engine = database_module.create_engine(
+        "postgresql+psycopg://postgres:postgres@localhost:5432/checking",
+        **database_module.build_database_engine_kwargs(pool_config),
+    )
+    try:
+        assert type(sample_engine.pool).__name__ == "QueuePool"
+        assert getattr(sample_engine.pool, "_pool").maxsize == 6
+        assert getattr(sample_engine.pool, "_max_overflow") == 2
+        assert getattr(sample_engine.pool, "_timeout") == 5
+        assert getattr(sample_engine.pool, "_recycle") == 1800
+    finally:
+        sample_engine.dispose()
+
+
+def test_database_engine_kwargs_leave_sqlite_pool_defaults():
+    pool_config = database_module.resolve_database_pool_config(
+        database_url="sqlite:///./checking.db",
+        pool_size=6,
+        max_overflow=2,
+        pool_timeout_seconds=5,
+        pool_recycle_seconds=1800,
+    )
+
+    assert database_module.build_database_engine_kwargs(pool_config) == {
+        "pool_pre_ping": True,
+    }
+
+
+def test_slow_database_queries_emit_structured_logs(monkeypatch, caplog: pytest.LogCaptureFixture):
+    monkeypatch.setattr(database_module, "DATABASE_SLOW_QUERY_LOG_THRESHOLD_MS", 0)
+
+    with caplog.at_level(logging.WARNING, logger="checking.db"):
+        with TestClient(app) as client:
+            ensure_admin_session(client)
+            caplog.clear()
+            checkin_response = client.get("/api/admin/checkin")
+            assert checkin_response.status_code == 200, checkin_response.text
+
+    database_logs = get_database_logs(caplog)
+    assert database_logs
+    slow_query_log = next(payload for payload in database_logs if payload["event"] == "db_query_slow")
+    assert slow_query_log["path"] == "/api/admin/checkin"
+    assert slow_query_log["request_id"]
+    assert slow_query_log["database_dialect"] == "sqlite"
+    assert slow_query_log["latency_ms"] >= 0
+    assert slow_query_log["sql_operation"] == "SELECT"
+    assert slow_query_log["failed"] is False
 
 
 def test_forms_success_generates_single_final_forms_event(monkeypatch):
@@ -5900,8 +7043,14 @@ def test_mobile_sync_notifies_admin_realtime_subscribers():
             )
 
         assert response.status_code == 200
-        payload = queue.get_nowait()
-        assert '"reason": "checkout"' in payload
+        payloads = [queue.get_nowait()]
+        while True:
+            try:
+                payloads.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+
+        assert any('"reason": "checkout"' in payload for payload in payloads)
     finally:
         admin_updates_broker.unsubscribe(subscriber_id)
 
@@ -10685,6 +11834,89 @@ def test_web_transport_vehicle_request_returns_pending_state_without_same_day_ch
     assert any(row["chave"] == "WT11" for row in dashboard.json()["regular_requests"])
 
 
+def test_web_transport_vehicle_request_rejects_incomplete_address(monkeypatch):
+    fixed_now = datetime(2026, 4, 17, 7, 45, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT10", projeto="P80", nome="Missing Address Rider")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT10",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT10", "request_kind": "regular"},
+        )
+
+    assert created.status_code == 400
+    assert created.json()["detail"] == "Cadastre um endereco completo antes de solicitar o transporte."
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT10")
+        request_rows = db.execute(
+            select(TransportRequest).where(TransportRequest.user_id == user.id)
+        ).scalars().all()
+
+    assert request_rows == []
+
+
+def test_web_transport_vehicle_request_rejects_missing_extra_date_or_time(monkeypatch):
+    fixed_now = datetime(2026, 4, 18, 9, 30, tzinfo=ZoneInfo(settings.tz_name))
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT15", projeto="P83", nome="Incomplete Extra Rider")
+    ensure_web_transport_address(chave="WT15")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT15",
+            senha="abc123",
+            projeto="P83",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        missing_date = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT15",
+                "request_kind": "extra",
+                "requested_time": "18:10",
+            },
+        )
+        missing_time = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT15",
+                "request_kind": "extra",
+                "requested_date": fixed_now.date().isoformat(),
+            },
+        )
+
+    assert missing_date.status_code == 400
+    assert missing_date.json()["detail"] == "Informe a data do transporte extra."
+    assert missing_time.status_code == 400
+    assert missing_time.json()["detail"] == "Informe o horario do transporte extra."
+
+    with SessionLocal() as db:
+        user = get_user_by_chave(db, "WT15")
+        request_rows = db.execute(
+            select(TransportRequest).where(TransportRequest.user_id == user.id)
+        ).scalars().all()
+
+    assert request_rows == []
+
+
 def test_web_transport_stream_requires_authenticated_matching_session():
     ensure_web_user_exists(chave="WT12", projeto="P80", nome="Transport Stream Guard")
 
@@ -10743,6 +11975,7 @@ def test_transport_reevaluation_catalog_tracks_recent_request_trigger(monkeypatc
     transport_reevaluation_module.clear_transport_reevaluation_events()
 
     ensure_web_user_exists(chave="WT61", projeto="P80", nome="Reevaluation Request Rider")
+    ensure_web_transport_address(chave="WT61")
     set_user_checkin_state(chave="WT61", event_time=fixed_now, local="Reevaluation Gate")
 
     with TestClient(app) as client:
@@ -10895,12 +12128,13 @@ def test_transport_proposal_approval_emits_operational_review_trigger():
     assert latest_event["route_kind"] == "home_to_work"
 
 
-def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypatch):
+def test_web_transport_vehicle_request_rejects_second_request_for_the_same_service_date(monkeypatch):
     fixed_now = datetime(2026, 4, 18, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
     ensure_web_user_exists(chave="WT14", projeto="P83", nome="Weekend Transport Rider")
+    ensure_web_transport_address(chave="WT14")
     set_user_checkin_state(chave="WT14", event_time=fixed_now, local="Weekend Gate")
 
     with TestClient(app) as client:
@@ -10923,11 +12157,15 @@ def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypa
 
         extra_created = client.post(
             "/api/web/transport/vehicle-request",
-            json={"chave": "WT14", "request_kind": "extra"},
+            json={
+                "chave": "WT14",
+                "request_kind": "extra",
+                "requested_date": fixed_now.date().isoformat(),
+                "requested_time": "18:10",
+            },
         )
-        assert extra_created.status_code == 200
-        assert extra_created.json()["state"]["status"] == "pending"
-        assert extra_created.json()["state"]["request_kind"] == "extra"
+        assert extra_created.status_code == 409
+        assert extra_created.json()["detail"] == "Ja existe uma solicitacao de transporte ativa para 18/04/2026."
 
     with SessionLocal() as db:
         user = get_user_by_chave(db, "WT14")
@@ -10940,7 +12178,7 @@ def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypa
             .order_by(TransportRequest.id)
         ).scalars().all()
 
-    assert request_kinds == ["weekend", "extra"]
+    assert request_kinds == ["weekend"]
 
     with TestClient(app) as admin_client:
         ensure_admin_session(admin_client)
@@ -10951,16 +12189,59 @@ def test_web_transport_vehicle_request_supports_weekend_and_extra_lists(monkeypa
 
     assert dashboard.status_code == 200
     assert any(row["chave"] == "WT14" for row in dashboard.json()["weekend_requests"])
-    assert any(row["chave"] == "WT14" for row in dashboard.json()["extra_requests"])
+    assert all(row["chave"] != "WT14" for row in dashboard.json()["extra_requests"])
+
+
+def test_web_transport_vehicle_request_rejects_extra_request_for_the_same_regular_service_date(monkeypatch):
+    fixed_now = datetime(2026, 4, 20, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
+    next_tuesday = fixed_now.date() + timedelta(days=1)
+    monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
+    monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
+
+    ensure_web_user_exists(chave="WT16", projeto="P80", nome="Regular Transport Rider")
+    ensure_web_transport_address(chave="WT16")
+    set_user_checkin_state(chave="WT16", event_time=fixed_now, local="Monday Gate")
+
+    with TestClient(app) as client:
+        registered = register_web_password(
+            client,
+            chave="WT16",
+            senha="abc123",
+            projeto="P80",
+            ensure_user_exists=False,
+        )
+        assert registered.status_code == 200
+
+        regular_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={"chave": "WT16", "request_kind": "regular", "selected_weekdays": [1]},
+        )
+        assert regular_created.status_code == 200
+        assert regular_created.json()["state"]["status"] == "pending"
+        assert regular_created.json()["state"]["requests"][0]["service_date"] == next_tuesday.isoformat()
+
+        extra_created = client.post(
+            "/api/web/transport/vehicle-request",
+            json={
+                "chave": "WT16",
+                "request_kind": "extra",
+                "requested_date": next_tuesday.isoformat(),
+                "requested_time": "18:10",
+            },
+        )
+        assert extra_created.status_code == 409
+        assert extra_created.json()["detail"] == "Ja existe uma solicitacao de transporte ativa para 21/04/2026."
 
 
 def test_web_transport_weekend_and_extra_requests_remain_visible_before_their_target_date(monkeypatch):
     fixed_now = datetime(2026, 4, 17, 9, 15, tzinfo=ZoneInfo(settings.tz_name))
     saturday = fixed_now.date() + timedelta(days=1)
+    sunday = fixed_now.date() + timedelta(days=2)
     monkeypatch.setattr(web_check_router, "now_sgt", lambda: fixed_now)
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
     ensure_web_user_exists(chave="WT24", projeto="P83", nome="Upcoming Weekend Rider")
+    ensure_web_transport_address(chave="WT24")
     set_user_checkin_state(chave="WT24", event_time=fixed_now, local="Friday Gate")
 
     with TestClient(app) as client:
@@ -10985,7 +12266,7 @@ def test_web_transport_weekend_and_extra_requests_remain_visible_before_their_ta
             json={
                 "chave": "WT24",
                 "request_kind": "extra",
-                "requested_date": saturday.isoformat(),
+                "requested_date": sunday.isoformat(),
                 "requested_time": "18:10",
             },
         )
@@ -11005,7 +12286,7 @@ def test_web_transport_weekend_and_extra_requests_remain_visible_before_their_ta
 
     assert weekend_row["service_date"] == saturday.isoformat()
     assert weekend_row["assignment_status"] == "pending"
-    assert extra_row["service_date"] == saturday.isoformat()
+    assert extra_row["service_date"] == sunday.isoformat()
     assert extra_row["requested_time"] == "18:10"
     assert extra_row["assignment_status"] == "pending"
 
@@ -11017,6 +12298,7 @@ def test_web_transport_regular_request_remains_visible_before_the_next_selected_
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
     ensure_web_user_exists(chave="WT33", projeto="P80", nome="Future Regular Rider")
+    ensure_web_transport_address(chave="WT33")
     set_user_checkin_state(chave="WT33", event_time=fixed_now, local="Monday Gate")
 
     with TestClient(app) as client:
@@ -11076,6 +12358,7 @@ def test_web_transport_state_accumulates_requests_and_cancels_replaced_regular_a
         vehicle_id = vehicle.id
 
     ensure_web_user_exists(chave="WT25", projeto="P80", nome="History Transport Rider")
+    ensure_web_transport_address(chave="WT25")
     set_user_checkin_state(chave="WT25", event_time=clock["now"], local="History Gate")
 
     with TestClient(app) as client:
@@ -11152,6 +12435,7 @@ def test_transport_dashboard_reject_marks_web_request_as_cancelled(monkeypatch):
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
     ensure_web_user_exists(chave="WT26", projeto="P82", nome="Rejected Transport Rider")
+    ensure_web_transport_address(chave="WT26")
     set_user_checkin_state(chave="WT26", event_time=fixed_now, local="Reject Gate")
 
     with TestClient(app) as client:
@@ -11248,6 +12532,7 @@ def test_transport_dashboard_reject_marks_weekend_and_extra_web_requests_as_canc
     for scenario in scenarios:
         clock["now"] = scenario["now"]
         ensure_web_user_exists(chave=scenario["chave"], projeto=scenario["projeto"], nome=scenario["nome"])
+        ensure_web_transport_address(chave=scenario["chave"])
         set_user_checkin_state(chave=scenario["chave"], event_time=clock["now"], local=scenario["local"])
 
         with TestClient(app) as client:
@@ -11329,6 +12614,7 @@ def test_transport_dashboard_pending_assignment_returns_request_to_pending_in_da
         vehicle_id = vehicle.id
 
     ensure_web_user_exists(chave="WT42", projeto="P82", nome="Pending Return Rider")
+    ensure_web_transport_address(chave="WT42")
     set_user_checkin_state(chave="WT42", event_time=fixed_now, local="Pending Gate")
 
     with TestClient(app) as client:
@@ -11488,13 +12774,13 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
         db.commit()
         vehicle_id = vehicle.id
 
-    ensure_web_user_exists(chave="WT12", projeto="P82", nome="Aware Transport Rider")
-    set_user_checkin_state(chave="WT12", event_time=fixed_now, local="Main Gate")
+    ensure_web_user_exists(chave="WT17", projeto="P82", nome="Aware Transport Rider")
+    set_user_checkin_state(chave="WT17", event_time=fixed_now, local="Main Gate")
 
     with TestClient(app) as client:
         registered = register_web_password(
             client,
-            chave="WT12",
+            chave="WT17",
             senha="abc123",
             projeto="P82",
             ensure_user_exists=False,
@@ -11504,7 +12790,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
         updated_address = client.post(
             "/api/web/transport/address",
             json={
-                "chave": "WT12",
+                "chave": "WT17",
                 "end_rua": "Block 3, Harbour Street 55",
                 "zip": "654321",
             },
@@ -11515,7 +12801,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
 
         requested = client.post(
             "/api/web/transport/vehicle-request",
-            json={"chave": "WT12", "request_kind": "regular"},
+            json={"chave": "WT17", "request_kind": "regular"},
         )
         assert requested.status_code == 200
         request_id = requested.json()["state"]["request_id"]
@@ -11534,7 +12820,7 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
             )
             assert assigned.status_code == 200
 
-        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT12"})
+        confirmed_state = client.get("/api/web/transport/state", params={"chave": "WT17"})
         assert confirmed_state.status_code == 200
         assert confirmed_state.json()["status"] == "confirmed"
         assert confirmed_state.json()["awareness_confirmed"] is False
@@ -11544,13 +12830,13 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
 
         acknowledged = client.post(
             "/api/web/transport/acknowledge",
-            json={"chave": "WT12", "request_id": request_id},
+            json={"chave": "WT17", "request_id": request_id},
         )
         assert acknowledged.status_code == 200
         assert acknowledged.json()["state"]["awareness_confirmed"] is True
 
     with SessionLocal() as db:
-        user = get_user_by_chave(db, "WT12")
+        user = get_user_by_chave(db, "WT17")
         assert user.end_rua == "Block 3, Harbour Street 55"
         assert user.zip == "654321"
 
@@ -11567,8 +12853,8 @@ def test_web_transport_address_update_and_acknowledgement_reflect_on_admin_dashb
 
     assert home_dashboard.status_code == 200
     assert paired_dashboard.status_code == 200
-    home_row = next(row for row in home_dashboard.json()["regular_requests"] if row["chave"] == "WT12")
-    paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT12")
+    home_row = next(row for row in home_dashboard.json()["regular_requests"] if row["chave"] == "WT17")
+    paired_row = next(row for row in paired_dashboard.json()["regular_requests"] if row["chave"] == "WT17")
     assert home_row["awareness_status"] == "aware"
     assert paired_row["awareness_status"] == "aware"
 
@@ -12022,17 +13308,32 @@ def test_transport_operational_plan_export_includes_ai_suggestion_tabs_for_agent
             actor_user_id=admin_user.id,
             earliest_boarding_time="07:00",
             arrival_at_work_time="08:00",
-            llm_provider="deepseek",
-            llm_model="deepseek-v4-pro",
+            llm_provider="openai",
+            llm_model="gpt-5-2025-08-07",
             llm_reasoning_effort="high",
-            openai_model="deepseek-v4-pro",
+            openai_model="gpt-5-2025-08-07",
             route_provider="mapbox",
             price_currency_code="SGD",
             price_rate_unit="trip",
             baseline_snapshot_json=None,
             baseline_assignments_json=None,
             baseline_vehicle_state_json=None,
-            planning_input_json="{}",
+            planning_input_json=json.dumps(
+                {
+                    "llm_runtime_projects": [
+                        {
+                            "project_id": 85,
+                            "project_name": "P85",
+                            "partition_keys": ["partition:export-agent"],
+                            "provider": "deepseek",
+                            "model_name": "deepseek-v4-pro",
+                            "reasoning_effort": "high",
+                        }
+                    ]
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            ),
             planning_input_hash="0" * 64,
             preflight_issues_json=None,
             error_code=None,
@@ -12428,6 +13729,7 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
         vehicle_id = vehicle.id
 
     ensure_web_user_exists(chave="WT19", projeto="P80", nome="Settings Boarding Rider")
+    ensure_web_transport_address(chave="WT19")
     set_user_checkin_state(chave="WT19", event_time=fixed_now, local="Settings Gate")
 
     with TestClient(app) as admin_client:
@@ -12552,18 +13854,32 @@ def test_transport_settings_endpoint_updates_work_to_home_boarding_time(monkeypa
 def test_transport_settings_endpoint_keeps_ai_secret_on_dedicated_contract(monkeypatch):
     monkeypatch.setattr(settings, "transport_ai_settings_encryption_key", Fernet.generate_key().decode("utf-8"))
 
+    with SessionLocal() as db:
+        project = create_transport_planning_project(
+            db,
+            name="AI SETTINGS CONTRACT PROJECT",
+            address="100 Contract Avenue",
+            zip_code="018994",
+        )
+        db.commit()
+        project_id = project.id
+        project_name = project.name
+
     with TestClient(app) as admin_client:
         ensure_admin_session(admin_client)
 
         ai_settings_response = admin_client.put(
             "/api/transport/ai/settings",
             json={
+                "project_id": project_id,
                 "provider": "openai",
                 "api_key": "sk-separated-1234",
             },
         )
         assert ai_settings_response.status_code == 200, ai_settings_response.text
         assert ai_settings_response.json() == {
+            "project_id": project_id,
+            "project_name": project_name,
             "provider": "openai",
             "resolved_model": "gpt-5.4-2026-03-05",
             "reasoning_effort": "high",
@@ -12606,7 +13922,10 @@ def test_transport_settings_endpoint_keeps_ai_secret_on_dedicated_contract(monke
         }
         assert rejection_fields == {"provider", "api_key"}
 
-        ai_settings_after_rejection = admin_client.get("/api/transport/ai/settings")
+        ai_settings_after_rejection = admin_client.get(
+            "/api/transport/ai/settings",
+            params={"project_id": project_id},
+        )
         assert ai_settings_after_rejection.status_code == 200, ai_settings_after_rejection.text
         assert ai_settings_after_rejection.json() == ai_settings_response.json()
 
@@ -13051,12 +14370,14 @@ def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: current_now["value"])
 
     saturday = current_now["value"].date() + timedelta(days=1)
+    regular_plate = f"DOWR{uuid.uuid4().hex[:5].upper()}"
+    weekend_plate = f"DOWW{uuid.uuid4().hex[:5].upper()}"
 
     with SessionLocal() as db:
         location_settings_module.upsert_transport_work_to_home_time(db, work_to_home_time="16:45")
 
         regular_vehicle = Vehicle(
-            placa="DOW1810",
+            placa=regular_plate,
             tipo="carro",
             color="Silver",
             lugares=4,
@@ -13064,7 +14385,7 @@ def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
             service_scope="regular",
         )
         weekend_vehicle = Vehicle(
-            placa="DOW1645",
+            placa=weekend_plate,
             tipo="van",
             color="White",
             lugares=8,
@@ -13120,6 +14441,7 @@ def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
         assert updated_settings.status_code == 200
 
     ensure_web_user_exists(chave="DW18", projeto="P80", nome="Date Override Friday Rider")
+    ensure_web_transport_address(chave="DW18")
     set_user_checkin_state(chave="DW18", event_time=current_now["value"], local="Date Override Gate")
 
     with TestClient(app) as client:
@@ -13161,6 +14483,7 @@ def test_web_transport_date_override_applies_only_on_selected_day(monkeypatch):
 
     current_now["value"] = datetime(2026, 4, 18, 8, 50, tzinfo=ZoneInfo(settings.tz_name))
     ensure_web_user_exists(chave="DW16", projeto="P80", nome="Date Override Saturday Rider")
+    ensure_web_transport_address(chave="DW16")
     set_user_checkin_state(chave="DW16", event_time=current_now["value"], local="Date Override Gate")
 
     with TestClient(app) as client:
@@ -13233,6 +14556,7 @@ def test_web_transport_state_marks_departed_confirmed_request_as_realized_and_ex
         vehicle_id = vehicle.id
 
     ensure_web_user_exists(chave="WR17", projeto="P80", nome="Realized History Rider")
+    ensure_web_transport_address(chave="WR17")
     set_user_checkin_state(chave="WR17", event_time=fixed_now, local="Realized Gate")
 
     with TestClient(app) as client:
@@ -13309,6 +14633,7 @@ def test_web_transport_state_prefers_schedule_scope_over_legacy_vehicle_scope_mi
         vehicle_id = vehicle.id
 
     ensure_web_user_exists(chave="WS32", projeto="P80", nome="Scope Mirror Rider")
+    ensure_web_transport_address(chave="WS32")
     set_user_checkin_state(chave="WS32", event_time=fixed_now, local="Scope Gate")
 
     with TestClient(app) as client:
@@ -13369,6 +14694,7 @@ def test_web_transport_request_history_uses_next_service_date_and_effective_depa
         db.commit()
 
     ensure_web_user_exists(chave="WH18", projeto="P80", nome="History Departure Rider")
+    ensure_web_transport_address(chave="WH18")
     set_user_checkin_state(chave="WH18", event_time=current_now["value"], local="Weekend Gate")
 
     with TestClient(app) as client:
@@ -13403,6 +14729,7 @@ def test_web_transport_cancel_pending_request_marks_history_item_cancelled(monke
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
     ensure_web_user_exists(chave="WT31", projeto="P80", nome="Pending Cancel Rider")
+    ensure_web_transport_address(chave="WT31")
     set_user_checkin_state(chave="WT31", event_time=fixed_now, local="Pending Gate")
 
     with TestClient(app) as client:
@@ -13442,6 +14769,7 @@ def test_web_transport_cancel_future_regular_request_removes_row_from_dashboard(
     monkeypatch.setattr(transport_service_module, "now_sgt", lambda: fixed_now)
 
     ensure_web_user_exists(chave="WT34", projeto="P80", nome="Future Cancel Rider")
+    ensure_web_transport_address(chave="WT34")
     set_user_checkin_state(chave="WT34", event_time=fixed_now, local="Monday Gate")
 
     with TestClient(app) as client:
@@ -13604,6 +14932,7 @@ def test_web_transport_cancel_after_confirmation_removes_request_from_vehicle_da
         vehicle_id = vehicle.id
 
     ensure_web_user_exists(chave=user_key, projeto="P80", nome="Cancel Transport Rider")
+    ensure_web_transport_address(chave=user_key)
     set_user_checkin_state(chave=user_key, event_time=fixed_now, local="North Gate")
 
     with TestClient(app) as client:
@@ -13761,6 +15090,9 @@ def test_web_password_login_accepts_partial_attempts_without_validation_error():
 
 
 def test_web_location_match_returns_known_location_when_accuracy_is_good():
+    latitude = 1.365936
+    longitude = 103.811066
+
     with TestClient(app) as client:
         ensure_admin_session(client)
         auth_response = register_web_password(client, chave="WL80", senha="loc123", projeto="P80")
@@ -13770,7 +15102,7 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
             "/api/admin/locations",
             json={
                 "local": "Web Match P80",
-                "coordinates": build_rectangle_coordinates(1.255936, 103.611066),
+                "coordinates": build_rectangle_coordinates(latitude, longitude),
                 "projects": ["P80"],
                 "tolerance_meters": 150,
             },
@@ -13786,8 +15118,8 @@ def test_web_location_match_returns_known_location_when_accuracy_is_good():
         match_response = client.post(
             "/api/web/check/location",
             json={
-                "latitude": 1.255936,
-                "longitude": 103.611066,
+                "latitude": latitude,
+                "longitude": longitude,
                 "accuracy_meters": 8,
             },
         )
@@ -14356,13 +15688,13 @@ def test_web_check_accepts_synthetic_accuracy_fallback_local():
     client_event_id = f"web-check-local-fallback-{uuid.uuid4().hex}"
 
     with TestClient(app) as client:
-        auth_response = register_web_password(client, chave="WB15", senha="local2", projeto="P80")
+        auth_response = register_web_password(client, chave="WB16", senha="local2", projeto="P80")
         assert auth_response.status_code == 200
 
         response = client.post(
             "/api/web/check",
             json={
-                "chave": "WB15",
+                "chave": "WB16",
                 "projeto": "P80",
                 "action": "checkin",
                 "local": "Precisao Insuficiente",
@@ -14371,14 +15703,14 @@ def test_web_check_accepts_synthetic_accuracy_fallback_local():
                 "client_event_id": client_event_id,
             },
         )
-        history = client.get("/api/web/check/state", params={"chave": "WB15"})
+        history = client.get("/api/web/check/state", params={"chave": "WB16"})
 
         assert response.status_code == 200
         assert response.json()["ok"] is True
         assert history.status_code == 200
         assert history.json() == {
             "found": True,
-            "chave": "WB15",
+            "chave": "WB16",
             "projeto": "P80",
             "current_action": "checkin",
             "current_local": "Precisao Insuficiente",
@@ -14388,7 +15720,7 @@ def test_web_check_accepts_synthetic_accuracy_fallback_local():
         }
 
         with SessionLocal() as db:
-            user = get_user_by_chave(db, "WB15")
+            user = get_user_by_chave(db, "WB16")
             assert user.local == "Precisao Insuficiente"
 
 
@@ -15822,7 +17154,10 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         ensure_admin_session(client)
         reset_location_settings = client.post(
             "/api/admin/locations/settings",
-            json={"location_accuracy_threshold_meters": 30},
+            json={
+                "location_accuracy_threshold_meters": 30,
+                "mixed_zone_interval_minutes": 20,
+            },
         )
         assert reset_location_settings.status_code == 200
 
@@ -15841,6 +17176,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
         assert locations.json()["location_accuracy_threshold_meters"] == 30
+        assert locations.json()["mixed_zone_interval_minutes"] == 20
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
         assert base_p80["coordinates"] == build_rectangle_coordinates(1.255936, 103.611066)
         assert base_p80["projects"] == ["P80", "P82"]
@@ -15848,11 +17184,15 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         update_location_settings = client.post(
             "/api/admin/locations/settings",
-            json={"location_accuracy_threshold_meters": 45},
+            json={
+                "location_accuracy_threshold_meters": 45,
+                "mixed_zone_interval_minutes": 35,
+            },
         )
         assert update_location_settings.status_code == 200
         assert update_location_settings.json()["ok"] is True
         assert update_location_settings.json()["location_accuracy_threshold_meters"] == 45
+        assert update_location_settings.json()["mixed_zone_interval_minutes"] == 35
 
         events = client.get("/api/admin/events")
         assert events.status_code == 200
@@ -15863,7 +17203,8 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         )
         assert location_settings_event["chave"] == ADMIN_LOGIN_CHAVE
         assert location_settings_event["message"] == (
-            "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para 45 metros."
+            "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para 45 metros. "
+            "O intervalo de tempo para Zona Mista foi ajustado para 35 minutos."
         )
 
         update_location = client.post(
@@ -15881,6 +17222,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         updated_locations = client.get("/api/admin/locations")
         assert updated_locations.status_code == 200
+        assert updated_locations.json()["mixed_zone_interval_minutes"] == 35
         updated_base_p80 = next(row for row in updated_locations.json()["items"] if row["local"] == "Base P80")
         assert updated_base_p80["coordinates"] == build_rectangle_coordinates(
             1.255936,
@@ -15895,6 +17237,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         mobile_catalog = client.get("/api/mobile/locations", headers=MOBILE_HEADERS)
         assert mobile_catalog.status_code == 200
         assert mobile_catalog.json()["location_accuracy_threshold_meters"] == 45
+        assert "mixed_zone_interval_minutes" not in mobile_catalog.json()
         assert "coordinate_update_frequency_headers" not in mobile_catalog.json()
         assert "coordinate_update_frequency_rows" not in mobile_catalog.json()
         synced_row = next(row for row in mobile_catalog.json()["items"] if row["local"] == "Base P80")
@@ -16015,7 +17358,7 @@ def test_admin_locations_list_contract_preserves_expected_shape():
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
         payload = locations.json()
-        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters", "mixed_zone_interval_minutes"}
 
         location_row = next(row for row in payload["items"] if row["local"] == "Contract Base P98")
         assert set(location_row.keys()) == {
@@ -16042,7 +17385,10 @@ def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture
 
         update_location_settings = client.post(
             "/api/admin/locations/settings",
-            json={"location_accuracy_threshold_meters": 25},
+            json={
+                "location_accuracy_threshold_meters": 25,
+                "mixed_zone_interval_minutes": 35,
+            },
         )
         assert update_location_settings.status_code == 200
 
@@ -16064,8 +17410,9 @@ def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture
         locations = client.get("/api/web/check/locations")
         assert locations.status_code == 200
         payload = locations.json()
-        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters", "mixed_zone_interval_minutes"}
         assert payload["location_accuracy_threshold_meters"] == 25
+        assert payload["mixed_zone_interval_minutes"] == 35
         assert "Web Catalog Base P82" in payload["items"]
 
 
@@ -16205,9 +17552,10 @@ def test_web_location_options_contract_returns_only_name_list():
         locations_response = client.get("/api/web/check/locations")
         assert locations_response.status_code == 200
         payload = locations_response.json()
-        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters", "mixed_zone_interval_minutes"}
         assert payload["items"] == [location_name]
         assert isinstance(payload["location_accuracy_threshold_meters"], int)
+        assert isinstance(payload["mixed_zone_interval_minutes"], int)
         assert all(isinstance(item, str) for item in payload["items"])
 
 
@@ -16625,6 +17973,8 @@ def _configure_transport_ai_api_regression_runtime(monkeypatch) -> None:
     monkeypatch.setattr(settings, "transport_ai_enabled", True)
     monkeypatch.setattr(settings, "transport_ai_agent_mode", "deterministic")
     monkeypatch.setattr(settings, "transport_ai_route_provider", "fake")
+    monkeypatch.setattr(settings, "transport_ai_operational_approval_evidence", "phase8-loadtest-2026-05-05")
+    monkeypatch.setattr(settings, "transport_ai_max_concurrent_runs", 1)
     monkeypatch.setattr(settings, "mapbox_access_token", "test-mapbox-token")
 
 

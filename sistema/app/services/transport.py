@@ -83,6 +83,10 @@ _PAIRED_ROUTE_KIND = {
 }
 
 
+class TransportRequestConflictError(ValueError):
+    pass
+
+
 def _build_project_row(row) -> ProjectRow:
     return ProjectRow(
         id=row.id,
@@ -216,6 +220,68 @@ def _find_next_request_service_date(reference_date: date, selected_weekdays: set
         candidate = reference_date + timedelta(days=day_offset)
         if candidate.weekday() in selected_weekdays:
             return candidate
+    return None
+
+
+def _resolve_pending_transport_request_service_date(
+    *,
+    request_kind: str,
+    reference_date: date,
+    requested_date: date | None,
+    selected_weekdays: tuple[int, ...],
+) -> date | None:
+    if request_kind == "extra":
+        return requested_date
+    return _find_next_request_service_date(reference_date, set(selected_weekdays))
+
+
+def _is_same_transport_request_payload(
+    transport_request: TransportRequest,
+    *,
+    request_kind: str,
+    recurrence_kind: str,
+    requested_time: str,
+    requested_date: date | None,
+    selected_weekdays: tuple[int, ...],
+) -> bool:
+    if transport_request.request_kind != request_kind:
+        return False
+
+    if request_kind == "extra":
+        return (
+            transport_request.single_date == requested_date
+            and transport_request.requested_time == requested_time
+        )
+
+    return (
+        transport_request.requested_time == requested_time
+        and transport_request.recurrence_kind == recurrence_kind
+        and get_transport_request_selected_weekdays(transport_request) == set(selected_weekdays)
+    )
+
+
+def _format_transport_request_service_date_conflict_message(service_date: date | None) -> str:
+    if service_date is None:
+        return "Ja existe uma solicitacao de transporte ativa para essa data."
+    return f"Ja existe uma solicitacao de transporte ativa para {service_date.strftime('%d/%m/%Y')}."
+
+
+def _find_transport_request_service_date_conflict(
+    active_requests: list[TransportRequest],
+    *,
+    reference_date: date,
+    service_date: date | None,
+) -> TransportRequest | None:
+    if service_date is None:
+        return None
+
+    for existing in active_requests:
+        existing_service_date = _resolve_transport_request_reference_service_date(
+            existing,
+            reference_date=reference_date,
+        )
+        if existing_service_date == service_date:
+            return existing
     return None
 
 
@@ -508,32 +574,51 @@ def upsert_transport_request(
     selected_weekdays: list[int] | tuple[int, ...] | set[int] | None = None,
 ) -> tuple[TransportRequest, bool]:
     timestamp = now_sgt()
+    reference_date = timestamp.date()
     recurrence_kind = _REQUEST_KIND_TO_RECURRENCE[request_kind]
     resolved_selected_weekdays = _resolve_request_selected_weekdays(request_kind, selected_weekdays)
     selected_weekdays_json = _serialize_request_selected_weekdays(resolved_selected_weekdays)
 
-    existing_requests = db.execute(
+    active_requests = db.execute(
         select(TransportRequest)
         .where(
             TransportRequest.user_id == user.id,
-            TransportRequest.request_kind == request_kind,
             TransportRequest.status == "active",
         )
         .order_by(TransportRequest.created_at.desc(), TransportRequest.id.desc())
     ).scalars().all()
 
-    if request_kind == "extra":
-        for existing in existing_requests:
-            if existing.single_date == requested_date and existing.requested_time == requested_time:
-                return existing, False
-    else:
-        for existing in existing_requests:
-            if (
-                existing.requested_time == requested_time
-                and existing.recurrence_kind == recurrence_kind
-                and get_transport_request_selected_weekdays(existing) == set(resolved_selected_weekdays)
-            ):
-                return existing, False
+    existing_requests = [
+        existing for existing in active_requests
+        if existing.request_kind == request_kind
+    ]
+
+    for existing in existing_requests:
+        if _is_same_transport_request_payload(
+            existing,
+            request_kind=request_kind,
+            recurrence_kind=recurrence_kind,
+            requested_time=requested_time,
+            requested_date=requested_date,
+            selected_weekdays=resolved_selected_weekdays,
+        ):
+            return existing, False
+
+    requested_service_date = _resolve_pending_transport_request_service_date(
+        request_kind=request_kind,
+        reference_date=reference_date,
+        requested_date=requested_date,
+        selected_weekdays=resolved_selected_weekdays,
+    )
+    conflicting_request = _find_transport_request_service_date_conflict(
+        active_requests,
+        reference_date=reference_date,
+        service_date=requested_service_date,
+    )
+    if conflicting_request is not None:
+        raise TransportRequestConflictError(
+            _format_transport_request_service_date_conflict_message(requested_service_date)
+        )
 
     if request_kind != "extra":
         for existing in existing_requests:

@@ -98,6 +98,105 @@ def _dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
+def extract_transport_ai_run_llm_runtime_projects(run: TransportAIRun) -> list[dict[str, Any]]:
+    planning_input_json = str(run.planning_input_json or "").strip()
+    if not planning_input_json:
+        return []
+
+    try:
+        payload = json.loads(planning_input_json)
+    except Exception:
+        return []
+
+    snapshots = payload.get("llm_runtime_projects")
+    if not isinstance(snapshots, list):
+        return []
+
+    normalized_snapshots: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+
+        provider = str(snapshot.get("provider") or "").strip().lower()
+        model_name = str(snapshot.get("model_name") or "").strip()
+        reasoning_effort = str(snapshot.get("reasoning_effort") or "").strip().lower()
+        project_name = str(snapshot.get("project_name") or "").strip()
+        project_id_value = snapshot.get("project_id")
+        try:
+            project_id = int(project_id_value)
+        except (TypeError, ValueError):
+            project_id = 0
+
+        partition_keys = snapshot.get("partition_keys")
+        if not provider or not model_name or not reasoning_effort or project_id <= 0 or not project_name:
+            continue
+
+        normalized_partition_keys = []
+        if isinstance(partition_keys, list):
+            normalized_partition_keys = [
+                str(partition_key).strip()
+                for partition_key in partition_keys
+                if str(partition_key).strip()
+            ]
+
+        normalized_snapshots.append(
+            {
+                "project_id": project_id,
+                "project_name": project_name,
+                "partition_keys": normalized_partition_keys,
+                "llm_provider": provider,
+                "llm_model": model_name,
+                "llm_reasoning_effort": reasoning_effort,
+            }
+        )
+
+    return normalized_snapshots
+
+
+def resolve_transport_ai_run_llm_snapshot_fields(run: TransportAIRun) -> dict[str, str]:
+    runtime_projects = extract_transport_ai_run_llm_runtime_projects(run)
+    if runtime_projects:
+        unique_snapshots = {
+            (
+                snapshot["llm_provider"],
+                snapshot["llm_model"],
+                snapshot["llm_reasoning_effort"],
+            )
+            for snapshot in runtime_projects
+        }
+        if len(unique_snapshots) == 1:
+            llm_provider, llm_model, llm_reasoning_effort = next(iter(unique_snapshots))
+            return {
+                "llm_provider": llm_provider,
+                "llm_model": llm_model,
+                "llm_reasoning_effort": llm_reasoning_effort,
+                "openai_model": llm_model,
+            }
+
+        return {
+            "llm_provider": "multiple",
+            "llm_model": "multiple",
+            "llm_reasoning_effort": "multiple",
+            "openai_model": "multiple",
+        }
+
+    llm_model = str(run.llm_model or run.openai_model or "").strip()
+    llm_provider = str(run.llm_provider or "").strip().lower()
+    llm_reasoning_effort = str(run.llm_reasoning_effort or "").strip().lower()
+
+    if not llm_provider:
+        llm_provider = "openai" if llm_model else "unknown"
+    if not llm_reasoning_effort:
+        llm_reasoning_effort = "high" if llm_model else "unknown"
+
+    return {
+        "llm_provider": llm_provider,
+        "llm_model": llm_model or "unknown",
+        "llm_reasoning_effort": llm_reasoning_effort,
+        "openai_model": llm_model or "unknown",
+    }
+
+
 def _parse_date(value: object, *, fallback: date | None = None) -> date | None:
     if value in {None, ""}:
         return fallback

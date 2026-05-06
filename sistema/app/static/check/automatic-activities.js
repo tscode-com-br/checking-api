@@ -9,6 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const AUTOMATIC_CHECKOUT_LOCATION = 'Fora do Local de Trabalho';
   const AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION = 'Localização não Cadastrada';
+  const MIXED_ZONE_LOCATION = 'Zona Mista';
 
   function parseHistoryTimestamp(value) {
     if (!value) {
@@ -28,6 +29,10 @@
 
   function isCheckoutZoneLocationName(value) {
     return normalizeLocationName(value) === 'zona de checkout';
+  }
+
+  function isMixedZoneLocationName(value) {
+    return normalizeLocationName(value) === 'zona mista';
   }
 
   function resolveLastRecordedAction(state) {
@@ -59,6 +64,98 @@
     return state ? state.current_local : null;
   }
 
+  function resolveRecordedActionTimestamp(state, action) {
+    if (action === 'checkin') {
+      return parseHistoryTimestamp(state && state.last_checkin_at);
+    }
+    if (action === 'checkout') {
+      return parseHistoryTimestamp(state && state.last_checkout_at);
+    }
+    return null;
+  }
+
+  function resolveLastRelevantMixedZoneActivity(state) {
+    const currentRecordedLocation = resolveCurrentRecordedLocation(state);
+    if (!isMixedZoneLocationName(currentRecordedLocation)) {
+      return null;
+    }
+
+    const lastRecordedAction = resolveLastRecordedAction(state);
+    if (lastRecordedAction !== 'checkin' && lastRecordedAction !== 'checkout') {
+      return null;
+    }
+
+    const timestamp = resolveRecordedActionTimestamp(state, lastRecordedAction);
+    if (!timestamp) {
+      return null;
+    }
+
+    return {
+      action: lastRecordedAction,
+      local: currentRecordedLocation,
+      timestamp,
+    };
+  }
+
+  function isLastRelevantActivityInMixedZone(state) {
+    return Boolean(resolveLastRelevantMixedZoneActivity(state));
+  }
+
+  function resolveMixedZoneCooldownMilliseconds(mixedZoneIntervalMinutes) {
+    const normalizedIntervalMinutes = Number(mixedZoneIntervalMinutes);
+    if (!Number.isFinite(normalizedIntervalMinutes) || normalizedIntervalMinutes < 1) {
+      return 0;
+    }
+    return Math.trunc(normalizedIntervalMinutes) * 60 * 1000;
+  }
+
+  function resolveMixedZoneDecisionSettings(settings) {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      return {
+        mixedZoneIntervalMinutes: settings,
+        referenceTime: undefined,
+      };
+    }
+
+    return {
+      mixedZoneIntervalMinutes: settings.mixedZoneIntervalMinutes,
+      referenceTime: settings.referenceTime,
+    };
+  }
+
+  function resolveReferenceTimestamp(referenceTime) {
+    if (referenceTime === undefined) {
+      return new Date();
+    }
+    if (referenceTime instanceof Date) {
+      return Number.isNaN(referenceTime.getTime()) ? null : referenceTime;
+    }
+    if (typeof referenceTime === 'number' && Number.isFinite(referenceTime)) {
+      const parsedFromNumber = new Date(referenceTime);
+      return Number.isNaN(parsedFromNumber.getTime()) ? null : parsedFromNumber;
+    }
+    return parseHistoryTimestamp(referenceTime);
+  }
+
+  function isMixedZoneCooldownActive(state, mixedZoneIntervalMinutes, referenceTime) {
+    const lastMixedZoneActivity = resolveLastRelevantMixedZoneActivity(state);
+    if (!lastMixedZoneActivity) {
+      return false;
+    }
+
+    const cooldownMilliseconds = resolveMixedZoneCooldownMilliseconds(mixedZoneIntervalMinutes);
+    if (!cooldownMilliseconds) {
+      return false;
+    }
+
+    const resolvedReferenceTimestamp = resolveReferenceTimestamp(referenceTime);
+    if (!resolvedReferenceTimestamp) {
+      return false;
+    }
+
+    return resolvedReferenceTimestamp.getTime() - lastMixedZoneActivity.timestamp.getTime() < cooldownMilliseconds;
+  }
+
   function resolveAutomaticCheckInLocation(locationPayload) {
     const resolvedLocal = String(locationPayload && locationPayload.resolved_local || '').trim();
     if (resolvedLocal) {
@@ -73,7 +170,41 @@
     return AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION;
   }
 
-  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
+  function shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings) {
+    const resolvedLocal = locationPayload && locationPayload.resolved_local;
+    if (!isMixedZoneLocationName(resolvedLocal)) {
+      return false;
+    }
+
+    const lastRecordedAction = resolveLastRecordedAction(remoteState);
+    const currentRecordedLocation = resolveCurrentRecordedLocation(remoteState);
+    const lastCheckInLocation = resolveRecordedCheckInLocation(remoteState);
+    const decisionSettings = resolveMixedZoneDecisionSettings(settings);
+    const cooldownMilliseconds = resolveMixedZoneCooldownMilliseconds(decisionSettings.mixedZoneIntervalMinutes);
+
+    if (
+      normalizeLocationName(resolvedLocal)
+      && normalizeLocationName(resolvedLocal) === normalizeLocationName(currentRecordedLocation)
+    ) {
+      if (!isLastRelevantActivityInMixedZone(remoteState) || cooldownMilliseconds <= 0) {
+        return false;
+      }
+
+      return !isMixedZoneCooldownActive(
+        remoteState,
+        decisionSettings.mixedZoneIntervalMinutes,
+        decisionSettings.referenceTime
+      );
+    }
+
+    if (lastRecordedAction !== 'checkin') {
+      return true;
+    }
+
+    return normalizeLocationName(resolvedLocal) !== normalizeLocationName(lastCheckInLocation);
+  }
+
+  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, settings) {
     const resolvedLocal = locationPayload && locationPayload.resolved_local;
     const lastRecordedAction = resolveLastRecordedAction(remoteState);
     const currentRecordedLocation = resolveCurrentRecordedLocation(remoteState);
@@ -81,6 +212,10 @@
 
     if (isCheckoutZoneLocationName(resolvedLocal)) {
       return lastRecordedAction === 'checkin';
+    }
+
+    if (isMixedZoneLocationName(resolvedLocal)) {
+      return shouldAttemptAutomaticMixedZoneLocationEvent(locationPayload, remoteState, settings);
     }
 
     if (
@@ -120,11 +255,20 @@
   return {
     AUTOMATIC_CHECKOUT_LOCATION,
     AUTOMATIC_UNREGISTERED_CHECKIN_LOCATION,
+    MIXED_ZONE_LOCATION,
     normalizeLocationName,
     isCheckoutZoneLocationName,
+    isMixedZoneLocationName,
     resolveLastRecordedAction,
     resolveRecordedCheckInLocation,
+    resolveCurrentRecordedLocation,
+    resolveRecordedActionTimestamp,
+    resolveLastRelevantMixedZoneActivity,
+    isLastRelevantActivityInMixedZone,
+    isMixedZoneCooldownActive,
     resolveAutomaticCheckInLocation,
+    resolveMixedZoneDecisionSettings,
+    shouldAttemptAutomaticMixedZoneLocationEvent,
     shouldAttemptAutomaticLocationEvent,
     shouldAttemptAutomaticOutOfRangeCheckout,
     shouldAttemptAutomaticNearbyWorkplaceCheckIn,

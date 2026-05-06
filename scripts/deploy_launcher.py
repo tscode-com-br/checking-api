@@ -30,6 +30,7 @@ DEFAULT_DEPLOY_HOST_KEYS = (
     "157.230.35.21 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDIFqEj9xCsCoggqcYsL+m7vSELFOnpUJiI8WHP3/qtDE4DYxjNBhlbB9Qw/yWip/Obl5T7jcCCCKf7OLtiYTNFUZKES9S6Eyy25DUz3ij7rbFWYVjF0HbUS6FiQXXUgZc0eEO9b89qUHomuL4p/RjIMZ6Qj/FVTgNAfLND0c2OeKVn/yIaKXDncTX7rWD5jjP9Ygdo2VMkTLZ8R92RqELqI8VjmtZBoLESWqa680q9siwrtuTzvYNW5Bsmv3nt1oQELKds6LzhpZwC43vsyg5yNDIsTp4rhNpjblfj+GDj/NimffGemPJqCL3XsJpVskhCfRhagekyLpCE6bpGThHDrEFPWV/M6wYnOs0Yl0qUrsM4xPm41ubMN4h+hcN5S4wXbK+6K6eT+8NWc39qftOezLryRQOfuhBZLmERqr30Tgyrxot+Td1lXZXpiXdDoDZvIMmhKzEW5SLdijrUYdzang3jWREiJ5zADX5DcPzy3ahYsMePwmQ5ZBEoMZKu4gU=",
     "157.230.35.21 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNmBYpOHGkimgKGY0MER0CTJmHx83XaDa7bGYOP+h32r0I3YbEWOeOww8wr1jdkyL1iyhIOY9bnAZi3J8I0z2P0=",
 )
+DEFAULT_PUBLIC_HEALTH_URL = "https://tscode.com.br/api/health"
 REQUIRED_LOCAL_TOOLS = ("ssh", "scp", "ssh-keyscan", "ssh-keygen")
 ARCHIVE_EXCLUDE_PREFIXES = (
     ".git/",
@@ -98,6 +99,7 @@ DEPLOY_ACTIONS = (
             "docker compose up -d db",
         ),
         restart_commands=(
+            "docker compose run --rm --no-deps migrate",
             "docker compose up -d --no-build --force-recreate --remove-orphans app",
         ),
         smoke_validation=SmokeValidation(
@@ -119,6 +121,7 @@ DEPLOY_ACTIONS = (
             "docker compose -f docker-compose.api.yml up -d db",
         ),
         restart_commands=(
+            "docker compose -f docker-compose.api.yml run --rm --no-deps migrate",
             "docker compose -f docker-compose.api.yml up -d --no-build --force-recreate api",
         ),
         smoke_validation=SmokeValidation(
@@ -237,6 +240,13 @@ def is_git_working_tree_dirty() -> bool | None:
     except OSError:
         return None
     return completed.returncode != 0
+
+
+def resolve_public_health_url_for_deploy_dir(deploy_dir: str) -> str | None:
+    normalized = (deploy_dir or "").strip()
+    if normalized in {"~/checkcheck", "/root/checkcheck"}:
+        return DEFAULT_PUBLIC_HEALTH_URL
+    return None
 
 
 def resolve_manual_image_tag(image_tag_override: str | None = None) -> str:
@@ -1224,7 +1234,8 @@ class DeployLauncher:
         if action.smoke_validation.compose_file != "docker-compose.yml":
             compose_command = f"docker compose -f {shlex.quote(action.smoke_validation.compose_file)}"
 
-        lines.append(f"printf '%s\\n' {shlex.quote(release_id)} > {shlex.quote(action.release_marker)}")
+        if action.label != "Fallback Global":
+            lines.append(f"printf '%s\\n' {shlex.quote(release_id)} > {shlex.quote(action.release_marker)}")
         lines.extend(action.prepare_commands)
 
         if action.image_repository and action.compose_image_env_var:
@@ -1235,14 +1246,31 @@ class DeployLauncher:
                     'cleanup() { rm -rf "$TEMP_DOCKER_CONFIG"; }',
                     'trap cleanup EXIT',
                     'export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"',
+                    f"export {action.compose_image_env_var}={shlex.quote(image_ref)}",
                     f"printf '%s' {shlex.quote(registry_token)} | docker login {DEFAULT_GHCR_REGISTRY} -u {shlex.quote(registry_username)} --password-stdin",
-                    f"{action.compose_image_env_var}={shlex.quote(image_ref)} {compose_command} pull {shlex.quote(action.smoke_validation.service)}",
+                    f"{compose_command} pull {shlex.quote(action.smoke_validation.service)}",
                     f"docker logout {DEFAULT_GHCR_REGISTRY} || true",
                 ]
             )
 
-        lines.extend(action.restart_commands)
-        lines.append(shlex.join(smoke_command))
+        if action.label == "Fallback Global":
+            public_health_url = resolve_public_health_url_for_deploy_dir(config.deploy_dir)
+            rollout_command = [
+                "bash",
+                "deploy/maintenance/run_app_rollout.sh",
+                "--phase",
+                "full",
+                "--deploy-dir",
+                "$DEPLOY_DIR",
+                "--release-id",
+                release_id,
+            ]
+            if public_health_url:
+                rollout_command.extend(["--public-health-url", public_health_url])
+            lines.append(shlex.join(rollout_command))
+        else:
+            lines.extend(action.restart_commands)
+            lines.append(shlex.join(smoke_command))
 
         if action.prune_after_success:
             lines.extend(

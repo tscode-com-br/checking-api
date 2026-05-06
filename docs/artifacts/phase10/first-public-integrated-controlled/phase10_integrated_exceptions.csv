@@ -1,0 +1,380 @@
+Count,Message,Traceback,Nodes
+37,"admin forms queue diagnostics failed: status=404 body={""detail"":""Not Found""}","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 222, in admin_monitoring_journey
+    self._admin_get_json(
+    ~~~~~~~~~~~~~~~~~~~~^
+        self.client.get(
+        ^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        error_message=""admin forms queue diagnostics failed"",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 194, in _admin_get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+19,"ready health failed: status=404 body={""detail"":""Not Found""}","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 317, in backlog_monitoring_journey
+    self._admin_get_json(response, expected_status=200, error_message=""ready health failed"")
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 194, in _admin_get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+1,"web check state failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 180, in web_check_journey
+    self._load_check_state()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 123, in _load_check_state
+    self._get_json(response, expected_status=200, error_message=""web check state failed"")
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 51, in _get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+3,"web check location match failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 177, in web_check_journey
+    self._resolve_location()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 138, in _resolve_location
+    payload = self._get_json(response, expected_status=200, error_message=""web check location match failed"")
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 51, in _get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+1,"web project catalog failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 169, in web_check_journey
+    self._get_projects()
+    ~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 68, in _get_projects
+    raise RuntimeError(f""web project catalog failed: status={response.status_code} body={response.text[:400]}"")
+",local
+1,"web check submit failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 300, in forms_backlog_submit_journey
+    self._submit_check()
+    ~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 157, in _submit_check
+    payload = self._get_json(response, expected_status=200, error_message=""web check submit failed"")
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 51, in _get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+2,web check shell failed: status=0,"  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 166, in web_check_journey
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 76, in _open_check_shell
+    raise RuntimeError(f""web check shell failed: status={response.status_code}"")
+",local
+2,"web check submit failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 179, in web_check_journey
+    self._submit_check()
+    ~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 157, in _submit_check
+    payload = self._get_json(response, expected_status=200, error_message=""web check submit failed"")
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 51, in _get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+2,"admin projects failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 217, in admin_monitoring_journey
+    self._admin_get_json(
+    ~~~~~~~~~~~~~~~~~~~~^
+        self.client.get(HARNESS_CONFIG.admin.projects_path, name=""GET /api/admin/projects""),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        expected_status=200,
+        ^^^^^^^^^^^^^^^^^^^^
+        error_message=""admin projects failed"",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 194, in _admin_get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+2,"web auth status failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 166, in web_check_journey
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 105, in _ensure_authenticated
+    status_payload = self._get_auth_status()
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 60, in _get_auth_status
+    return self._get_json(response, expected_status=200, error_message=""web auth status failed"")
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 51, in _get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+1,"transport projects failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 283, in transport_dashboard_journey
+    self._transport_get_json(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.client.get(HARNESS_CONFIG.transport.projects_path, name=""GET /api/transport/projects""),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        expected_status=200,
+        ^^^^^^^^^^^^^^^^^^^^
+        error_message=""transport projects failed"",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 251, in _transport_get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+18,web check shell failed: status=504,"  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 164, in web_check_journey
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 76, in _open_check_shell
+    raise RuntimeError(f""web check shell failed: status={response.status_code}"")
+",local
+5,web check shell failed: status=504,"  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 299, in forms_backlog_submit_journey
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 76, in _open_check_shell
+    raise RuntimeError(f""web check shell failed: status={response.status_code}"")
+",local
+1,"web check state failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 171, in web_check_journey
+    self._load_check_state()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 123, in _load_check_state
+    self._get_json(response, expected_status=200, error_message=""web check state failed"")
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 51, in _get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+3,"transport session failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 269, in transport_dashboard_journey
+    self._transport_get_json(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.client.get(HARNESS_CONFIG.transport.session_path, name=""GET /api/transport/auth/session""),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        expected_status=200,
+        ^^^^^^^^^^^^^^^^^^^^
+        error_message=""transport session failed"",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 251, in _transport_get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local
+3,"admin session failed: status=504 body=<html>
+<head><title>504 Gateway Time-out</title></head>
+<body>
+<center><h1>504 Gateway Time-out</h1></center>
+<hr><center>nginx/1.24.0 (Ubuntu)</center>
+</body>
+</html>
+","  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 355, in run
+    self.execute_next_task()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 388, in execute_next_task
+    self.execute_task(self._task_queue.popleft())
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\task.py"", line 505, in execute_task
+    task(self.user)
+    ~~~~^^^^^^^^^^^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 212, in admin_monitoring_journey
+    self._admin_get_json(
+    ~~~~~~~~~~~~~~~~~~~~^
+        self.client.get(HARNESS_CONFIG.admin.session_path, name=""GET /api/admin/auth/session""),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        expected_status=200,
+        ^^^^^^^^^^^^^^^^^^^^
+        error_message=""admin session failed"",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File ""C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py"", line 194, in _admin_get_json
+    raise RuntimeError(f""{error_message}: status={response.status_code} body={response.text[:400]}"")
+",local

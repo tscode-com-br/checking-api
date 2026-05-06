@@ -13,6 +13,7 @@ from .time_utils import now_sgt
 
 DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS = 30
+DEFAULT_MIXED_ZONE_INTERVAL_MINUTES = 20
 DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS = 2000
 DEFAULT_TRANSPORT_WORK_TO_HOME_TIME = "16:45"
 DEFAULT_TRANSPORT_LAST_UPDATE_TIME = "16:00"
@@ -99,6 +100,7 @@ def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
             id=1,
             location_update_interval_seconds=DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS,
             location_accuracy_threshold_meters=DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS,
+            mixed_zone_interval_minutes=DEFAULT_MIXED_ZONE_INTERVAL_MINUTES,
             transport_work_to_home_time=DEFAULT_TRANSPORT_WORK_TO_HOME_TIME,
             transport_last_update_time=DEFAULT_TRANSPORT_LAST_UPDATE_TIME,
             transport_default_car_seats=DEFAULT_TRANSPORT_DEFAULT_CAR_SEATS,
@@ -121,6 +123,13 @@ def get_location_accuracy_threshold_meters(db: Session) -> int:
     if settings is None:
         return DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS
     return settings.location_accuracy_threshold_meters
+
+
+def get_mixed_zone_interval_minutes(db: Session) -> int:
+    settings = db.get(MobileAppSettings, 1)
+    if settings is None:
+        return DEFAULT_MIXED_ZONE_INTERVAL_MINUTES
+    return settings.mixed_zone_interval_minutes
 
 
 def get_minimum_checkout_distance_meters_for_project(
@@ -384,11 +393,14 @@ def upsert_location_settings(
     db: Session,
     *,
     accuracy_threshold_meters: int,
+    mixed_zone_interval_minutes: int | None = None,
 ) -> MobileAppSettings:
     settings = _get_or_create_mobile_app_settings(db)
     timestamp = now_sgt()
 
     settings.location_accuracy_threshold_meters = accuracy_threshold_meters
+    if mixed_zone_interval_minutes is not None:
+        settings.mixed_zone_interval_minutes = mixed_zone_interval_minutes
     settings.updated_at = timestamp
     db.flush()
     return settings

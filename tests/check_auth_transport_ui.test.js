@@ -23,6 +23,16 @@ test('transport routine request builder uses the shortened Solicitar label', () 
   assert.match(checkApp, /transportRequestInProgress \? 'Solicitando\.{3}' : 'Solicitar'/);
 });
 
+test('transport shell shows the new compact option labels with an instruction line above them', () => {
+  assert.match(checkHtml, /id="transportOptionInstruction"[\s\S]*>Selecione o tipo de transporte para continuar\.</);
+  assert.match(checkHtml, /id="transportRegularButton"[\s\S]*aria-label="Dias Úteis"[\s\S]*Dias\s*<br\s*\/?\s*>\s*Úteis/);
+  assert.match(checkHtml, /id="transportWeekendButton"[\s\S]*aria-label="Fim de Semana"[\s\S]*Fim de\s*<br\s*\/?\s*>\s*Semana/);
+  assert.match(checkHtml, /id="transportExtraButton"[\s\S]*aria-label="Data Específica"[\s\S]*Data\s*<br\s*\/?\s*>\s*Específica/);
+  assert.match(checkApp, /regular:\s*'Dias Úteis'/);
+  assert.match(checkApp, /weekend:\s*'Fim de Semana'/);
+  assert.match(checkApp, /extra:\s*'Data Específica'/);
+});
+
 test('main transport entry button advertises Em Teste in the primary shell', () => {
   assert.match(checkHtml, /id="transportButton"[\s\S]*>\s*<span>Em Teste<\/span>/);
   assert.doesNotMatch(checkHtml, /id="transportButton"[\s\S]*Em breve/);
@@ -69,4 +79,10 @@ test('transport widget subscribes to realtime updates while the transport screen
   assert.match(checkApp, /function stopTransportRealtimeUpdates\(\)/);
   assert.match(checkApp, /startTransportRealtimeUpdates\(\);[\s\S]*void loadTransportState\(\);/);
   assert.match(checkApp, /stopTransportRealtimeUpdates\(\);[\s\S]*clearTransportAutoRefresh\(\);/);
+});
+
+test('transport screen no longer renders or wires the old acknowledgement flow', () => {
+  assert.doesNotMatch(checkHtml, /data-transport-ack-endpoint=/);
+  assert.doesNotMatch(checkHtml, /transportAcknowledgementSection|Confirmo ciência das informações acima\.|CONFIRMAR CIÊNCIA/u);
+  assert.doesNotMatch(checkApp, /transportAcknowledgeEndpoint|transportAcknowledgement|acknowledgementChecked|awarenessRequired|awarenessConfirmed/);
 });

@@ -48,7 +48,6 @@
           data-transport-address-endpoint="/api/web/transport/address"
           data-transport-request-endpoint="/api/web/transport/vehicle-request"
           data-transport-cancel-endpoint="/api/web/transport/cancel"
-          data-transport-ack-endpoint="/api/web/transport/acknowledge"
           data-submit-endpoint="/api/web/check"
           data-state-endpoint="/api/web/check/state"
           data-projects-endpoint="/api/web/projects"
@@ -428,10 +427,12 @@
             <hr class="transport-screen-divider" />
 
             <div class="transport-screen-body">
+              <p id="transportOptionInstruction" class="transport-option-instruction">Selecione o tipo de transporte para continuar.</p>
+
               <div id="transportOptionButtons" class="transport-option-buttons">
-                <button id="transportRegularButton" type="button" class="secondary-button transport-option-button">Transporte Rotineiro</button>
-                <button id="transportWeekendButton" type="button" class="secondary-button transport-option-button">Transporte Fim de Semana</button>
-                <button id="transportExtraButton" type="button" class="secondary-button transport-option-button">Transporte Extra</button>
+                <button id="transportRegularButton" type="button" class="secondary-button transport-option-button" aria-label="Dias Úteis"><span class="transport-option-button-label">Dias<br />Úteis</span></button>
+                <button id="transportWeekendButton" type="button" class="secondary-button transport-option-button" aria-label="Fim de Semana"><span class="transport-option-button-label">Fim de<br />Semana</span></button>
+                <button id="transportExtraButton" type="button" class="secondary-button transport-option-button" aria-label="Data Específica"><span class="transport-option-button-label">Data<br />Específica</span></button>
               </div>
 
               <section id="transportRequestBuilderPanel" class="transport-request-builder is-hidden" hidden>
@@ -501,37 +502,11 @@
               </section>
 
               <section id="transportRequestHistorySection" class="transport-request-history-section is-hidden" hidden>
-                <p class="transport-request-history-label">Solicitações registradas</p>
+                <p class="transport-request-history-label">Última solicitação por modalidade</p>
 
-                <div id="transportRequestHistoryList" class="transport-request-history-list" role="list"></div>
-              </section>
-
-              <section id="transportAcknowledgementSection" class="transport-acknowledgement-section is-hidden" hidden>
-                <label class="transport-acknowledgement-label" for="transportAcknowledgementCheckbox">
-                  <input id="transportAcknowledgementCheckbox" type="checkbox" />
-                  <span>Confirmo ciência das informações acima.</span>
-                </label>
-                <button id="transportAcknowledgementButton" type="button" class="submit-button">CONFIRMAR CIÊNCIA</button>
+                <div id="transportRequestHistoryList" class="transport-request-history-list"></div>
               </section>
             </div>
-
-            <section
-              id="transportRequestDetailWidget"
-              class="transport-request-detail-widget is-hidden"
-              role="dialog"
-              aria-modal="false"
-              aria-labelledby="transportRequestDetailWidgetTitle"
-              hidden
-            >
-              <div id="transportRequestDetailBackdrop" class="transport-request-detail-widget-backdrop"></div>
-              <div class="transport-request-detail-widget-card">
-                <h3 id="transportRequestDetailWidgetTitle" class="transport-request-detail-widget-title">Detalhes da Solicitação</h3>
-                <div id="transportRequestDetailContent" class="transport-request-detail-widget-content"></div>
-                <div class="password-dialog-actions transport-request-detail-actions">
-                  <button id="transportRequestDetailCloseButton" type="button" class="secondary-button">Fechar</button>
-                </div>
-              </div>
-            </section>
 
             <p id="transportInlineStatus" class="transport-inline-status" aria-live="polite"></p>
           </div>
@@ -541,6 +516,7 @@
 
     <script src="automatic-activities.js"></script>
     <script src="web-client-state.js"></script>
+    <script src="transport-screen.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -30,6 +30,8 @@ def _build_transport_ai_route_calculation_env(tmp_path: Path) -> dict[str, str]:
             "TRANSPORT_AI_ENABLED": "true",
             "TRANSPORT_AI_AGENT_MODE": "deterministic",
             "TRANSPORT_AI_ROUTE_PROVIDER": "fake",
+            "TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE": "phase8-loadtest-2026-05-05",
+            "TRANSPORT_AI_MAX_CONCURRENT_RUNS": "1",
             "TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY": Fernet.generate_key().decode("utf-8"),
             "OPENAI_API_KEY": "sk-test-openai-token",
             "MAPBOX_ACCESS_TOKEN": "test-mapbox-token",
@@ -47,6 +49,9 @@ def _build_route_calculation_script(
     vehicle_plate: str,
     settings_enabled: bool,
     agent_mode: str = "deterministic",
+    operational_approval_evidence: str | None = "phase8-loadtest-2026-05-05",
+    max_concurrent_runs: int = 1,
+    mocked_active_run_count: int | None = None,
     persisted_llm_provider: str | None = None,
     persisted_llm_api_key: str | None = None,
     patch_failure: bool,
@@ -128,12 +133,21 @@ def _build_route_calculation_script(
             """
         ).strip()
 
+    if mocked_active_run_count is not None:
+        active_run_count_block = textwrap.dedent(
+            f"""
+            transport_ai_router.count_transport_ai_active_runs = lambda db: {mocked_active_run_count}
+            """
+        ).strip()
+        patch_block = "\n\n".join(part for part in [patch_block, active_run_count_block] if part)
+
     llm_settings_block = ""
     if persisted_llm_provider is not None and persisted_llm_api_key is not None:
         llm_settings_block = textwrap.dedent(
             f"""
             upsert_transport_ai_llm_settings(
                 session,
+                project_id=project.id,
                 provider={persisted_llm_provider!r},
                 api_key={persisted_llm_api_key!r},
                 actor_admin_user_id=admin_user.id,
@@ -177,7 +191,9 @@ def _build_route_calculation_script(
             TransportAgentPlan,
         )
         from sistema.app.services.transport_ai_agent import TransportAIAgentRunResult
-        from sistema.app.services.transport_ai_llm_settings import upsert_transport_ai_llm_settings
+        from sistema.app.services.transport_ai_llm_settings import (
+            upsert_transport_ai_llm_settings,
+        )
         from sistema.app.services.transport_reevaluation_events import (
             clear_transport_reevaluation_events,
             list_recent_transport_reevaluation_events,
@@ -377,6 +393,8 @@ def _build_route_calculation_script(
         settings.transport_ai_enabled = {str(settings_enabled)}
         settings.transport_ai_agent_mode = {agent_mode!r}
         settings.transport_ai_route_provider = "fake"
+        settings.transport_ai_operational_approval_evidence = {operational_approval_evidence!r}
+        settings.transport_ai_max_concurrent_runs = {max_concurrent_runs}
         settings.mapbox_access_token = "test-mapbox-token"
         clear_transport_reevaluation_events()
         seeded = _seed_route_calculation_scenario(
@@ -452,6 +470,79 @@ def test_route_calculations_preflight_failure_does_not_create_run_or_reset(tmp_p
         user_name="Route Rider One",
         vehicle_plate="SBA8201A",
         settings_enabled=False,
+        agent_mode="deterministic",
+        patch_failure=False,
+        assertions=assertions,
+    )
+    _run_transport_ai_route_calculation_script(tmp_path, script=script)
+
+
+def test_route_calculations_preflight_failure_reports_missing_operational_approval(tmp_path):
+    assertions = textwrap.dedent(
+        """
+        assert response.status_code == 409, response.text
+        payload = response.json()
+        assert payload["ok"] is False
+        assert payload["run_key"] is None
+        assert [issue["code"] for issue in payload["issues"]] == ["transport_ai_operational_approval_missing"]
+
+        with SessionLocal() as session:
+            assignment = session.get(TransportAssignment, seeded["assignment_id"])
+            runs = session.execute(
+                select(TransportAIRun).where(TransportAIRun.service_date == date.fromisoformat("2026-06-06"))
+            ).scalars().all()
+
+        assert assignment is not None
+        assert assignment.status == "confirmed"
+        assert assignment.vehicle_id == seeded["vehicle_id"]
+        assert runs == []
+        """
+    ).strip()
+    script = _build_route_calculation_script(
+        service_date="2026-06-06",
+        project_name="PAIR82F",
+        user_key="R826",
+        user_name="Route Rider Six",
+        vehicle_plate="SBA8206A",
+        settings_enabled=True,
+        operational_approval_evidence=None,
+        agent_mode="deterministic",
+        patch_failure=False,
+        assertions=assertions,
+    )
+    _run_transport_ai_route_calculation_script(tmp_path, script=script)
+
+
+def test_route_calculations_preflight_failure_reports_concurrency_limit(tmp_path):
+    assertions = textwrap.dedent(
+        """
+        assert response.status_code == 409, response.text
+        payload = response.json()
+        assert payload["ok"] is False
+        assert payload["run_key"] is None
+        assert [issue["code"] for issue in payload["issues"]] == ["transport_ai_concurrency_limit_reached"]
+
+        with SessionLocal() as session:
+            assignment = session.get(TransportAssignment, seeded["assignment_id"])
+            runs = session.execute(
+                select(TransportAIRun).where(TransportAIRun.service_date == date.fromisoformat("2026-06-07"))
+            ).scalars().all()
+
+        assert assignment is not None
+        assert assignment.status == "confirmed"
+        assert assignment.vehicle_id == seeded["vehicle_id"]
+        assert runs == []
+        """
+    ).strip()
+    script = _build_route_calculation_script(
+        service_date="2026-06-07",
+        project_name="PAIR82G",
+        user_key="R827",
+        user_name="Route Rider Seven",
+        vehicle_plate="SBA8207A",
+        settings_enabled=True,
+        max_concurrent_runs=1,
+        mocked_active_run_count=1,
         agent_mode="deterministic",
         patch_failure=False,
         assertions=assertions,
@@ -635,6 +726,47 @@ def test_route_calculations_agent_mode_uses_persisted_llm_snapshot(tmp_path):
         persisted_llm_api_key="deepseek-runtime-secret-4321",
         patch_failure=False,
         patch_success=True,
+        assertions=assertions,
+    )
+    _run_transport_ai_route_calculation_script(tmp_path, script=script)
+
+
+def test_route_calculations_agent_mode_reports_missing_project_llm_settings_as_controlled_preflight_failure(tmp_path):
+    assertions = textwrap.dedent(
+        """
+        assert response.status_code == 409, response.text
+        payload = response.json()
+        assert payload["ok"] is False
+        assert payload["status"] == "failed"
+        assert payload["run_key"] is not None
+        assert payload["can_cancel_restore"] is False
+        assert any(issue["code"] == "transport_ai_llm_settings_missing" for issue in payload["issues"])
+
+        with SessionLocal() as session:
+            run = session.execute(
+                select(TransportAIRun).where(TransportAIRun.run_key == payload["run_key"])
+            ).scalar_one()
+            assignment = session.get(TransportAssignment, seeded["assignment_id"])
+            suggestion = session.execute(
+                select(TransportAISuggestion).where(TransportAISuggestion.run_id == run.id)
+            ).scalar_one_or_none()
+
+        assert run.status == "failed"
+        assert assignment is not None
+        assert assignment.status == "confirmed"
+        assert assignment.vehicle_id == seeded["vehicle_id"]
+        assert suggestion is None
+        """
+    ).strip()
+    script = _build_route_calculation_script(
+        service_date="2026-06-05",
+        project_name="PAIR82E",
+        user_key="R825",
+        user_name="Route Rider Five",
+        vehicle_plate="SBA8205A",
+        settings_enabled=True,
+        agent_mode="agent",
+        patch_failure=False,
         assertions=assertions,
     )
     _run_transport_ai_route_calculation_script(tmp_path, script=script)

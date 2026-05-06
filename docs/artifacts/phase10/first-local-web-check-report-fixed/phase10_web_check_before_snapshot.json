@@ -1,0 +1,175 @@
+{
+  "captured_at": "2026-05-05T16:43:55.780329+00:00",
+  "profile": "web-check",
+  "base_url": "http://127.0.0.1:8000",
+  "health": {
+    "status_code": 200,
+    "body": {
+      "status": "ok",
+      "app": "checking-sistema",
+      "ready": true,
+      "overall_status": "ok",
+      "components": {
+        "database": {
+          "status": "ok",
+          "detail": "database reachable"
+        },
+        "static_sites": {
+          "status": "ok",
+          "detail": "static sites ready: admin, user, transport"
+        },
+        "transport_ai_operational_readiness": {
+          "status": "ok",
+          "detail": "transport ai operational readiness approved"
+        },
+        "transport_ai_settings_encryption": {
+          "status": "ok",
+          "detail": "transport ai settings encryption ready"
+        }
+      }
+    }
+  },
+  "host": {
+    "body": {
+      "available": true,
+      "cpu_percent": 8.5,
+      "memory_percent": 81.4,
+      "available_memory_mb": 2979.79,
+      "total_memory_mb": 16044.87
+    }
+  },
+  "admin_login": {
+    "status_code": 200,
+    "body": {
+      "ok": true,
+      "message": "Login realizado com sucesso."
+    }
+  },
+  "admin": {
+    "forms_queue": {
+      "generated_at": "2026-05-06T00:43:56.082880+08:00",
+      "backlog_count": 7,
+      "pending_count": 7,
+      "processing_count": 0,
+      "success_count": 0,
+      "failed_count": 0,
+      "oldest_backlog_age_seconds": 82637,
+      "oldest_pending_age_seconds": 82637,
+      "oldest_processing_age_seconds": null,
+      "recent_average_processing_ms": null,
+      "recent_processed_sample_size": 0,
+      "worker": {
+        "enabled": true,
+        "running": false,
+        "status": "stopped",
+        "poll_interval_seconds": 0.25,
+        "thread_name": null,
+        "process_id": null,
+        "started_at": null,
+        "last_heartbeat_at": null,
+        "heartbeat_age_seconds": null,
+        "stale": false,
+        "last_loop_started_at": null,
+        "last_loop_completed_at": null,
+        "last_loop_processed_count": 0,
+        "consecutive_error_count": 0,
+        "current_backoff_seconds": 0.0,
+        "restart_count": 0,
+        "last_error": null
+      }
+    },
+    "database": {
+      "generated_at": "2026-05-05T16:43:56.095746Z",
+      "pool": {
+        "dialect": "sqlite",
+        "driver": "pysqlite",
+        "pool_class": "QueuePool",
+        "status": "Pool size: 5  Connections in pool: 0 Current Overflow: -4 Current Checked out connections: 1",
+        "configured_pool_size": 5,
+        "configured_max_overflow": 10,
+        "configured_pool_timeout_seconds": null,
+        "configured_pool_recycle_seconds": null,
+        "pool_pre_ping": true,
+        "checked_in": 0,
+        "checked_out": 1,
+        "current_overflow": -4,
+        "total_capacity": 15,
+        "usage_ratio": 0.067,
+        "saturation": "normal",
+        "checked_out_high_watermark": 1,
+        "current_open_connections": 1,
+        "open_connections_high_watermark": 1,
+        "total_connect_events": 1,
+        "total_close_events": 0,
+        "total_checkout_events": 9,
+        "total_checkin_events": 8
+      },
+      "latency": {
+        "query_count_total": 15,
+        "query_error_count_total": 0,
+        "slow_query_count_total": 0,
+        "query_time_ms_total": 1,
+        "recent_query_sample_size": 15,
+        "recent_average_query_ms": 0,
+        "recent_p95_query_ms": 1,
+        "hot_paths": [
+          {
+            "path": "/api/web/check/state",
+            "recent_query_count": 0,
+            "recent_average_query_ms": null,
+            "recent_p95_query_ms": null,
+            "total_query_count": 0
+          },
+          {
+            "path": "/api/mobile/state",
+            "recent_query_count": 0,
+            "recent_average_query_ms": null,
+            "recent_p95_query_ms": null,
+            "total_query_count": 0
+          },
+          {
+            "path": "/api/admin/checkin",
+            "recent_query_count": 0,
+            "recent_average_query_ms": null,
+            "recent_p95_query_ms": null,
+            "total_query_count": 0
+          },
+          {
+            "path": "/api/admin/checkout",
+            "recent_query_count": 0,
+            "recent_average_query_ms": null,
+            "recent_p95_query_ms": null,
+            "total_query_count": 0
+          },
+          {
+            "path": "/api/admin/projects",
+            "recent_query_count": 0,
+            "recent_average_query_ms": null,
+            "recent_p95_query_ms": null,
+            "total_query_count": 0
+          }
+        ]
+      },
+      "server_connections": {
+        "source": "unsupported",
+        "database_connections_total": null,
+        "active_database_connections": null,
+        "waiting_database_connections": null,
+        "idle_in_transaction_connections": null,
+        "error": "unsupported_dialect:sqlite"
+      },
+      "recommended_alert_thresholds": {
+        "pool_usage_warning_ratio": 0.8,
+        "pool_usage_critical_ratio": 1.0,
+        "recent_query_p95_warning_ms": 150,
+        "recent_query_p95_critical_ms": 300,
+        "slow_query_log_threshold_ms": 250,
+        "postgres_active_connections_warning": 24,
+        "postgres_active_connections_critical": 32,
+        "postgres_waiting_connections_warning": 1,
+        "postgres_waiting_connections_critical": 3,
+        "postgres_idle_in_transaction_warning": 1
+      }
+    }
+  }
+}

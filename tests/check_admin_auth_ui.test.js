@@ -45,10 +45,18 @@ test('admin login utility buttons keep the requested black and white styling', (
 });
 
 test('admin change-password controller verifies the current password in real time and wires the new request-admin flow', () => {
+  assert.match(adminHtml, /<nav class="tabs" aria-label="Seções do painel administrativo">/);
   assert.match(adminJs, /changePasswordButton\.addEventListener\("click", openChangePasswordModal\);/);
   assert.match(adminJs, /function setAdminAccessState\(admin\) \{/);
   assert.match(adminJs, /allowedAdminTabs = normalizeAllowedAdminTabs\(admin\?\.allowed_tabs, adminAccessScope\);/);
   assert.match(adminJs, /function applyAdminTabVisibility\(\) \{/);
+  assert.match(adminJs, /function syncAdminResponsiveState\(options = \{\}\) \{/);
+  assert.match(adminJs, /function scheduleAdminResponsiveSync\(options = \{\}\) \{/);
+  assert.match(adminJs, /const MOBILE_FILTER_PANEL_KEYS = Object\.freeze\(\["checkin", "checkout", "inactive", "relatorios"\]\);/);
+  assert.match(adminJs, /function syncAdminShellResponsiveState\(snapshot = buildAdminResponsiveStateSnapshot\(\)\) \{[\s\S]*syncAdminTabStrip\(snapshot\);[\s\S]*syncAdminMobileFilterPanels\(\);[\s\S]*\}/);
+  assert.match(adminJs, /function syncAdminTabStrip\(snapshot = buildAdminResponsiveStateSnapshot\(\)\) \{[\s\S]*tabs\.dataset\.adminActiveTab = activeTab;[\s\S]*activeButton\.scrollIntoView\(\{ block: "nearest", inline: "center" \}\);[\s\S]*\}/);
+  assert.match(adminJs, /function syncAdminMobileFilterPanel\(panelKey\) \{[\s\S]*panel\.hidden = !expanded;[\s\S]*button\.classList\.toggle\("hidden", !mobileViewport\);[\s\S]*button\.setAttribute\("aria-expanded", String\(expanded\)\);[\s\S]*\}/);
+  assert.match(adminJs, /document\.querySelectorAll\("\[data-filter-toggle\]"\)\.forEach\(\(button\) => \{[\s\S]*toggleAdminMobileFilterPanel\(button\.dataset\.filterToggle\);[\s\S]*\}\);/);
   assert.match(adminJs, /if \(!isAdminTabAllowed\(tab\)\) \{\s*return;\s*\}/);
   assert.match(adminJs, /postJson\("\/api\/admin\/auth\/verify-current-password", \{[\s\S]*senha_atual: currentPassword,[\s\S]*\}\);/);
   assert.match(adminJs, /postJson\("\/api\/admin\/auth\/change-password", \{[\s\S]*confirmar_senha: confirmPassword,[\s\S]*\}\);/);

@@ -24,7 +24,8 @@ html {
   min-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: none;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: auto;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
@@ -53,8 +54,8 @@ body {
   background: linear-gradient(135deg, #f7f8fa, #eef2f7);
   color: #1f2937;
   isolation: isolate;
-  overscroll-behavior: none;
-  touch-action: manipulation;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: auto;
 }
 
 body::before {
@@ -927,6 +928,16 @@ header {
   width: 100%;
 }
 
+.transport-option-instruction {
+  width: min(100%, 420px);
+  margin: 0 auto;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}
+
 .transport-request-detail-widget {
   position: absolute;
   inset: 0;
@@ -1019,8 +1030,11 @@ header {
 
 .transport-option-buttons {
   display: grid;
-  gap: 12px;
-  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(8px, 2.5vw, 12px);
+  width: min(100%, 420px);
+  margin: 0 auto;
+  align-items: stretch;
   justify-items: stretch;
 }
 
@@ -1090,12 +1104,12 @@ header {
 
 .transport-request-history-section {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 10px;
   width: 100%;
   min-width: 0;
-  min-height: 0;
+  min-height: auto;
   max-width: 100%;
   overflow-x: hidden;
 }
@@ -1110,34 +1124,203 @@ header {
 }
 
 .transport-request-history-list {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
+  align-content: start;
   gap: 10px;
   width: 100%;
   min-width: 0;
-  min-height: 0;
+  min-height: auto;
   max-width: 100%;
   max-height: none;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(15, 118, 110, 0.32) transparent;
+  overflow: visible;
+  padding-right: 0;
 }
 
-.transport-request-history-list::-webkit-scrollbar {
-  width: 8px;
+.transport-request-summary-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  min-height: 116px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-left: 4px solid transparent;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98));
+  color: #0f172a;
+  text-align: left;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
 }
 
-.transport-request-history-list::-webkit-scrollbar-track {
-  background: transparent;
+.transport-request-summary-card.is-available {
+  border-left-color: #94a3b8;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.98));
 }
 
-.transport-request-history-list::-webkit-scrollbar-thumb {
+.transport-request-summary-card.is-pending {
+  border-left-color: #f97316;
+}
+
+.transport-request-summary-card.is-confirmed {
+  border-left-color: #16a34a;
+}
+
+.transport-request-summary-card.is-realized {
+  border-left-color: #94a3b8;
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.98), rgba(226, 232, 240, 0.98));
+  color: #334155;
+  box-shadow: 0 12px 24px rgba(100, 116, 139, 0.12);
+}
+
+.transport-request-summary-card.is-rejected,
+.transport-request-summary-card.is-cancelled {
+  border-left-color: #dc2626;
+}
+
+.transport-request-summary-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.transport-request-summary-title {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: var(--body-size);
+  font-weight: 800;
+  line-height: 1.28;
+}
+
+.transport-request-summary-status {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(15, 118, 110, 0.24);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.transport-request-summary-status.is-available,
+.transport-request-summary-status.is-realized {
+  color: #475569;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.transport-request-summary-status.is-pending {
+  color: #9a3412;
+  background: rgba(251, 146, 60, 0.18);
+}
+
+.transport-request-summary-status.is-confirmed {
+  color: #166534;
+  background: rgba(34, 197, 94, 0.16);
+}
+
+.transport-request-summary-status.is-rejected,
+.transport-request-summary-status.is-cancelled {
+  color: #991b1b;
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.transport-request-summary-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.transport-request-summary-primary,
+.transport-request-summary-secondary,
+.transport-request-summary-tertiary {
+  margin: 0;
+  min-width: 0;
+}
+
+.transport-request-summary-primary {
+  color: #0f172a;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.32;
+}
+
+.transport-request-summary-secondary {
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.38;
+}
+
+.transport-request-summary-tertiary {
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.transport-request-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.transport-request-summary-action {
+  min-height: 26px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.transport-request-summary-action.is-realized {
+  border: 1px solid rgba(71, 85, 105, 0.24);
+  background: rgba(226, 232, 240, 0.96);
+  color: #334155;
+}
+
+.transport-request-summary-action.is-cancel {
+  border: 1px solid rgba(220, 38, 38, 0.24);
+  background: rgba(254, 226, 226, 0.92);
+  color: #b91c1c;
+}
+
+.transport-request-summary-action.is-realized:hover {
+  background: rgba(203, 213, 225, 0.98);
+}
+
+.transport-request-summary-action.is-cancel:hover {
+  background: rgba(254, 202, 202, 0.98);
+}
+
+.transport-request-summary-action.is-realized:focus-visible {
+  outline: 2px solid rgba(71, 85, 105, 0.2);
+  outline-offset: 2px;
+}
+
+.transport-request-summary-action.is-cancel:focus-visible {
+  outline: 2px solid rgba(220, 38, 38, 0.22);
+  outline-offset: 2px;
+}
+
+.transport-request-summary-action:disabled {
+  cursor: default;
+  opacity: 0.68;
 }
 
 .transport-request-card {
@@ -1390,16 +1573,26 @@ header {
 
 .transport-option-button {
   width: 100%;
-  min-height: clamp(48px, 6vh, 56px);
-  padding: 12px 16px;
+  min-width: 0;
+  min-height: clamp(62px, 13vw, 72px);
+  padding: 10px 8px;
   border-color: transparent;
   border-radius: 16px;
   color: #ffffff;
-  line-height: 1.2;
-  text-wrap: balance;
+  font-size: 0.76rem;
+  line-height: 1.08;
+  text-wrap: pretty;
   text-shadow: 0 1px 0 rgba(15, 23, 42, 0.12);
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
   transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+
+.transport-option-button-label {
+  display: block;
+  max-width: 8ch;
+  margin: 0 auto;
+  text-align: center;
+  white-space: normal;
 }
 
 .transport-option-button:hover {
@@ -1431,24 +1624,6 @@ header {
 #transportExtraButton {
   background: linear-gradient(135deg, #1d4ed8, #3b82f6);
   border-color: rgba(29, 78, 216, 0.34);
-}
-.transport-acknowledgement-section {
-  display: grid;
-  gap: 12px;
-}
-
-.transport-acknowledgement-label {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: var(--body-size);
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.transport-acknowledgement-label input {
-  margin-top: 2px;
-  accent-color: #1592d2;
 }
 
 .transport-inline-status {
@@ -1575,34 +1750,27 @@ header {
   }
 
   .transport-request-history-list {
-    padding-right: 0;
-  }
-
-  .transport-request-card {
-    padding: 12px 14px;
-    min-height: 78px;
-  }
-
-  .transport-request-card-header,
-  .transport-request-card-meta {
     gap: 8px;
   }
 
-  .transport-request-card-status,
-  .transport-request-card-realized-button,
-  .transport-request-card-cancel-button {
+  .transport-request-summary-card {
+    padding: 12px 14px;
+    min-height: 110px;
+  }
+
+  .transport-request-summary-header,
+  .transport-request-summary-actions {
+    gap: 8px;
+  }
+
+  .transport-request-summary-status,
+  .transport-request-summary-action {
     padding: 4px 8px;
     font-size: 0.68rem;
   }
 
-  .transport-request-card-title,
-  .transport-request-card-date-time {
-    flex-basis: 100%;
-  }
-
-  .transport-request-card-status,
-  .transport-request-card-actions {
-    margin-left: 0;
+  .transport-request-summary-primary {
+    font-size: 0.88rem;
   }
 
   .transport-request-weekday-options {
@@ -1624,32 +1792,14 @@ header {
     --control-height: 40px;
   }
 
-  .history-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .choice-grid.two-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .auth-credentials-row {
-    grid-template-columns: 1fr;
-    gap: 5px;
-  }
-
-  .auth-field-button {
-    grid-column: auto;
-  }
-
-  .transport-request-card-status,
-  .transport-request-card-realized-button,
-  .transport-request-card-cancel-button {
+  .transport-request-summary-status,
+  .transport-request-summary-action {
     padding: 4px 7px;
     font-size: 0.66rem;
   }
 
-  .transport-request-card {
-    min-height: 74px;
+  .transport-request-summary-card {
+    min-height: 102px;
   }
 
   .auth-action-button,
@@ -1684,6 +1834,25 @@ header {
     font-size: 0.8rem;
   }
 
+}
+
+@media (max-width: 340px) {
+  .history-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .choice-grid.two-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-credentials-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .auth-field-button {
+    grid-column: auto;
+  }
 }
 
 @media (orientation: landscape) and (max-height: 540px) {
@@ -2055,14 +2224,14 @@ header {
 
   .transport-request-history-list {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
     align-content: start;
     padding-right: 0;
   }
 
-  .transport-request-card {
-    min-height: 96px;
+  .transport-request-summary-card {
+    min-height: 132px;
   }
 
   .transport-request-detail-widget {

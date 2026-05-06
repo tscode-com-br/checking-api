@@ -47,6 +47,11 @@ def _sanitize_transport_ai_string_with_extra_literals(
         sanitized,
     )
     sanitized = re.sub(
+        r"gAAAAA[A-Za-z0-9_-]{20,}",
+        TRANSPORT_AI_REDACTED_VALUE,
+        sanitized,
+    )
+    sanitized = re.sub(
         r"(?i)bearer\s+[A-Za-z0-9._-]+",
         f"Bearer {TRANSPORT_AI_REDACTED_VALUE}",
         sanitized,

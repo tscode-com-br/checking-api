@@ -12,6 +12,7 @@ from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..database import get_database_diagnostics
 from ..models import (
     AdminAccessRequest,
     CheckEvent,
@@ -28,6 +29,8 @@ from ..models import (
 from ..schemas import (
     AdminAccessRequestCreate,
     AdminActionResponse,
+    DatabaseDiagnosticsResponse,
+    FormsQueueDiagnosticsResponse,
     AdminPasswordVerifyResponse,
     AdminProfileUpdateRequest,
     AdminProjectMinimumCheckoutDistanceSaveResponse,
@@ -107,6 +110,7 @@ from ..services.event_archives import (
     list_event_archives_page,
 )
 from ..services.event_logger import log_event
+from ..services.forms_queue import get_forms_queue_diagnostics
 from ..services.managed_locations import (
     dump_location_coordinates,
     dump_location_projects,
@@ -116,6 +120,7 @@ from ..services.managed_locations import (
 from ..services.location_audit import audit_locations_from_db
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
+    get_mixed_zone_interval_minutes,
     list_project_minimum_checkout_distance_rows,
     upsert_project_minimum_checkout_distance_rows,
     upsert_location_settings,
@@ -138,7 +143,7 @@ from ..services.user_activity import (
     is_user_inactive,
     sync_user_inactivity,
 )
-from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activity
+from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activities, resolve_latest_user_activity
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -819,12 +824,19 @@ def build_location_settings_log_message(
     *,
     previous_accuracy_threshold_meters: int,
     current_accuracy_threshold_meters: int,
+    previous_mixed_zone_interval_minutes: int,
+    current_mixed_zone_interval_minutes: int,
 ) -> str:
     changes: list[str] = []
     if previous_accuracy_threshold_meters != current_accuracy_threshold_meters:
         changes.append(
             "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para "
             f"{format_quantity(current_accuracy_threshold_meters, 'metro', 'metros')}."
+        )
+    if previous_mixed_zone_interval_minutes != current_mixed_zone_interval_minutes:
+        changes.append(
+            "O intervalo de tempo para Zona Mista foi ajustado para "
+            f"{format_quantity(current_mixed_zone_interval_minutes, 'minuto', 'minutos')}."
         )
     if changes:
         return " ".join(changes)
@@ -838,10 +850,9 @@ def build_presence_rows(
     current_admin: User | None = None,
     reference_time=None,
 ) -> list[UserRow]:
-    rows = db.execute(select(User).order_by(User.nome, User.id)).scalars().all()
-    payload: list[tuple[datetime, UserRow]] = []
+    all_projects = list_projects(db)
     current_time = reference_time or now_sgt()
-    catalog_project_names = list_project_names(db)
+    catalog_project_names = [project.name for project in all_projects]
     effective_admin_projects = (
         resolve_effective_admin_monitored_projects(current_admin, catalog_project_names)
         if current_admin is not None
@@ -849,16 +860,19 @@ def build_presence_rows(
     )
     can_view_activity_time = True if current_admin is None else user_can_view_activity_time(current_admin)
     effective_admin_project_set = set(effective_admin_projects) if effective_admin_projects is not None else None
-    project_names = sorted({user.projeto for user in rows if user.projeto})
-    projects_by_name = {
-        project.name: project
-        for project in db.execute(select(Project).where(Project.name.in_(project_names))).scalars().all()
-    } if project_names else {}
+    if effective_admin_project_set == set():
+        return []
+
+    user_query = select(User).order_by(User.nome, User.id)
+    if effective_admin_project_set is not None:
+        user_query = user_query.where(User.projeto.in_(sorted(effective_admin_project_set)))
+    rows = db.execute(user_query).scalars().all()
+    latest_activities = resolve_latest_user_activities(db, users=rows)
+    projects_by_name = {project.name: project for project in all_projects}
+    payload: list[tuple[datetime, UserRow]] = []
 
     for user in rows:
-        if effective_admin_project_set is not None and user.projeto not in effective_admin_project_set:
-            continue
-        latest_activity = resolve_latest_user_activity(db, user=user)
+        latest_activity = latest_activities.get(user.id)
         if latest_activity is None or latest_activity.action != action:
             continue
         if is_user_inactive(latest_activity.event_time, reference_time=current_time):
@@ -2329,6 +2343,22 @@ def list_provider_forms(
     return build_provider_forms_rows(db, current_admin=current_admin)
 
 
+@router.get("/forms/queue/diagnostics", response_model=FormsQueueDiagnosticsResponse)
+def get_forms_queue_diagnostics_view(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> FormsQueueDiagnosticsResponse:
+    return FormsQueueDiagnosticsResponse.model_validate(get_forms_queue_diagnostics(db=db))
+
+
+@router.get("/diagnostics/database", response_model=DatabaseDiagnosticsResponse)
+def get_database_diagnostics_view(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> DatabaseDiagnosticsResponse:
+    return DatabaseDiagnosticsResponse.model_validate(get_database_diagnostics(db=db))
+
+
 @router.get("/reports/events", response_model=ReportEventsResponse)
 def get_report_events(
     chave: str | None = Query(default=None),
@@ -2432,6 +2462,7 @@ def list_locations(db: Session = Depends(get_db)) -> AdminLocationsResponse:
     return AdminLocationsResponse(
         items=[build_location_row(row) for row in rows],
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
+        mixed_zone_interval_minutes=get_mixed_zone_interval_minutes(db),
     )
 
 
@@ -2647,13 +2678,17 @@ def update_location_settings(
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminLocationSettingsResponse:
     previous_accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
+    previous_mixed_zone_interval_minutes = get_mixed_zone_interval_minutes(db)
     settings = upsert_location_settings(
         db,
         accuracy_threshold_meters=payload.location_accuracy_threshold_meters,
+        mixed_zone_interval_minutes=payload.mixed_zone_interval_minutes,
     )
     log_message = build_location_settings_log_message(
         previous_accuracy_threshold_meters=previous_accuracy_threshold_meters,
         current_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
+        previous_mixed_zone_interval_minutes=previous_mixed_zone_interval_minutes,
+        current_mixed_zone_interval_minutes=settings.mixed_zone_interval_minutes,
     )
     log_event(
         db,
@@ -2666,7 +2701,9 @@ def update_location_settings(
         details=(
             f"updated_by={current_admin.chave}; "
             f"previous_location_accuracy_threshold_meters={previous_accuracy_threshold_meters}; "
-            f"location_accuracy_threshold_meters={settings.location_accuracy_threshold_meters}"
+            f"location_accuracy_threshold_meters={settings.location_accuracy_threshold_meters}; "
+            f"previous_mixed_zone_interval_minutes={previous_mixed_zone_interval_minutes}; "
+            f"mixed_zone_interval_minutes={settings.mixed_zone_interval_minutes}"
         ),
     )
     db.commit()
@@ -2675,6 +2712,7 @@ def update_location_settings(
         ok=True,
         message="Configuracoes de localizacao salvas com sucesso.",
         location_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
+        mixed_zone_interval_minutes=settings.mixed_zone_interval_minutes,
     )
 
 

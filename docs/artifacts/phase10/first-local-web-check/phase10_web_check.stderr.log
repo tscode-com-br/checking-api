@@ -1,0 +1,307 @@
+[2026-05-06 00:36:42,426] Tamer/INFO/locust.main: Starting Locust 2.42.1
+[2026-05-06 00:36:42,430] Tamer/INFO/locust.main: Run time limit set to 30 seconds
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         0     0(0.00%) |      0       0       0      0 |    0.00        0.00
+
+[2026-05-06 00:36:42,434] Tamer/INFO/locust.runners: Ramping to 4 users at a rate of 2.00 per second
+[2026-05-06 00:36:42,558] Tamer/ERROR/locust.user.users: web check shell failed: status=404
+Traceback (most recent call last):
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 900, in gevent._gevent_cgreenlet.Greenlet.run
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 196, in run_user
+    user.run()
+    ~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+2026-05-05T16:36:42Z <Greenlet at 0x15cbebfa660: run_user(<phase10_locustfile.Phase10WebCheckUser object at )> failed with RuntimeError
+
+[2026-05-06 00:36:42,562] Tamer/ERROR/locust.user.users: web check shell failed: status=404
+Traceback (most recent call last):
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 900, in gevent._gevent_cgreenlet.Greenlet.run
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 196, in run_user
+    user.run()
+    ~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+2026-05-05T16:36:42Z <Greenlet at 0x15cbebfa7a0: run_user(<phase10_locustfile.Phase10WebCheckUser object at )> failed with RuntimeError
+
+[2026-05-06 00:36:43,443] Tamer/INFO/locust.runners: All users spawned: {"Phase10WebCheckUser": 4} (4 total users)
+[2026-05-06 00:36:43,450] Tamer/ERROR/locust.user.users: web check shell failed: status=404
+Traceback (most recent call last):
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 900, in gevent._gevent_cgreenlet.Greenlet.run
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 196, in run_user
+    user.run()
+    ~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+2026-05-05T16:36:43Z <Greenlet at 0x15cbc261da0: run_user(<phase10_locustfile.Phase10WebCheckUser object at )> failed with RuntimeError
+
+[2026-05-06 00:36:43,453] Tamer/ERROR/locust.user.users: web check shell failed: status=404
+Traceback (most recent call last):
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 900, in gevent._gevent_cgreenlet.Greenlet.run
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 196, in run_user
+    user.run()
+    ~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+2026-05-05T16:36:43Z <Greenlet at 0x15cbec95c60: run_user(<phase10_locustfile.Phase10WebCheckUser object at )> failed with RuntimeError
+
+[2026-05-06 00:36:43,455] Tamer/ERROR/locust.user.users: web check shell failed: status=404
+Traceback (most recent call last):
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 900, in gevent._gevent_cgreenlet.Greenlet.run
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 196, in run_user
+    user.run()
+    ~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+2026-05-05T16:36:43Z <Greenlet at 0x15cbec956c0: run_user(<phase10_locustfile.Phase10WebCheckUser object at )> failed with RuntimeError
+
+[2026-05-06 00:36:43,456] Tamer/ERROR/locust.user.users: web check shell failed: status=404
+Traceback (most recent call last):
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+
+Traceback (most recent call last):
+  File "src/gevent/greenlet.py", line 900, in gevent._gevent_cgreenlet.Greenlet.run
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 196, in run_user
+    user.run()
+    ~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\.venv\Lib\site-packages\locust\user\users.py", line 158, in run
+    self.on_start()
+    ~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 47, in on_start
+    self._ensure_authenticated()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 103, in _ensure_authenticated
+    self._open_check_shell()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py", line 76, in _open_check_shell
+    raise RuntimeError(f"web check shell failed: status={response.status_code}")
+RuntimeError: web check shell failed: status=404
+2026-05-05T16:36:43Z <Greenlet at 0x15cbec95bc0: run_user(<phase10_locustfile.Phase10WebCheckUser object at )> failed with RuntimeError
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    0.00        0.00
+
+[2026-05-06 00:37:07,760] Tamer/INFO/locust.main: --run-time limit reached, shutting down
+[2026-05-06 00:37:08,002] Tamer/INFO/locust.main: writing html report to file: C:\dev\projetos\checkcheck\docs\artifacts\phase10\first-local-web-check\phase10_web_check.html
+[2026-05-06 00:37:08,005] Tamer/INFO/locust.main: Shutting down (exit code 1)
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      GET /checking/user                                                                 6   6(100.00%) |     28       6     120     10 |    5.87        5.87
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         6   6(100.00%) |     28       6     120     10 |    5.87        5.87
+
+Response time percentiles (approximated)
+Type     Name                                                                                  50%    66%    75%    80%    90%    95%    98%    99%  99.9% 99.99%   100% # reqs
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+GET      GET /checking/user                                                                     11     11     18     18    120    120    120    120    120    120    120      6
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+         Aggregated                                                                             11     11     18     18    120    120    120    120    120    120    120      6
+
+Error report
+# occurrences      Error                                                                                               
+------------------|---------------------------------------------------------------------------------------------------------------------------------------------
+6                  GET GET /checking/user: HTTPError('404 Client Error: Not Found for url: GET /checking/user')        
+------------------|---------------------------------------------------------------------------------------------------------------------------------------------
+

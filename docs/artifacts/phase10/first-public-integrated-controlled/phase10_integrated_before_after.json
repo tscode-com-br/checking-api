@@ -1,0 +1,74 @@
+{
+  "profile": "integrated",
+  "base_url": "https://tscode.com.br",
+  "exit_code": 1,
+  "status": "blocked",
+  "summary": {
+    "request_count": 657,
+    "failure_count": 101,
+    "median_response_time": 350.0,
+    "average_response_time": 4774.716536224885,
+    "max_response_time": 60203.338799998164,
+    "requests_per_second": 4.889985289413144,
+    "failures_per_second": 0.7517328983724926,
+    "p50_response_time": 350.0,
+    "p95_response_time": 60000.0,
+    "p99_response_time": 60000.0
+  },
+  "before_snapshot": {
+    "captured_at": "2026-05-05T17:15:36.993533+00:00",
+    "profile": "integrated",
+    "base_url": "https://tscode.com.br",
+    "health": {
+      "status_code": 404,
+      "body": {
+        "detail": "Not Found"
+      }
+    },
+    "host": {
+      "body": {
+        "available": false,
+        "note": "Host CPU and memory capture only runs automatically for local targets."
+      }
+    },
+    "admin_login": {
+      "status_code": 200,
+      "body": {
+        "ok": true,
+        "message": "Login realizado com sucesso."
+      }
+    },
+    "admin": {
+      "forms_queue": {
+        "detail": "Not Found"
+      },
+      "database": {
+        "detail": "Not Found"
+      }
+    }
+  },
+  "after_snapshot": {
+    "captured_at": "2026-05-05T17:18:38.266709+00:00",
+    "profile": "integrated",
+    "base_url": "https://tscode.com.br",
+    "health": {
+      "error": "HTTPSConnectionPool(host='tscode.com.br', port=443): Read timed out. (read timeout=15)"
+    },
+    "host": {
+      "body": {
+        "available": false,
+        "note": "Host CPU and memory capture only runs automatically for local targets."
+      }
+    },
+    "admin_login": {
+      "error": "HTTPSConnectionPool(host='tscode.com.br', port=443): Read timed out. (read timeout=15)"
+    },
+    "admin": {
+      "error": "Admin diagnostics were skipped because the admin login failed."
+    }
+  },
+  "blockers": [
+    "Locust returned a non-zero exit code. Stop the rollout and re-check the scenario contract in docs/incidents/2026-05-06-504-phase10-load-harness.md.",
+    "HTTP failures were observed during the load run. Stop the rollout and re-check the readiness gates and HTTP runtime baseline in docs/incidents/2026-05-05-504-phase9-startup-migration-deploy-hardening.md."
+  ]
+}

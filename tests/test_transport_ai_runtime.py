@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 from alembic import command
@@ -8,10 +9,19 @@ from sqlalchemy.orm import sessionmaker
 
 from sistema.app.core.config import Settings, settings
 from sistema.app.database import Base
-from sistema.app.models import AdminUser
+from sistema.app.models import AdminUser, Project
+from sistema.app.schemas import (
+    ProjectRow,
+    TransportAgentPlanningInput,
+    TransportAgentPlanningLimits,
+    TransportAgentPlanningPartition,
+    TransportAgentPlanningSettings,
+)
 from sistema.app.services import location_settings as location_settings_module
 from sistema.app.services import transport_ai_llm_settings as transport_ai_llm_settings_module
-from sistema.app.services.transport_ai_llm_settings import upsert_transport_ai_llm_settings
+from sistema.app.services.transport_ai_llm_settings import (
+    upsert_transport_ai_llm_settings,
+)
 from sistema.app.services.transport_ai_runtime import validate_transport_ai_runtime_configuration
 
 
@@ -23,7 +33,9 @@ def _build_runtime_settings(**overrides) -> Settings:
         "openai_api_key": "test-openai-key",
         "mapbox_access_token": "test-mapbox-token",
         "transport_ai_settings_encryption_key": Fernet.generate_key().decode("utf-8"),
+        "transport_ai_operational_approval_evidence": "phase8-loadtest-2026-05-05",
         "transport_ai_max_passengers_per_run": 80,
+        "transport_ai_max_concurrent_runs": 1,
         "transport_ai_max_runtime_seconds": 180,
     }
     values.update(overrides)
@@ -82,14 +94,99 @@ def _create_admin_user(db) -> AdminUser:
     return admin_user
 
 
-def _configure_transport_ai_llm_settings(db, *, settings_obj: Settings, provider: str = "openai") -> None:
-    admin_user = _create_admin_user(db)
+def _create_project(db, *, name: str) -> Project:
+    project = Project(
+        name=name,
+        country_code="SG",
+        country_name="Singapore",
+        timezone_name="Asia/Singapore",
+        address="1 Marina Boulevard",
+        zip_code="018989",
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
+def _build_planning_input_for_projects(
+    *,
+    projects: list[Project],
+    settings_obj: Settings,
+) -> TransportAgentPlanningInput:
+    project_rows = {
+        project.name: ProjectRow(
+            id=project.id,
+            name=project.name,
+            country_code=project.country_code,
+            country_name=project.country_name,
+            timezone_name=project.timezone_name,
+            timezone_label=project.timezone_name,
+            address=project.address,
+            zip_code=project.zip_code,
+        )
+        for project in projects
+    }
+    partitions = [
+        TransportAgentPlanningPartition(
+            partition_key=f"extra:{project.name}:{project.country_code}",
+            request_kind="extra",
+            project_id=project.id,
+            project_name=project.name,
+            country_code=project.country_code,
+            country_name=project.country_name,
+            destination_project=project_rows[project.name],
+            requests=[],
+            candidate_vehicles=[],
+        )
+        for project in projects
+    ]
+    return TransportAgentPlanningInput(
+        planning_input_hash="0" * 64,
+        service_date=date(2026, 5, 3),
+        route_kind="home_to_work",
+        snapshot_key="transport-ai-runtime-planning-input",
+        captured_at=location_settings_module.now_sgt(),
+        limits=TransportAgentPlanningLimits(
+            earliest_boarding_time="06:50",
+            arrival_at_work_time="07:45",
+            max_passengers_per_run=settings_obj.transport_ai_max_passengers_per_run,
+            max_runtime_seconds=settings_obj.transport_ai_max_runtime_seconds,
+        ),
+        settings=TransportAgentPlanningSettings(
+            work_to_home_time="16:45",
+            last_update_time="16:00",
+            default_tolerance_minutes=5,
+            price_currency_code=None,
+            price_rate_unit="day",
+            vehicle_type_configs=[],
+        ),
+        projects_by_name=project_rows,
+        requests_by_scope={"regular": [], "weekend": [], "extra": []},
+        vehicles_by_scope={"regular": [], "weekend": [], "extra": []},
+        partitions=partitions,
+        llm_runtime_projects=[],
+        preflight_issues=[],
+        total_requests=len(partitions),
+        total_candidate_vehicles=0,
+    )
+
+
+def _configure_transport_ai_llm_settings(
+    db,
+    *,
+    settings_obj: Settings,
+    project_id: int,
+    provider: str = "openai",
+    actor_admin_user_id: int | None = None,
+) -> None:
+    admin_user_id = actor_admin_user_id or _create_admin_user(db).id
     api_key = "persisted-openai-secret" if provider == "openai" else "persisted-deepseek-secret"
     upsert_transport_ai_llm_settings(
         db,
+        project_id=project_id,
         provider=provider,
         api_key=api_key,
-        actor_admin_user_id=admin_user.id,
+        actor_admin_user_id=admin_user_id,
         settings_obj=settings_obj,
     )
     db.commit()
@@ -128,7 +225,7 @@ def test_transport_ai_runtime_migration_adds_llm_snapshot_columns(tmp_path):
     assert {"llm_provider", "llm_model", "llm_reasoning_effort"}.issubset(column_names)
 
 
-def test_validate_transport_ai_runtime_configuration_reports_missing_persisted_llm_settings(tmp_path):
+def test_validate_transport_ai_runtime_configuration_without_planning_input_skips_project_llm_check(tmp_path):
     engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_llm_missing.db")
     try:
         with session_factory() as db:
@@ -141,8 +238,26 @@ def test_validate_transport_ai_runtime_configuration_reports_missing_persisted_l
                 ),
             )
 
+        assert result.ok is True
+        assert result.issues == []
+    finally:
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_reports_unavailable_settings_encryption(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_settings_encryption_missing.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=_build_runtime_settings(
+                    transport_ai_settings_encryption_key=None,
+                ),
+            )
+
         assert result.ok is False
-        assert [issue.code for issue in result.issues] == ["transport_ai_llm_settings_missing"]
+        assert [issue.code for issue in result.issues] == ["transport_ai_settings_encryption_unavailable"]
     finally:
         engine.dispose()
 
@@ -172,7 +287,6 @@ def test_validate_transport_ai_runtime_configuration_reports_missing_mapbox_toke
         with session_factory() as db:
             _configure_transport_pricing(db)
             settings_obj = _build_runtime_settings(mapbox_access_token=None)
-            _configure_transport_ai_llm_settings(db, settings_obj=settings_obj)
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,
@@ -189,7 +303,6 @@ def test_validate_transport_ai_runtime_configuration_reports_missing_pricing(tmp
     try:
         with session_factory() as db:
             settings_obj = _build_runtime_settings()
-            _configure_transport_ai_llm_settings(db, settings_obj=settings_obj)
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,
@@ -208,9 +321,9 @@ def test_validate_transport_ai_runtime_configuration_reports_invalid_runtime_lim
             _configure_transport_pricing(db)
             settings_obj = _build_runtime_settings(
                 transport_ai_max_passengers_per_run=0,
+                transport_ai_max_concurrent_runs=0,
                 transport_ai_max_runtime_seconds=0,
             )
-            _configure_transport_ai_llm_settings(db, settings_obj=settings_obj)
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,
@@ -218,9 +331,28 @@ def test_validate_transport_ai_runtime_configuration_reports_invalid_runtime_lim
 
         assert result.ok is False
         assert [issue.code for issue in result.issues] == [
-            "transport_ai_max_passengers_per_run_invalid",
+            "transport_ai_max_concurrent_runs_invalid",
             "transport_ai_max_runtime_seconds_invalid",
+            "transport_ai_max_passengers_per_run_invalid",
         ]
+    finally:
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_reports_missing_operational_approval(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_approval_missing.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=_build_runtime_settings(
+                    transport_ai_operational_approval_evidence=None,
+                ),
+            )
+
+        assert result.ok is False
+        assert [issue.code for issue in result.issues] == ["transport_ai_operational_approval_missing"]
     finally:
         engine.dispose()
 
@@ -234,22 +366,52 @@ def test_validate_transport_ai_runtime_configuration_accepts_complete_configurat
                 openai_api_key=None,
                 openai_model="legacy-openai-model-ignored",
             )
-            admin_user = _create_admin_user(db)
-            upsert_transport_ai_llm_settings(
+            project = _create_project(db, name="PRUNTIME-COMPLETE")
+            _configure_transport_ai_llm_settings(
                 db,
+                settings_obj=settings_obj,
+                project_id=project.id,
                 provider="deepseek",
-                api_key="deepseek-runtime-secret",
-                actor_admin_user_id=admin_user.id,
+            )
+            planning_input = _build_planning_input_for_projects(
+                projects=[project],
                 settings_obj=settings_obj,
             )
-            db.commit()
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,
+                planning_input=planning_input,
             )
 
         assert result.ok is True
         assert result.issues == []
+    finally:
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_reports_missing_project_llm_settings(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_project_missing.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            settings_obj = _build_runtime_settings(
+                openai_api_key=None,
+                openai_model="legacy-openai-model-ignored",
+            )
+            project = _create_project(db, name="PRUNTIME-MISSING")
+            planning_input = _build_planning_input_for_projects(
+                projects=[project],
+                settings_obj=settings_obj,
+            )
+
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=settings_obj,
+                planning_input=planning_input,
+            )
+
+        assert result.ok is False
+        assert [issue.code for issue in result.issues] == ["transport_ai_llm_settings_missing"]
     finally:
         engine.dispose()
 
@@ -265,12 +427,18 @@ def test_validate_transport_ai_runtime_configuration_reports_removed_supported_p
                 openai_model="legacy-openai-model-ignored",
             )
             admin_user = _create_admin_user(db)
+            project = _create_project(db, name="PRUNTIME-PROVIDER")
+            planning_input = _build_planning_input_for_projects(
+                projects=[project],
+                settings_obj=settings_obj,
+            )
             deepseek_defaults = removed_defaults
             assert deepseek_defaults is not None
             transport_ai_llm_settings_module.TRANSPORT_AI_LLM_PROVIDER_DEFAULTS["deepseek"] = deepseek_defaults
             try:
                 upsert_transport_ai_llm_settings(
                     db,
+                    project_id=project.id,
                     provider="deepseek",
                     api_key="deepseek-runtime-secret",
                     actor_admin_user_id=admin_user.id,
@@ -283,6 +451,7 @@ def test_validate_transport_ai_runtime_configuration_reports_removed_supported_p
             result = validate_transport_ai_runtime_configuration(
                 db,
                 settings_obj=settings_obj,
+                planning_input=planning_input,
             )
 
         assert result.ok is False
@@ -290,4 +459,93 @@ def test_validate_transport_ai_runtime_configuration_reports_removed_supported_p
     finally:
         if removed_defaults is not None:
             transport_ai_llm_settings_module.TRANSPORT_AI_LLM_PROVIDER_DEFAULTS["deepseek"] = removed_defaults
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_reports_project_runtime_conflict(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_project_conflict.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            settings_obj = _build_runtime_settings(
+                openai_api_key=None,
+                openai_model="legacy-openai-model-ignored",
+            )
+            admin_user = _create_admin_user(db)
+            project_a = _create_project(db, name="PRUNTIME-CONFLICT-A")
+            project_b = _create_project(db, name="PRUNTIME-CONFLICT-B")
+            _configure_transport_ai_llm_settings(
+                db,
+                settings_obj=settings_obj,
+                project_id=project_a.id,
+                provider="openai",
+                actor_admin_user_id=admin_user.id,
+            )
+            _configure_transport_ai_llm_settings(
+                db,
+                settings_obj=settings_obj,
+                project_id=project_b.id,
+                provider="deepseek",
+                actor_admin_user_id=admin_user.id,
+            )
+            planning_input = _build_planning_input_for_projects(
+                projects=[project_a, project_b],
+                settings_obj=settings_obj,
+            )
+
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=settings_obj,
+                planning_input=planning_input,
+            )
+
+        assert result.ok is False
+        assert [issue.code for issue in result.issues] == ["transport_ai_llm_runtime_conflict"]
+    finally:
+        engine.dispose()
+
+
+def test_validate_transport_ai_runtime_configuration_reports_project_runtime_conflict_for_different_api_keys(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_runtime_project_key_conflict.db")
+    try:
+        with session_factory() as db:
+            _configure_transport_pricing(db)
+            settings_obj = _build_runtime_settings(
+                openai_api_key=None,
+                openai_model="legacy-openai-model-ignored",
+            )
+            admin_user = _create_admin_user(db)
+            project_a = _create_project(db, name="PRUNTIME-KEY-CONFLICT-A")
+            project_b = _create_project(db, name="PRUNTIME-KEY-CONFLICT-B")
+            upsert_transport_ai_llm_settings(
+                db,
+                project_id=project_a.id,
+                provider="openai",
+                api_key="key-conflict-openai-1111",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            upsert_transport_ai_llm_settings(
+                db,
+                project_id=project_b.id,
+                provider="openai",
+                api_key="key-conflict-openai-2222",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            db.commit()
+            planning_input = _build_planning_input_for_projects(
+                projects=[project_a, project_b],
+                settings_obj=settings_obj,
+            )
+
+            result = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=settings_obj,
+                planning_input=planning_input,
+            )
+
+        assert result.ok is False
+        assert [issue.code for issue in result.issues] == ["transport_ai_llm_runtime_conflict"]
+    finally:
         engine.dispose()

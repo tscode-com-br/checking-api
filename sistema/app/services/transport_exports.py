@@ -13,6 +13,7 @@ from ..core.config import settings
 from ..models import TransportAIRun, TransportAISuggestion, TransportAssignment, TransportRequest, User, Vehicle
 from ..schemas import TransportOperationalProposal, TransportOperationalSnapshot
 from .time_utils import now_sgt
+from .transport_ai_runs import resolve_transport_ai_run_llm_snapshot_fields
 
 
 _PAIRED_ROUTE_KIND = {
@@ -439,10 +440,12 @@ def _resolve_transport_ai_export_llm_fields(run: TransportAIRun | None) -> tuple
     if run is None:
         return None, None, None
 
-    llm_model = str(run.llm_model or run.openai_model or "").strip() or None
-    llm_provider = str(run.llm_provider or "").strip().lower() or ("openai" if llm_model else None)
-    llm_reasoning_effort = str(run.llm_reasoning_effort or "").strip().lower() or ("high" if llm_model else None)
-    return llm_provider, llm_model, llm_reasoning_effort
+    llm_fields = resolve_transport_ai_run_llm_snapshot_fields(run)
+    return (
+        str(llm_fields["llm_provider"] or "").strip() or None,
+        str(llm_fields["llm_model"] or "").strip() or None,
+        str(llm_fields["llm_reasoning_effort"] or "").strip() or None,
+    )
 
 
 def _build_transport_ai_summary_rows(suggestion: TransportAISuggestion, *, run: TransportAIRun | None = None) -> list[list[object]]:

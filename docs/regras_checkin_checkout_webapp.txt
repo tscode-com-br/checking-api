@@ -67,9 +67,21 @@ Situação 7:
 - Nesta situação, a aplicação web 'Checking Web' deve realizar imediatamente um check-in do usuário;
 - Ao realizar esse check-in, a aplicação web 'Checking Web' atualiza a localização do usuário para a localização cadastrada na API ou, quando não houver correspondência exata com um local cadastrado, para 'Localização não Cadastrada'.
 
-
-
-
+Situação 8:
+- O usuário carrega a aplicação web 'Checking Web', ou o usuário pressiona 'Refresh' para atualizar o link da aplicação web 'Checking Web', ou o usuário traz o navegador para primeiro plano com a URL da aplicação web 'Checking Web' aberta, ou o usuário alterna para a aba onde a aplicação web 'Checking Web' está aberta;
+- A checkbox 'Atividades Automáticas' está habilitada e a localização do usuário está com permissão total de compartilhamento com a aplicação web 'Checking Web';
+- A aplicação web 'Checking Web' atualiza a localização do usuário (isto sempre deve ocorrer);
+- A aplicação web 'Checking Web' identifica que a posição atual do usuário corresponde à localização 'Zona Mista'. Esta identificação pode acontecer tanto na primeira entrada do usuário na 'Zona Mista' quanto em uma nova leitura consecutiva ainda dentro dela;
+- Se a leitura atual apontar 'Zona Mista' e a última atividade relevante do usuário não tiver sido realizada na própria 'Zona Mista', então a alternância automática deve ser imediata:
+- Variante 8A: se a última atividade do usuário foi um check-in, a aplicação web 'Checking Web' deve realizar imediatamente um check-out do usuário na localização 'Zona Mista';
+- Variante 8B: se a última atividade do usuário foi um check-out, a aplicação web 'Checking Web' deve realizar imediatamente um check-in do usuário na localização 'Zona Mista';
+- O campo 'Intervalo de Tempo para Zona Mista', na aba 'Cadastro' do website do administrador ('sistema\app\static\admin'), define o cooldown aplicável apenas às leituras consecutivas na própria 'Zona Mista' depois que a última atividade automática relevante também aconteceu nela;
+- Se a última atividade automática realizada na própria 'Zona Mista' foi um check-in e a nova leitura continuar apontando 'Zona Mista', então a aplicação web 'Checking Web' só deve bloquear um novo check-out enquanto `tempo_decorrido < intervalo`;
+- Se a última atividade automática realizada na própria 'Zona Mista' foi um check-out e a nova leitura continuar apontando 'Zona Mista', então a aplicação web 'Checking Web' só deve bloquear um novo check-in enquanto `tempo_decorrido < intervalo`;
+- Quando `tempo_decorrido >= intervalo`, a aplicação web 'Checking Web' volta a permitir a alternância automática na própria 'Zona Mista', mesmo que a localização atual continue sendo 'Zona Mista';
+- Exceção imediata após check-in em 'Zona Mista': se o usuário for localizado na 'Zona de CheckOut' ou em um ponto mais distante de qualquer área cadastrada na API do que a distância definida na tabela 'Distância mínima para check-out automático' para o projeto em que o usuário está alocado, desconsiderando a 'Zona de CheckOut', então a aplicação web 'Checking Web' deve realizar o check-out do usuário imediatamente, sem aguardar o cooldown da 'Zona Mista';
+- Exceção imediata após check-out em 'Zona Mista': se o usuário for localizado em qualquer outra localização cadastrada na API, exceto 'Zona de CheckOut' e 'Zona Mista', ou se o usuário não estiver em nenhuma localização cadastrada, mas ainda estiver a uma distância menor ou igual à definida na tabela 'Distância mínima para check-out automático' para o projeto em que o usuário está alocado, desconsiderando a 'Zona de CheckOut', então a aplicação web 'Checking Web' deve realizar imediatamente um novo check-in do usuário. Neste caso, o cooldown configurado para a 'Zona Mista' deve ser descartado;
+- Ou seja, a repetição consecutiva da 'Zona Mista' só bloqueia uma nova alternância automática enquanto `tempo_decorrido < intervalo`, e a alternância volta a ser permitida quando `tempo_decorrido >= intervalo`.
 
 
 

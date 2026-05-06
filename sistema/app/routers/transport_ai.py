@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..core.config import normalize_transport_ai_agent_mode, settings
 from ..database import get_db
 from ..models import (
+    Project,
     TransportAIRun,
     TransportAISuggestion,
     TransportVehicleSchedule,
@@ -45,10 +46,10 @@ from ..services.location_settings import get_transport_settings_payload
 from ..services.time_utils import now_sgt
 from ..services.transport_ai_llm_settings import (
     TransportAILlmSettingsEncryptionError,
+    TransportAILlmSettingsProjectNotFoundError,
     TransportAILlmSettingsValidationError,
     get_transport_ai_llm_settings,
     get_transport_ai_llm_settings_payload,
-    resolve_transport_ai_llm_runtime_settings,
     upsert_transport_ai_llm_settings,
 )
 from ..services.transport_ai_sanitization import sanitize_transport_ai_string
@@ -70,6 +71,7 @@ from ..services.transport_ai_runs import (
     capture_transport_ai_baseline,
     create_transport_ai_suggestion_from_plan,
     ensure_transport_ai_actor_admin_user,
+    resolve_transport_ai_run_llm_snapshot_fields,
     get_latest_active_transport_ai_suggestion,
     get_latest_transport_ai_suggestion_for_run,
     get_transport_ai_suggestion_by_key,
@@ -79,7 +81,12 @@ from ..services.transport_ai_runs import (
     save_transport_ai_planning_input,
     set_transport_ai_suggestion_status,
 )
-from ..services.transport_ai_runtime import validate_transport_ai_runtime_configuration
+from ..services.transport_ai_runtime import (
+    build_transport_ai_concurrency_limit_issue,
+    count_transport_ai_active_runs,
+    resolve_transport_ai_shared_llm_runtime_context,
+    validate_transport_ai_runtime_configuration,
+)
 from ..services.transport_proposals import (
     apply_transport_operational_proposal,
     approve_transport_operational_proposal,
@@ -206,6 +213,8 @@ def _record_transport_ai_settings_failure_event(
     db: Session,
     *,
     transport_user: User,
+    project_id: int,
+    project_name: str | None,
     provider: str | None,
     api_key: str | None,
     previous_provider: str | None,
@@ -227,6 +236,8 @@ def _record_transport_ai_settings_failure_event(
     record_transport_ai_settings_failure(
         db,
         actor_admin_user=actor_admin_user,
+        project_id=project_id,
+        project_name=project_name,
         provider=provider,
         api_key=api_key,
         previous_provider=previous_provider,
@@ -532,33 +543,17 @@ def _build_transport_ai_run_duration_seconds(*, run: TransportAIRun, reference_t
     return max(duration_seconds, 0)
 
 
-def _resolve_transport_ai_run_llm_snapshot_fields(run: TransportAIRun) -> dict[str, str]:
-    llm_model = str(run.llm_model or run.openai_model or "").strip()
-    llm_provider = str(run.llm_provider or "").strip().lower()
-    llm_reasoning_effort = str(run.llm_reasoning_effort or "").strip().lower()
-
-    if not llm_provider:
-        llm_provider = "openai" if llm_model else "unknown"
-    if not llm_reasoning_effort:
-        llm_reasoning_effort = "high" if llm_model else "unknown"
-
-    return {
-        "llm_provider": llm_provider,
-        "llm_model": llm_model or "unknown",
-        "llm_reasoning_effort": llm_reasoning_effort,
-    }
-
-
-def _build_transport_ai_runs_diagnostics_entries(
-    *,
+def _build_transport_ai_runs_diagnostics_response(
     runs: list[TransportAIRun],
+    *,
     latest_suggestion_by_run_id: dict[int, TransportAISuggestion],
     reference_time,
 ) -> list[TransportAIRunDiagnosticsEntry]:
     entries: list[TransportAIRunDiagnosticsEntry] = []
+
     for run in runs:
         suggestion = latest_suggestion_by_run_id.get(run.id)
-        llm_fields = _resolve_transport_ai_run_llm_snapshot_fields(run)
+        llm_fields = resolve_transport_ai_run_llm_snapshot_fields(run)
         preflight_issue_codes, preflight_blocking_count = _extract_transport_ai_issue_codes(run.preflight_issues_json)
         validation_issue_codes, validation_blocking_count = _extract_transport_ai_issue_codes(
             suggestion.validation_issues_json if suggestion is not None else None
@@ -575,7 +570,7 @@ def _build_transport_ai_runs_diagnostics_entries(
                 llm_provider=llm_fields["llm_provider"],
                 llm_model=llm_fields["llm_model"],
                 llm_reasoning_effort=llm_fields["llm_reasoning_effort"],
-                openai_model=run.openai_model,
+                openai_model=llm_fields["openai_model"],
                 route_provider=run.route_provider,
                 suggestion_key=suggestion.suggestion_key if suggestion is not None else None,
                 suggestion_status=suggestion.status if suggestion is not None else None,
@@ -606,7 +601,7 @@ def _build_transport_ai_run_status_response(
     run: TransportAIRun,
     suggestion,
 ) -> TransportAgentRunStatusResponse:
-    llm_fields = _resolve_transport_ai_run_llm_snapshot_fields(run)
+    llm_fields = resolve_transport_ai_run_llm_snapshot_fields(run)
     suggestion_response, suggestion_issues = _build_transport_ai_poll_suggestion_response(suggestion)
     issues = [*_build_transport_ai_run_preflight_issues(run), *suggestion_issues]
     has_blocking_issues = any(issue.blocking for issue in issues)
@@ -1815,13 +1810,28 @@ def get_transport_ai_preflight(db: Session = Depends(get_db)) -> TransportAIPref
 
 
 @router.get("/settings", response_model=TransportAISettingsResponse)
-def get_transport_ai_settings(db: Session = Depends(get_db)) -> TransportAISettingsResponse:
+def get_transport_ai_settings(
+    project_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+) -> TransportAISettingsResponse:
     try:
-        return get_transport_ai_llm_settings_payload(db)
+        return get_transport_ai_llm_settings_payload(db, project_id=project_id)
+    except TransportAILlmSettingsProjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_sanitize_transport_ai_router_message(str(exc)),
+        ) from exc
     except TransportAILlmSettingsValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=_sanitize_transport_ai_router_message(str(exc)),
+        ) from exc
+    except TransportAILlmSettingsEncryptionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_sanitize_transport_ai_router_message(
+                "Transport AI settings encryption is unavailable."
+            ),
         ) from exc
 
 
@@ -1833,7 +1843,9 @@ def update_transport_ai_settings(
     transport_user: User = Depends(require_transport_session),
 ) -> TransportAISettingsResponse:
     request_path = str(request.url.path or "").strip() or "/api/transport/ai/settings"
-    current_settings = get_transport_ai_llm_settings(db)
+    project = db.get(Project, payload.project_id)
+    project_name = str(project.name).strip() if project is not None and str(project.name).strip() else None
+    current_settings = get_transport_ai_llm_settings(db, project_id=payload.project_id)
     previous_provider = current_settings.provider if current_settings is not None else None
     timestamp = now_sgt()
     actor_admin_user = ensure_transport_ai_actor_admin_user(
@@ -1846,10 +1858,34 @@ def update_transport_ai_settings(
     try:
         upsert_transport_ai_llm_settings(
             db,
+            project_id=payload.project_id,
             provider=payload.provider,
             api_key=payload.api_key,
             actor_admin_user_id=actor_admin_user.id,
         )
+    except TransportAILlmSettingsProjectNotFoundError as exc:
+        response_detail = _sanitize_transport_ai_router_message(
+            str(exc),
+            extra_literal_secrets=(payload.api_key,),
+        )
+        _record_transport_ai_settings_failure_event(
+            db,
+            transport_user=transport_user,
+            project_id=payload.project_id,
+            project_name=project_name,
+            provider=payload.provider,
+            api_key=payload.api_key,
+            previous_provider=previous_provider,
+            request_path=request_path,
+            http_status=status.HTTP_404_NOT_FOUND,
+            failure_detail=response_detail,
+            response_detail=response_detail,
+            timestamp=timestamp,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=response_detail,
+        ) from exc
     except TransportAILlmSettingsValidationError as exc:
         response_detail = _sanitize_transport_ai_router_message(
             str(exc),
@@ -1858,6 +1894,8 @@ def update_transport_ai_settings(
         _record_transport_ai_settings_failure_event(
             db,
             transport_user=transport_user,
+            project_id=payload.project_id,
+            project_name=project_name,
             provider=payload.provider,
             api_key=payload.api_key,
             previous_provider=previous_provider,
@@ -1883,6 +1921,8 @@ def update_transport_ai_settings(
         _record_transport_ai_settings_failure_event(
             db,
             transport_user=transport_user,
+            project_id=payload.project_id,
+            project_name=project_name,
             provider=payload.provider,
             api_key=payload.api_key,
             previous_provider=previous_provider,
@@ -1897,7 +1937,7 @@ def update_transport_ai_settings(
             detail=response_detail,
         ) from exc
 
-    response_payload = get_transport_ai_llm_settings_payload(db)
+    response_payload = get_transport_ai_llm_settings_payload(db, project_id=payload.project_id)
     record_transport_ai_settings_update(
         db,
         actor_admin_user=actor_admin_user,
@@ -1957,7 +1997,7 @@ def list_transport_ai_runs(
         for suggestion in suggestions:
             latest_suggestion_by_run_id.setdefault(suggestion.run_id, suggestion)
 
-    entries = _build_transport_ai_runs_diagnostics_entries(
+    entries = _build_transport_ai_runs_diagnostics_response(
         runs=runs,
         latest_suggestion_by_run_id=latest_suggestion_by_run_id,
         reference_time=now_sgt(),
@@ -2471,6 +2511,22 @@ def start_transport_ai_route_calculation(
             ),
         )
 
+    active_run_count = count_transport_ai_active_runs(db)
+    if active_run_count >= settings.transport_ai_max_concurrent_runs:
+        concurrency_issue = build_transport_ai_concurrency_limit_issue(
+            active_run_count=active_run_count,
+            settings_obj=settings,
+        )
+        return _build_transport_ai_error_response(
+            status_code=status.HTTP_409_CONFLICT,
+            response=_build_transport_ai_start_response(
+                ok=False,
+                status_value="failed",
+                message="Transport AI runtime admission is blocked by the concurrency limit.",
+                issues=[concurrency_issue],
+            ),
+        )
+
     timestamp = now_sgt()
     actor_admin_user = ensure_transport_ai_actor_admin_user(
         db,
@@ -2478,9 +2534,6 @@ def start_transport_ai_route_calculation(
         nome_completo=transport_user.nome,
         ensured_at=timestamp,
     )
-    llm_runtime_settings = None
-    if normalize_transport_ai_agent_mode(settings.transport_ai_agent_mode) == "agent":
-        llm_runtime_settings = resolve_transport_ai_llm_runtime_settings(db)
     transport_settings = get_transport_settings_payload(db)
     run = TransportAIRun(
         run_key=f"transport-ai-run:{uuid4().hex}",
@@ -2490,14 +2543,10 @@ def start_transport_ai_route_calculation(
         actor_user_id=actor_admin_user.id,
         earliest_boarding_time=payload.earliest_boarding_time,
         arrival_at_work_time=payload.arrival_at_work_time,
-        llm_provider=llm_runtime_settings.provider if llm_runtime_settings is not None else None,
-        llm_model=llm_runtime_settings.model_name if llm_runtime_settings is not None else None,
-        llm_reasoning_effort=llm_runtime_settings.reasoning_effort if llm_runtime_settings is not None else None,
-        openai_model=(
-            llm_runtime_settings.model_name
-            if llm_runtime_settings is not None
-            else settings.openai_model
-        ),
+        llm_provider=None,
+        llm_model=None,
+        llm_reasoning_effort=None,
+        openai_model=settings.openai_model,
         route_provider=str(settings.transport_ai_route_provider or "mapbox").strip() or "mapbox",
         price_currency_code=transport_settings.get("price_currency_code"),
         price_rate_unit=str(transport_settings["price_rate_unit"]),
@@ -2601,14 +2650,52 @@ def start_transport_ai_route_calculation(
             arrival_at_work_time=payload.arrival_at_work_time,
             settings_obj=settings,
         )
+        planning_issues = list(planning_input.preflight_issues)
+        if normalize_transport_ai_agent_mode(settings.transport_ai_agent_mode) == "agent":
+            project_runtime_preflight = validate_transport_ai_runtime_configuration(
+                db,
+                settings_obj=settings,
+                planning_input=planning_input,
+            )
+            planning_issues.extend(project_runtime_preflight.issues)
+
+            if project_runtime_preflight.ok:
+                try:
+                    resolved_llm_runtime_settings, llm_runtime_projects = resolve_transport_ai_shared_llm_runtime_context(
+                        db,
+                        planning_input=planning_input,
+                        settings_obj=settings,
+                    )
+                except (
+                    TransportAILlmSettingsEncryptionError,
+                    TransportAILlmSettingsProjectNotFoundError,
+                    TransportAILlmSettingsValidationError,
+                ) as exc:
+                    planning_issues.append(
+                        TransportAIPreflightIssue(
+                            code="transport_ai_llm_runtime_unavailable",
+                            message=_sanitize_transport_ai_router_message(str(exc)),
+                            blocking=True,
+                            setting_name="transport_ai_llm_settings",
+                        )
+                    )
+                else:
+                    planning_input = planning_input.model_copy(
+                        update={"llm_runtime_projects": llm_runtime_projects}
+                    )
+                    run.llm_provider = resolved_llm_runtime_settings.provider
+                    run.llm_model = resolved_llm_runtime_settings.model_name
+                    run.llm_reasoning_effort = resolved_llm_runtime_settings.reasoning_effort
+                    run.openai_model = resolved_llm_runtime_settings.model_name
+
+        planning_input = planning_input.model_copy(update={"preflight_issues": planning_issues})
         save_transport_ai_planning_input(
             run,
             planning_input=planning_input,
             saved_at=timestamp,
         )
 
-        planning_issues = list(planning_input.preflight_issues)
-        if planning_input.total_requests <= 0 or any(issue.blocking for issue in planning_issues):
+        if planning_input.total_requests <= 0 or any(issue.blocking for issue in planning_input.preflight_issues):
             failure_message = (
                 "Transport AI route calculation has no eligible pending requests after reset."
                 if planning_input.total_requests <= 0
@@ -2631,7 +2718,7 @@ def start_transport_ai_route_calculation(
                     run_key=run.run_key,
                     status_value=run.status,
                     message=final_message,
-                    issues=[*planning_issues, *restore_issues],
+                    issues=[*planning_input.preflight_issues, *restore_issues],
                     can_cancel_restore=can_cancel_restore,
                 ),
             )
@@ -2683,6 +2770,10 @@ def start_transport_ai_route_calculation(
             request_path="/api/transport/ai/route-calculations",
             extra_details={
                 "prompt_version": agent_result.prompt_version,
+                "llm_provider": run.llm_provider,
+                "llm_model": run.llm_model,
+                "llm_reasoning_effort": run.llm_reasoning_effort,
+                "openai_model": run.openai_model,
             },
         )
         emit_transport_reevaluation_event(

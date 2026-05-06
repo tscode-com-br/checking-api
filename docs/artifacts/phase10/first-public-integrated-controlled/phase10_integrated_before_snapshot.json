@@ -1,0 +1,32 @@
+{
+  "captured_at": "2026-05-05T17:15:36.993533+00:00",
+  "profile": "integrated",
+  "base_url": "https://tscode.com.br",
+  "health": {
+    "status_code": 404,
+    "body": {
+      "detail": "Not Found"
+    }
+  },
+  "host": {
+    "body": {
+      "available": false,
+      "note": "Host CPU and memory capture only runs automatically for local targets."
+    }
+  },
+  "admin_login": {
+    "status_code": 200,
+    "body": {
+      "ok": true,
+      "message": "Login realizado com sucesso."
+    }
+  },
+  "admin": {
+    "forms_queue": {
+      "detail": "Not Found"
+    },
+    "database": {
+      "detail": "Not Found"
+    }
+  }
+}

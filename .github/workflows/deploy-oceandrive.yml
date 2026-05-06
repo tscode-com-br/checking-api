@@ -38,11 +38,17 @@ jobs:
         run: |
           set -e
           deploy_dir="$OCEAN_DEFAULT_APP_DIR"
+          validate_public="true"
           if [ -n "$OCEAN_DEPLOY_DIR_INPUT" ]; then
             deploy_dir="$OCEAN_DEPLOY_DIR_INPUT"
+            if [ "$OCEAN_DEPLOY_DIR_INPUT" != "$OCEAN_DEFAULT_APP_DIR" ]; then
+              validate_public="false"
+            fi
           fi
           test -n "$deploy_dir"
           echo "path=$deploy_dir" >> "$GITHUB_OUTPUT"
+          echo "validate_public=$validate_public" >> "$GITHUB_OUTPUT"
+          echo "public_health_url=https://tscode.com.br/api/health" >> "$GITHUB_OUTPUT"
 
       - name: Validate deploy secrets
         env:
@@ -218,8 +224,36 @@ jobs:
             echo "[tmp]"
             du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
 
-      - name: Pull and restart services
-        id: restart_services
+      - name: Materialize production .env from GitHub secret
+        env:
+          OCEAN_APP_ENV_B64: ${{ secrets.OCEAN_APP_ENV_B64 }}
+        if: env.OCEAN_APP_ENV_B64 != ''
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ steps.deploy_dir.outputs.path }}
+            temp_env="$(mktemp)"
+            cleanup() {
+              rm -f "$temp_env"
+            }
+            trap cleanup EXIT
+            printf '%s' '${{ env.OCEAN_APP_ENV_B64 }}' | base64 -d > "$temp_env"
+            if [ ! -s "$temp_env" ]; then
+              echo "Decoded .env from OCEAN_APP_ENV_B64 is empty"
+              exit 1
+            fi
+            install -m 600 "$temp_env" .env
+
+      - name: Pull application image on host
+        id: pull_application_image
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -243,12 +277,48 @@ jobs:
             }
             trap cleanup EXIT
             export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"
-            printf '%s\n' '${{ github.sha }}' > .deploy-release
             docker compose up -d db
             printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
             CHECKCHECK_APP_IMAGE="$APP_IMAGE" docker compose pull app
             docker logout ghcr.io || true
-            CHECKCHECK_APP_IMAGE="$APP_IMAGE" docker compose up -d --no-build --force-recreate --remove-orphans app
+
+      - name: Run database migration
+        id: run_database_migration
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 15m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -euo pipefail
+            cd ${{ steps.deploy_dir.outputs.path }}
+            export CHECKCHECK_APP_IMAGE='ghcr.io/tscode-com-br/checkcheck-app:${{ github.sha }}'
+            bash deploy/maintenance/run_app_rollout.sh \
+              --phase migrate \
+              --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
+
+      - name: Start application runtime
+        id: start_application_runtime
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 10m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -euo pipefail
+            cd ${{ steps.deploy_dir.outputs.path }}
+            export CHECKCHECK_APP_IMAGE='ghcr.io/tscode-com-br/checkcheck-app:${{ github.sha }}'
+            bash deploy/maintenance/run_app_rollout.sh \
+              --phase start \
+              --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
 
       - name: Snapshot disk usage after restart
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
@@ -270,8 +340,8 @@ jobs:
             echo "[tmp]"
             du -xh --max-depth=1 /tmp /var/tmp 2>/dev/null | sort -h | tail -n 20
 
-      - name: Validate application health
-        id: validate_application_health
+      - name: Validate local application health
+        id: validate_local_application_health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}
@@ -282,20 +352,39 @@ jobs:
           command_timeout: 3m
           fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
           script: |
-            set -e
+            set -euo pipefail
             cd ${{ steps.deploy_dir.outputs.path }}
-            for i in 1 2 3 4 5 6 7 8 9 10; do
-              if curl -fsS http://127.0.0.1:8000/api/health; then
-                echo
-                docker compose ps
-                exit 0
-              fi
-              sleep 6
-            done
-            echo "Health check falhou apos o deploy"
-            docker compose ps
-            docker compose logs --tail=120 app
-            exit 1
+            bash deploy/maintenance/run_app_rollout.sh \
+              --phase validate-local \
+              --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
+
+      - name: Validate public application health
+        if: ${{ steps.deploy_dir.outputs.validate_public == 'true' }}
+        run: |
+          set -euo pipefail
+          bash deploy/smoke/validate_url.sh \
+            --label public-api \
+            --url '${{ steps.deploy_dir.outputs.public_health_url }}' \
+            --contains '"status":"ok"'
+
+      - name: Mark deployed release
+        id: mark_deployed_release
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -euo pipefail
+            cd ${{ steps.deploy_dir.outputs.path }}
+            bash deploy/maintenance/run_app_rollout.sh \
+              --phase mark-release \
+              --deploy-dir '${{ steps.deploy_dir.outputs.path }}' \
+              --release-id '${{ github.sha }}'
 
       - name: Install SSD cleanup automation
         if: ${{ always() && steps.ssh_verification.conclusion == 'success' && steps.sync_project.conclusion == 'success' }}

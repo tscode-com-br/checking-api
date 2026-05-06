@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest==8.4.2
+locust==2.42.1
+psutil==7.0.0

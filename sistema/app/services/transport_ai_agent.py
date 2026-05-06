@@ -43,8 +43,8 @@ from .transport_ai_planning import (
 from .transport_ai_llm_settings import (
     TRANSPORT_AI_LLM_DEFAULT_REASONING_EFFORT,
     TransportAILlmRuntimeSettings,
-    resolve_transport_ai_llm_runtime_settings,
 )
+from .transport_ai_runtime import resolve_transport_ai_shared_llm_runtime_context
 from .transport_ai_sanitization import (
     TRANSPORT_AI_REDACTED_VALUE,
     sanitize_transport_ai_raw_value,
@@ -1225,9 +1225,14 @@ def _resolve_transport_ai_run_llm_runtime_settings(
     *,
     db: Session,
     run: TransportAIRun,
+    planning_input: TransportAgentPlanningInput,
     settings_obj: Settings = settings,
-) -> TransportAILlmRuntimeSettings:
-    persisted_runtime_settings = resolve_transport_ai_llm_runtime_settings(db, settings_obj=settings_obj)
+) -> tuple[TransportAILlmRuntimeSettings, TransportAgentPlanningInput]:
+    persisted_runtime_settings, llm_runtime_projects = resolve_transport_ai_shared_llm_runtime_context(
+        db,
+        planning_input=planning_input,
+        settings_obj=settings_obj,
+    )
     provider = str(run.llm_provider or persisted_runtime_settings.provider).strip().lower() or persisted_runtime_settings.provider
     model_name = (
         str(run.llm_model or run.openai_model or persisted_runtime_settings.model_name).strip()
@@ -1238,12 +1243,15 @@ def _resolve_transport_ai_run_llm_runtime_settings(
         or persisted_runtime_settings.reasoning_effort
     )
     base_url = persisted_runtime_settings.base_url if provider == persisted_runtime_settings.provider else None
-    return TransportAILlmRuntimeSettings(
-        provider=provider,
-        model_name=model_name,
-        reasoning_effort=reasoning_effort,
-        api_key=persisted_runtime_settings.api_key,
-        base_url=base_url,
+    return (
+        TransportAILlmRuntimeSettings(
+            provider=provider,
+            model_name=model_name,
+            reasoning_effort=reasoning_effort,
+            api_key=persisted_runtime_settings.api_key,
+            base_url=base_url,
+        ),
+        planning_input.model_copy(update={"llm_runtime_projects": llm_runtime_projects}),
     )
 
 
@@ -1474,12 +1482,34 @@ def _invoke_transport_ai_structured_model(
     model: Any,
     messages: list[BaseMessage],
 ) -> tuple[TransportAgentPlan | None, Any, Exception | None]:
-    structured_model = model.with_structured_output(
-        TransportAgentPlan,
-        method="function_calling",
-        include_raw=True,
-    )
-    response = structured_model.invoke(messages)
+    try:
+        structured_model = model.with_structured_output(
+            TransportAgentPlan,
+            method="function_calling",
+            include_raw=True,
+        )
+        response = structured_model.invoke(messages)
+    except Exception as exc:
+        if not _is_transport_ai_structured_output_tool_choice_error(exc) or not hasattr(model, "bind_tools"):
+            raise
+
+        fallback_model = model.bind_tools(
+            [TransportAgentPlan],
+            tool_choice="auto",
+            parallel_tool_calls=False,
+        )
+        fallback_response = fallback_model.invoke(messages)
+        fallback_tool_calls = getattr(fallback_response, "tool_calls", None) or []
+        parsed_tool_args = None
+        if fallback_tool_calls:
+            first_tool_call = fallback_tool_calls[0]
+            if isinstance(first_tool_call, dict):
+                parsed_tool_args = first_tool_call.get("args")
+        response = {
+            "raw": fallback_response,
+            "parsed": parsed_tool_args,
+            "parsing_error": None,
+        }
 
     raw_response = None
     parsing_error = None
@@ -1523,6 +1553,24 @@ def _is_transport_ai_reasoning_unsupported_error(exc: Exception) -> bool:
     return _is_transport_ai_parameter_unsupported_error(
         exc,
         parameter_markers=("reasoning_effort", "reasoning"),
+    )
+
+
+def _is_transport_ai_deepseek_reasoning_tool_choice_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "tool_choice" in message and "deepseek-reasoner" in message
+
+
+def _is_transport_ai_structured_output_tool_choice_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "tool_choice" in message and any(
+        marker in message
+        for marker in (
+            "does not support",
+            "unsupported",
+            "not supported",
+            "invalid_request_error",
+        )
     )
 
 
@@ -1616,15 +1664,6 @@ def run_transport_ai_agent(
     _maybe_seed_transport_ai_context_from_run(context=context, run=run)
 
     try:
-        if agent_mode == "agent" and _should_resolve_transport_ai_run_llm_runtime_settings(run=run, model=model):
-            resolved_llm_runtime_settings = _resolve_transport_ai_run_llm_runtime_settings(
-                db=db,
-                run=run,
-                settings_obj=settings_obj,
-            )
-            runtime_secret_literals = (resolved_llm_runtime_settings.api_key,)
-            effective_model_name = resolved_llm_runtime_settings.model_name
-
         _update_transport_ai_run_status(
             db=db,
             run=run,
@@ -1699,6 +1738,21 @@ def run_transport_ai_agent(
         planning_input = context.state.planning_input
         if planning_input is None:
             raise ValueError("Planning input is not available after deterministic tool execution.")
+
+        if agent_mode == "agent" and _should_resolve_transport_ai_run_llm_runtime_settings(run=run, model=model):
+            resolved_llm_runtime_settings, planning_input = _resolve_transport_ai_run_llm_runtime_settings(
+                db=db,
+                run=run,
+                planning_input=planning_input,
+                settings_obj=settings_obj,
+            )
+            runtime_secret_literals = (resolved_llm_runtime_settings.api_key,)
+            effective_model_name = resolved_llm_runtime_settings.model_name
+            run.llm_provider = resolved_llm_runtime_settings.provider
+            run.llm_model = resolved_llm_runtime_settings.model_name
+            run.llm_reasoning_effort = resolved_llm_runtime_settings.reasoning_effort
+            run.openai_model = resolved_llm_runtime_settings.model_name
+
         _sync_transport_ai_run_planning_input(
             db=db,
             run=run,
@@ -1737,7 +1791,10 @@ def run_transport_ai_agent(
                     if (
                         model is None
                         and not reasoning_omitted
-                        and _is_transport_ai_reasoning_unsupported_error(exc)
+                        and (
+                            _is_transport_ai_reasoning_unsupported_error(exc)
+                            or _is_transport_ai_deepseek_reasoning_tool_choice_error(exc)
+                        )
                     ):
                         if resolved_llm_runtime_settings is None:
                             raise

@@ -1,0 +1,16 @@
+Method,Name,Error,Occurrences
+GET,GET /api/health/ready,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/health/ready'),2
+GET,GET /api/admin/projects,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/admin/projects'),2
+GET,GET /checking/user,HTTPError('504 Server Error: Gateway Time-out for url: GET /checking/user'),24
+POST,POST /api/web/check/location,HTTPError('504 Server Error: Gateway Time-out for url: POST /api/web/check/location'),3
+GET,GET /api/admin/forms/queue/diagnostics,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/admin/forms/queue/diagnostics'),1
+GET,GET /api/admin/forms/queue/diagnostics,HTTPError('404 Client Error: Not Found for url: GET /api/admin/forms/queue/diagnostics'),36
+GET,GET /api/transport/projects,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/transport/projects'),1
+GET,GET /api/web/auth/status,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/web/auth/status'),2
+GET,GET /checking/user,ChunkedEncodingError(ProtocolError('Response ended prematurely')),1
+GET,GET /api/transport/auth/session,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/transport/auth/session'),3
+GET,GET /api/admin/auth/session,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/admin/auth/session'),3
+POST,POST /api/web/check,HTTPError('504 Server Error: Gateway Time-out for url: POST /api/web/check'),3
+GET,GET /api/web/check/state,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/web/check/state'),2
+GET,GET /api/health/ready,HTTPError('404 Client Error: Not Found for url: GET /api/health/ready'),17
+GET,GET /api/web/projects,HTTPError('504 Server Error: Gateway Time-out for url: GET /api/web/projects'),1

@@ -51,7 +51,7 @@ Justificativa:
 Observação importante:
 
 1. Se o time decidir, no futuro, que o perfil `0` no mobile não deve sequer receber colunas extras pelo payload, isso pode virar uma segunda etapa de endurecimento do contrato.
-2. Essa segunda etapa deve ser tratada como melhoria de minimização de dados, não como pré-requisito para a correção visual inicial.
+2. Essa segunda etapa deve ser tratada como medida de minimização de dados, não como pré-requisito para a correção visual inicial.
 
 ### 3.2 Introduzir um modo responsivo explícito no JavaScript
 
@@ -134,7 +134,7 @@ Saída esperada:
 
 Objetivo:
 
-1. Resolver o problema pontual de data e horário quebrando linha nas tabelas de presença.
+1. Resolver o problema pontual da quebra de linha entre data e horário nas tabelas de presença.
 
 Superfície principal:
 
@@ -151,7 +151,7 @@ Ações:
    - a viewport não for móvel.
 4. Garantir que o resultado final fique visualmente assim:
    - `04/05/2026 13:42:18`
-   - ou, se houver indicação de dias passados, manter tudo em linha sem quebrar o horário para baixo.
+   - ou, se houver indicação de dias passados, manter tudo na mesma linha, sem quebrar o horário para baixo.
 5. Preservar o comportamento atual do perfil que não pode ver horário, mantendo apenas a data.
 
 Resultado esperado:
@@ -440,7 +440,7 @@ Mitigação:
 
 Risco:
 
-1. O usuário pode logar no desktop, reduzir a janela e ficar com metade do layout antigo e metade do novo.
+1. O usuário pode logar no desktop, redimensionar a janela e ficar com metade do layout antigo e metade do novo.
 
 Mitigação:
 
@@ -484,3 +484,436 @@ Para manter a implementação controlável, recomenda-se dividir a execução em
    - regressão final e homologação.
 
 Essa divisão mantém o problema principal sob controle sem abrir uma frente grande demais de uma só vez.
+
+## 10. To-do list detalhada em forma de prompts
+
+Use os prompts abaixo em sequência. Cada item foi escrito para poder ser copiado e colado diretamente no chat do agente de IA responsável pela implementação.
+
+### 10.1 Prompt 01 - Levantamento inicial, baseline e validação da linha de base
+
+```text
+Implemente a etapa de baseline da revisão mobile do admin em `sistema/app/static/admin`, sem alterar o comportamento além do estritamente necessário para viabilizar o diagnóstico.
+
+Contexto obrigatório:
+- O painel administrativo está em `sistema/app/static/admin/index.html`, `sistema/app/static/admin/app.js` e `sistema/app/static/admin/styles.css`.
+- Já existem testes estáticos do admin em `tests/`, usando `node:test` e leitura direta dos arquivos.
+- O plano funcional está em `docs/temp_006.md`.
+
+Tarefas:
+- Ler `docs/temp_006.md` por completo antes de editar qualquer arquivo.
+- Mapear a estrutura atual do shell do admin, das abas, dos filtros e das tabelas de presença.
+- Identificar quais testes existentes do admin já cobrem HTML, CSS e JavaScript da SPA.
+- Rodar uma linha de base dos testes do admin antes das mudanças.
+- Se algum teste já estiver falhando antes da sua alteração, registrar isso claramente antes de seguir.
+- Não fazer refatoração ampla nesta etapa; o objetivo é confirmar o ponto de partida real.
+
+Validação obrigatória:
+- Rodar no mínimo:
+   `node --test tests/check_admin_auth_ui.test.js tests/check_admin_presence_forms_layout.test.js tests/check_admin_icon_ui.test.js tests/check_admin_location_tolerance_ui.test.js tests/check_admin_location_polygon_ui.test.js tests/check_admin_project_scope_ui.test.js`
+
+Entregável esperado:
+- Um resumo curto do baseline encontrado.
+- Lista objetiva dos arquivos que serão tocados nas próximas etapas.
+- Confirmação do estado inicial dos testes.
+```
+
+### 10.2 Prompt 02 - Corrigir data e horário na mesma linha no desktop para perfil 9
+
+```text
+Implemente a Fase 1 do plano em `sistema/app/static/admin`.
+
+Objetivo:
+- Quando o painel for acessado por um perfil `9`, as tabelas `Usuários em Check-In` e `Usuários em Check-Out` devem mostrar data e horário na mesma linha no desktop, com o horário à direita da data.
+
+Restrições obrigatórias:
+- Não alterar o contrato da API.
+- Não quebrar `Forms` e `Eventos`, que hoje usam a célula vertical de data/hora.
+- Não alterar o comportamento de quem não pode visualizar horário.
+- O ajuste deve ficar restrito às superfícies de presença (`checkin` e `checkout`) e apenas fora do modo móvel.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/styles.css`
+- Testes do admin em `tests/`
+
+Tarefas:
+- Refatorar a construção da célula principal das tabelas de presença para aceitar uma variante inline específica.
+- Preservar a variante vertical existente para outras superfícies, salvo necessidade justificada.
+- Garantir que a data e a hora permaneçam na mesma linha mesmo quando houver informação adicional de defasagem de dias.
+- Manter apenas a data quando o perfil não puder ver horário.
+- Atualizar ou criar testes estáticos que comprovem que a variante inline ficou limitada às tabelas de presença.
+
+Validação obrigatória:
+- Rodar os testes de admin afetados.
+- Se criar um teste novo, rodá-lo explicitamente com `node --test`.
+
+Entregável esperado:
+- Código alterado.
+- Testes atualizados.
+- Resumo dizendo exatamente em quais helpers a variante inline foi introduzida.
+```
+
+### 10.3 Prompt 03 - Criar infraestrutura de viewport móvel e re-renderização responsiva
+
+```text
+Implemente a infraestrutura de responsividade explícita no JavaScript do admin.
+
+Objetivo:
+- O frontend do admin deve saber, em tempo de execução, quando está em viewport móvel e quando está em modo móvel limitado para o perfil `0`.
+
+Restrições obrigatórias:
+- Não mudar o backend.
+- Não duplicar lógica de autorização que já existe via `access_scope`, `allowed_tabs` e `can_view_activity_time`.
+- Reaproveitar o estado de sessão atual do admin.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/app.js`
+- Eventualmente `sistema/app/static/admin/index.html` e `styles.css` se forem necessários hooks de marcação.
+
+Tarefas:
+- Criar helpers claros, por exemplo `isMobileAdminViewport()` e `isLimitedMobileAdminView()`.
+- Centralizar um fluxo de sincronização visual para ser executado em `bootstrap`, `showAdminShell`, `resize` e mudança de orientação.
+- Garantir que a troca de largura entre desktop e mobile recalcule a renderização sem recarregar a página.
+- Preparar a base para que as tabelas de presença possam renderizar variantes diferentes por contexto.
+- Garantir que o código não deixe o painel em estado inconsistente após redimensionamento.
+- Criar ou atualizar testes estáticos que comprovem a existência dos novos helpers e do fluxo central de sincronização.
+
+Validação obrigatória:
+- Rodar os testes do admin tocados por essa alteração.
+- Confirmar que não houve regressão em `setAdminAccessState`, `resetAdminAccessState` e nas regras já existentes de abas permitidas.
+
+Entregável esperado:
+- Infraestrutura pronta para as próximas etapas.
+- Resumo dos novos pontos de entrada de re-renderização responsiva.
+```
+
+### 10.4 Prompt 04 - Reestruturar o shell móvel: cabeçalho, barra de sessão, abas e filtros recolhíveis
+
+```text
+Implemente a revisão do shell móvel do admin em `sistema/app/static/admin`.
+
+Objetivo:
+- Melhorar a legibilidade do painel no mobile antes mesmo de mexer nas tabelas, revisando cabeçalho, navegação por abas, barra de sessão e filtros.
+
+Restrições obrigatórias:
+- Preservar o visual desktop o máximo possível.
+- Não remover funcionalidades existentes.
+- Não esconder filtros no desktop.
+- No mobile, os filtros devem ficar recolhíveis, mas continuar acessíveis.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/styles.css`
+- `sistema/app/static/admin/app.js`
+
+Tarefas:
+- Reduzir o peso visual do cabeçalho no mobile.
+- Ajustar a barra de sessão para telas pequenas, evitando quebra ruim de layout.
+- Trocar o grid atual das abas por uma navegação móvel mais legível, preferencialmente horizontal e rolável.
+- Destacar melhor a aba ativa.
+- Adicionar gatilhos para mostrar e ocultar os filtros nas superfícies densas.
+- Garantir botões com área de toque confortável.
+- Revisar espaçamentos, paddings, alinhamentos e hierarquia visual para `390 px` de largura.
+- Atualizar ou criar testes estáticos que comprovem a nova estrutura móvel do shell e os gatilhos dos filtros.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Verificar se a navegação por abas continua respeitando `allowed_tabs`.
+
+Entregável esperado:
+- Shell móvel revisado.
+- Estrutura pronta para as tabelas mobile dedicadas.
+```
+
+### 10.5 Prompt 05 - Implementar renderização móvel dedicada para Check-In e Check-Out
+
+```text
+Implemente uma renderização móvel dedicada para as abas `Check-In` e `Check-Out` do admin.
+
+Objetivo:
+- Parar de depender apenas da transformação genérica de `.responsive-table td::before` nas tabelas de presença.
+- Criar um layout móvel realmente legível para presença operacional.
+
+Restrições obrigatórias:
+- Não quebrar a renderização desktop.
+- Não mudar as regras de ordenação atuais.
+- Não remover o comportamento atual de atualização por SSE ou polling.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/styles.css`
+
+Tarefas:
+- Introduzir variantes de renderização para as linhas de presença, diferenciando desktop e mobile.
+- No mobile, renderizar cartões ou blocos dedicados para cada usuário, em vez de confiar apenas na tabela empilhada genérica.
+- Definir uma hierarquia visual clara para o cartão móvel de presença.
+- Garantir que nome, data/data-hora e local tenham prioridade visual.
+- Preservar o comportamento de títulos, contadores e estados vazios.
+- Garantir que a ordenação continue consistente ao alternar entre desktop e mobile.
+- Atualizar ou criar testes estáticos cobrindo a nova estrutura móvel de presença.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Verificar se `checkin` e `checkout` continuam usando os dados atuais da API sem mudança de contrato.
+
+Entregável esperado:
+- Novo layout móvel dedicado para presença.
+- Desktop intacto.
+```
+
+### 10.6 Prompt 06 - Aplicar a regra exata do perfil 0 no mobile: somente Data, Nome do Usuário e Local
+
+```text
+Implemente a regra mais crítica do plano para o perfil `0` no mobile.
+
+Objetivo:
+- Quando o usuário autenticado estiver com `access_scope` limitado e a viewport for móvel, as abas `Check-In` e `Check-Out` devem exibir apenas `Data`, `Nome do Usuário` e `Local`.
+
+Restrições obrigatórias:
+- Não alterar a regra atual de acesso limitado por abas; ela já existe e deve continuar valendo.
+- A poda é de interface, não de contrato de API, nesta etapa.
+- Não deixar filtros visíveis para colunas que o usuário não enxerga.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/styles.css`
+
+Tarefas:
+- Implementar a variante `mobile limitado` nas tabelas de presença.
+- Garantir que, no perfil `0` móvel, a interface mostre somente:
+   - `Data`
+   - `Nome do Usuário`
+   - `Local`
+- Esconder completamente da interface, nesse contexto:
+   - `Chave`
+   - `Projeto`
+   - `Fuso horário`
+   - `Assiduidade`
+   - quaisquer metadados secundários adicionais.
+- Ajustar o rótulo visual para usar exatamente `Nome do Usuário`.
+- Revisar os filtros de `checkin` e `checkout` no mobile limitado para que só apareçam filtros coerentes com as colunas visíveis.
+- Atualizar ou criar testes estáticos específicos para o contexto móvel limitado.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Confirmar que o perfil `0` continua vendo apenas `checkin` e `checkout` como abas permitidas.
+
+Entregável esperado:
+- Regra do perfil `0` móvel implementada exatamente como descrita no plano.
+```
+
+### 10.7 Prompt 07 - Ajustar labels, filtros, ordenação e estados vazios conforme a variante ativa
+
+```text
+Implemente os ajustes finos de comportamento das tabelas de presença para coexistirem corretamente com as variantes desktop, mobile completo e mobile limitado.
+
+Objetivo:
+- Garantir consistência entre colunas visíveis, rótulos, filtros, ordenação, títulos e estados vazios após a introdução das variantes responsivas.
+
+Restrições obrigatórias:
+- Não deixar filtros incoerentes com a UI ativa.
+- Não quebrar os títulos e contadores das abas.
+- Não causar regressão em `checkin` e `checkout` quando a viewport muda.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/styles.css`
+
+Tarefas:
+- Sincronizar filtros visíveis com a variante de renderização ativa.
+- Revisar rótulos principais, inclusive `Horário` versus `Data`, respeitando `can_view_activity_time`.
+- Garantir que a ordenação continue funcionando e produzindo resultados consistentes após `resize`.
+- Revisar estados vazios, mensagens e contadores quando a estrutura visual mudar.
+- Garantir que a interface não fique com dados “antigos” após alternância entre modos responsivos.
+- Atualizar ou criar testes estáticos cobrindo esses estados de sincronização.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Verificar especialmente a consistência entre `syncPresenceTimeLabels`, renderização de presença e controle de filtros.
+
+Entregável esperado:
+- Comportamento coerente em todas as variantes de presença.
+```
+
+### 10.8 Prompt 08 - Revisar Inativos e Forms para mobile
+
+```text
+Implemente a revisão mobile das abas `Inativos` e `Forms` no admin.
+
+Objetivo:
+- Tornar essas duas superfícies legíveis no mobile sem depender apenas da tabela empilhada genérica.
+
+Restrições obrigatórias:
+- Preservar ações existentes.
+- Não mudar endpoints.
+- Manter compatibilidade com a regra já existente de ocultação de horário para perfis sem acesso a hora.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/styles.css`
+
+Tarefas:
+- Reestruturar `Inativos` como cartões móveis com nome, chave, projeto, última atividade, inatividade e ação.
+- Reestruturar `Forms` como cartões móveis priorizando recebimento, nome, atividade, projeto e data/hora quando aplicável.
+- Tratar `Informe` como conteúdo secundário com quebra de linha controlada.
+- Garantir que os estados vazios permaneçam claros e que os botões existentes continuem funcionais.
+- Atualizar ou criar testes estáticos cobrindo a nova marcação e os estilos relevantes.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Verificar especialmente que a tabela `Forms` continua respeitando a ocultação da coluna `Hora` quando o perfil não pode ver horário.
+
+Entregável esperado:
+- `Inativos` e `Forms` legíveis no mobile.
+```
+
+### 10.9 Prompt 09 - Revisar Relatórios e Eventos para mobile
+
+```text
+Implemente a revisão mobile das abas `Relatórios` e `Eventos` no admin.
+
+Objetivo:
+- Melhorar a leitura e a navegação dessas abas em telas pequenas, sem tentar encaixar grades largas demais no celular.
+
+Restrições obrigatórias:
+- Não perder informações importantes.
+- Não remover ações de exportação ou detalhamento.
+- Não alterar os contratos da API.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/styles.css`
+
+Tarefas:
+- Ajustar `Relatórios` para filtros em coluna única no mobile e ações em largura total.
+- Reorganizar os grupos de resultado para leitura vertical clara.
+- Transformar eventos da aba `Eventos` em cartões ou blocos móveis com os campos principais visíveis sem rolagem horizontal.
+- Manter `Detalhes` ou mecanismo equivalente para campos extensos.
+- Garantir que data, ação, origem, status e local tenham prioridade visual.
+- Atualizar ou criar testes estáticos cobrindo a nova marcação e os estilos móveis.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Confirmar que exportações e detalhamento continuam acessíveis.
+
+Entregável esperado:
+- `Relatórios` e `Eventos` utilizáveis no mobile.
+```
+
+### 10.10 Prompt 10 - Revisar Cadastro, Projetos, Localizações, Administradores e Usuários Cadastrados para mobile
+
+```text
+Implemente a revisão mobile da aba `Cadastro` e de todas as suas superfícies internas.
+
+Objetivo:
+- Transformar a aba `Cadastro` em uma experiência móvel utilizável, tratando cada subseção como bloco de manutenção e não como grade espremida.
+
+Restrições obrigatórias:
+- Não remover capacidades de edição.
+- Não alterar regras de negócio de projetos, localizações, administradores ou usuários.
+- Preservar fluxos já cobertos por testes existentes.
+
+Arquivos-alvo principais:
+- `sistema/app/static/admin/index.html`
+- `sistema/app/static/admin/app.js`
+- `sistema/app/static/admin/styles.css`
+- Testes do admin em `tests/`
+
+Tarefas:
+- Separar visualmente as subseções de `Cadastro` em blocos móveis claros.
+- Reorganizar tabelas editáveis como cartões ou grupos de campos em telas pequenas.
+- Garantir ações primárias e secundárias em largura total quando necessário.
+- Revisar especialmente:
+   - pendências RFID
+   - localizações
+   - distância mínima de check-out automático
+   - administradores
+   - projetos
+   - usuários cadastrados
+- Preservar os comportamentos já cobertos em testes como escopo de projetos, polígonos, tolerância, perfis e ações administrativas.
+- Atualizar ou criar testes estáticos para a nova estrutura móvel sem quebrar as expectativas existentes.
+
+Validação obrigatória:
+- Rodar os testes do admin afetados.
+- Garantir que os testes já existentes de localização, escopo de projeto e autenticação continuem verdes.
+
+Entregável esperado:
+- Aba `Cadastro` significativamente mais legível e operável no mobile.
+```
+
+### 10.11 Prompt 11 - Criar e atualizar testes estáticos específicos para o novo layout mobile do admin
+
+```text
+Implemente a cobertura de testes estáticos necessária para sustentar a revisão completa do admin mobile.
+
+Objetivo:
+- Garantir que a nova estrutura responsiva do admin fique protegida por testes de regressão em `node:test`, seguindo o padrão já existente no repositório.
+
+Restrições obrigatórias:
+- Não introduzir dependência externa nova só para testar HTML/CSS/JS estático.
+- Seguir o padrão atual de testes do repositório, com leitura de arquivo e `assert.match`/`assert.doesNotMatch` quando fizer sentido.
+
+Arquivos-alvo principais:
+- `tests/check_admin_presence_forms_layout.test.js`
+- `tests/check_admin_auth_ui.test.js`
+- Novos arquivos em `tests/` se a cobertura ficar mais clara separada por superfície.
+
+Tarefas:
+- Atualizar os testes já existentes que forem impactados pelas mudanças de HTML, CSS e JavaScript.
+- Criar testes novos, se necessário, para cobrir:
+   - variante inline de data/hora nas tabelas de presença
+   - helpers de viewport móvel
+   - regras de renderização `mobile completo` e `mobile limitado`
+   - rótulo `Nome do Usuário`
+   - poda de colunas no contexto móvel limitado
+   - shell móvel com abas e filtros recolhíveis
+   - novas classes e hooks estruturais relevantes
+- Garantir que os testes afirmem explicitamente as novas decisões de layout mais importantes, em vez de dependerem apenas de checagem superficial.
+
+Validação obrigatória:
+- Rodar todos os testes do admin relacionados à SPA.
+- Se criar arquivos novos, incluí-los explicitamente no comando de execução final.
+
+Entregável esperado:
+- Cobertura automatizada suficiente para proteger a revisão mobile do admin.
+```
+
+### 10.12 Prompt 12 - Rodar regressão final, corrigir sobras e concluir a homologação técnica
+
+```text
+Execute a regressão final da revisão mobile do admin e conclua a entrega técnica.
+
+Objetivo:
+- Garantir que toda a implementação do plano fique consistente, sem regressões funcionais ou visuais óbvias.
+
+Restrições obrigatórias:
+- Não deixar testes quebrados.
+- Não encerrar com validação incompleta se ainda houver uma checagem focada disponível.
+
+Tarefas:
+- Rodar a suíte relevante de testes estáticos do admin com `node --test`.
+- Corrigir qualquer regressão introduzida pelas mudanças.
+- Verificar, por leitura de código e validação executável, os critérios de aceite do plano em `docs/temp_006.md`.
+- Confirmar explicitamente:
+   - desktop do perfil `9` com data e hora na mesma linha em `Check-In` e `Check-Out`
+   - mobile do perfil `0` com apenas `Check-In` e `Check-Out`
+   - mobile do perfil `0` com apenas `Data`, `Nome do Usuário` e `Local`
+   - melhoria geral de legibilidade no mobile para perfis `1` e `9`
+- Se houver forma de validação manual local no navegador, faça uma checagem final rápida nas larguras mais críticas.
+- Entregar um resumo final curto com:
+   - arquivos alterados
+   - testes executados
+   - riscos residuais, se existirem
+
+Validação obrigatória:
+- Rodar todos os testes do admin tocados na entrega.
+- Não encerrar sem pelo menos uma validação executável final após a última alteração.
+
+Entregável esperado:
+- Implementação concluída, validada e pronta para revisão humana.
+```

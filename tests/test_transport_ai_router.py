@@ -35,9 +35,20 @@ def _build_transport_ai_router_env(tmp_path: Path) -> dict[str, str]:
     return env
 
 
-def _run_transport_ai_router_script(tmp_path: Path, *, script: str) -> None:
+def _run_transport_ai_router_script(
+    tmp_path: Path,
+    *,
+    script: str,
+    env_updates: dict[str, str | None] | None = None,
+) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = _build_transport_ai_router_env(tmp_path)
+    if env_updates:
+        for key, value in env_updates.items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=repo_root,
@@ -222,13 +233,34 @@ def test_transport_ai_router_requires_transport_session_and_exposes_openapi(tmp_
                 """
                 from fastapi.testclient import TestClient
                 from sistema.app.main import app
+                from sistema.app.database import Base, SessionLocal, engine
+                from sistema.app.models import Project
+
+
+                Base.metadata.create_all(bind=engine)
+
+                with SessionLocal() as session:
+                    project = Project(
+                        name='Transport AI Router Project',
+                        country_code='SG',
+                        country_name='Singapore',
+                        timezone_name='Asia/Singapore',
+                        address='100 Transport Avenue',
+                        zip_code='018989',
+                    )
+                    session.add(project)
+                    session.commit()
+                    project_id = project.id
 
                 with TestClient(app) as client:
                     unauthorized = client.get('/api/transport/ai/preflight')
                     assert unauthorized.status_code == 401, unauthorized.text
                     assert unauthorized.json()['detail'] == 'Sessao de transporte invalida ou expirada'
 
-                    unauthorized_settings = client.get('/api/transport/ai/settings')
+                    unauthorized_settings = client.get(
+                        '/api/transport/ai/settings',
+                        params={'project_id': project_id},
+                    )
                     assert unauthorized_settings.status_code == 401, unauthorized_settings.text
                     assert unauthorized_settings.json()['detail'] == 'Sessao de transporte invalida ou expirada'
 
@@ -245,10 +277,22 @@ def test_transport_ai_router_requires_transport_session_and_exposes_openapi(tmp_
                     assert payload['ok'] is False
                     assert [issue['code'] for issue in payload['issues']] == ['transport_ai_disabled']
 
-                    settings_get = client.get('/api/transport/ai/settings')
+                    missing_project = client.get(
+                        '/api/transport/ai/settings',
+                        params={'project_id': project_id + 999},
+                    )
+                    assert missing_project.status_code == 404, missing_project.text
+                    assert missing_project.json()['detail'] == 'Transport AI project does not exist.'
+
+                    settings_get = client.get(
+                        '/api/transport/ai/settings',
+                        params={'project_id': project_id},
+                    )
                     assert settings_get.status_code == 200, settings_get.text
                     settings_payload = settings_get.json()
                     assert settings_payload == {
+                        'project_id': project_id,
+                        'project_name': 'Transport AI Router Project',
                         'provider': 'openai',
                         'resolved_model': 'gpt-5.4-2026-03-05',
                         'reasoning_effort': 'high',
@@ -258,7 +302,7 @@ def test_transport_ai_router_requires_transport_session_and_exposes_openapi(tmp_
 
                     invalid_settings_update = client.put(
                         '/api/transport/ai/settings',
-                        json={'provider': 'openai', 'api_key': None},
+                        json={'project_id': project_id, 'provider': 'openai', 'api_key': None},
                     )
                     assert invalid_settings_update.status_code == 409, invalid_settings_update.text
                     assert invalid_settings_update.json()['detail'] == 'Transport AI API key is required when creating LLM settings.'
@@ -282,6 +326,20 @@ def test_transport_ai_router_requires_transport_session_and_exposes_openapi(tmp_
                     assert 'TransportAISettingsResponse' in schemas
                     assert 'TransportAISettingsUpdateRequest' in schemas
                     assert 'TransportAgentRunStatusResponse' in schemas
+
+                    settings_get_operation = specification['paths']['/api/transport/ai/settings']['get']
+                    assert any(
+                        parameter['name'] == 'project_id' and parameter['in'] == 'query'
+                        for parameter in settings_get_operation['parameters']
+                    )
+
+                    settings_update_schema = schemas['TransportAISettingsUpdateRequest']
+                    assert 'project_id' in settings_update_schema['properties']
+                    assert 'project_id' in settings_update_schema['required']
+
+                    settings_response_schema = schemas['TransportAISettingsResponse']
+                    assert 'project_id' in settings_response_schema['properties']
+                    assert 'project_name' in settings_response_schema['properties']
 
                 print('transport-ai-router-ok')
                 """
@@ -336,10 +394,25 @@ def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_sa
 
         from sistema.app.main import app
         from sistema.app.database import Base, SessionLocal, engine
-        from sistema.app.models import CheckEvent, TransportAILlmSettings
+        from sistema.app.models import CheckEvent, Project, TransportAIProjectLlmSettings
 
 
         Base.metadata.create_all(bind=engine)
+
+        project_name = 'Transport AI Settings Project'
+
+        with SessionLocal() as session:
+            project = Project(
+                name=project_name,
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='100 Settings Avenue',
+                zip_code='018989',
+            )
+            session.add(project)
+            session.commit()
+            project_id = project.id
 
         with TestClient(app) as client:
             login = client.post(
@@ -351,11 +424,17 @@ def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_sa
 
             created = client.put(
                 '/api/transport/ai/settings',
-                json={'provider': 'openai', 'api_key': 'sk-super-secret-1234'},
+                json={
+                    'project_id': project_id,
+                    'provider': 'openai',
+                    'api_key': 'sk-super-secret-1234',
+                },
             )
             assert created.status_code == 200, created.text
             assert 'sk-super-secret-1234' not in created.text
             assert created.json() == {
+                'project_id': project_id,
+                'project_name': project_name,
                 'provider': 'openai',
                 'resolved_model': 'gpt-5.4-2026-03-05',
                 'reasoning_effort': 'high',
@@ -363,22 +442,27 @@ def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_sa
                 'api_key_hint': '***1234',
             }
 
-            fetched = client.get('/api/transport/ai/settings')
+            fetched = client.get('/api/transport/ai/settings', params={'project_id': project_id})
             assert fetched.status_code == 200, fetched.text
             assert 'sk-super-secret-1234' not in fetched.text
             assert fetched.json() == created.json()
 
             invalid_provider_change = client.put(
                 '/api/transport/ai/settings',
-                json={'provider': 'deepseek', 'api_key': None},
+                json={'project_id': project_id, 'provider': 'deepseek', 'api_key': None},
             )
             assert invalid_provider_change.status_code == 409, invalid_provider_change.text
             assert 'sk-super-secret-1234' not in invalid_provider_change.text
             assert invalid_provider_change.json()['detail'] == 'Transport AI API key is required when changing the LLM provider.'
 
             with SessionLocal() as session:
-                persisted_settings = session.get(TransportAILlmSettings, 1)
+                persisted_settings = session.execute(
+                    select(TransportAIProjectLlmSettings).where(
+                        TransportAIProjectLlmSettings.project_id == project_id
+                    )
+                ).scalar_one_or_none()
                 assert persisted_settings is not None
+                assert persisted_settings.project_id == project_id
                 assert persisted_settings.provider == 'openai'
                 assert persisted_settings.model_name == 'gpt-5.4-2026-03-05'
                 assert persisted_settings.reasoning_effort == 'high'
@@ -408,6 +492,8 @@ def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_sa
                 assert '***1234' in audit_event.message
 
                 audit_details = json.loads(audit_event.details)
+                assert audit_details['project_id'] == project_id
+                assert audit_details['project_name'] == project_name
                 assert audit_details['provider'] == 'openai'
                 assert audit_details['resolved_model'] == 'gpt-5.4-2026-03-05'
                 assert audit_details['reasoning_effort'] == 'high'
@@ -424,17 +510,81 @@ def test_transport_ai_settings_endpoint_saves_masked_configuration_and_audits_sa
     _run_transport_ai_router_script(tmp_path, script=script)
 
 
+def test_transport_ai_settings_endpoint_reports_encryption_unavailable_on_load_when_server_key_is_missing(tmp_path):
+    script = textwrap.dedent(
+        """
+        from fastapi.testclient import TestClient
+
+        from sistema.app.main import app
+        from sistema.app.database import Base, SessionLocal, engine
+        from sistema.app.models import Project
+
+
+        Base.metadata.create_all(bind=engine)
+
+        with SessionLocal() as session:
+            project = Project(
+                name='Transport AI Encryption Project',
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='101 Encryption Avenue',
+                zip_code='018990',
+            )
+            session.add(project)
+            session.commit()
+            project_id = project.id
+
+        with TestClient(app) as client:
+            login = client.post(
+                '/api/transport/auth/verify',
+                json={'chave': 'HR70', 'senha': 'eAcacdLe2'},
+            )
+            assert login.status_code == 200, login.text
+            assert login.json()['authenticated'] is True
+
+            settings_get = client.get('/api/transport/ai/settings', params={'project_id': project_id})
+            assert settings_get.status_code == 503, settings_get.text
+            assert settings_get.json()['detail'] == 'Transport AI settings encryption is unavailable.'
+
+        print('transport-ai-settings-get-encryption-unavailable-ok')
+        """
+    ).strip()
+
+    _run_transport_ai_router_script(
+        tmp_path,
+        script=script,
+        env_updates={"TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY": "not-a-valid-fernet-key"},
+    )
+
+
 def test_transport_ai_settings_endpoint_returns_controlled_error_when_saved_provider_is_no_longer_supported(tmp_path):
     script = textwrap.dedent(
         """
         from fastapi.testclient import TestClient
 
         from sistema.app.main import app
-        from sistema.app.database import Base, engine
+        from sistema.app.database import Base, SessionLocal, engine
+        from sistema.app.models import Project
         from sistema.app.services import transport_ai_llm_settings as transport_ai_llm_settings_module
 
 
         Base.metadata.create_all(bind=engine)
+
+        project_name = 'Transport AI Unsupported Provider Project'
+
+        with SessionLocal() as session:
+            project = Project(
+                name=project_name,
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='102 Provider Avenue',
+                zip_code='018991',
+            )
+            session.add(project)
+            session.commit()
+            project_id = project.id
 
         with TestClient(app) as client:
             login = client.post(
@@ -446,14 +596,18 @@ def test_transport_ai_settings_endpoint_returns_controlled_error_when_saved_prov
 
             created = client.put(
                 '/api/transport/ai/settings',
-                json={'provider': 'deepseek', 'api_key': 'deepseek-secret-5678'},
+                json={
+                    'project_id': project_id,
+                    'provider': 'deepseek',
+                    'api_key': 'deepseek-secret-5678',
+                },
             )
             assert created.status_code == 200, created.text
 
             removed_defaults = transport_ai_llm_settings_module.TRANSPORT_AI_LLM_PROVIDER_DEFAULTS.pop('deepseek', None)
             assert removed_defaults is not None
             try:
-                invalid = client.get('/api/transport/ai/settings')
+                invalid = client.get('/api/transport/ai/settings', params={'project_id': project_id})
                 assert invalid.status_code == 409, invalid.text
                 assert invalid.json()['detail'] == (
                     'The configured Transport AI LLM provider is no longer supported. '
@@ -462,10 +616,16 @@ def test_transport_ai_settings_endpoint_returns_controlled_error_when_saved_prov
 
                 repaired = client.put(
                     '/api/transport/ai/settings',
-                    json={'provider': 'openai', 'api_key': 'sk-openai-1234'},
+                    json={
+                        'project_id': project_id,
+                        'provider': 'openai',
+                        'api_key': 'sk-openai-1234',
+                    },
                 )
                 assert repaired.status_code == 200, repaired.text
                 assert repaired.json() == {
+                    'project_id': project_id,
+                    'project_name': project_name,
                     'provider': 'openai',
                     'resolved_model': 'gpt-5.4-2026-03-05',
                     'reasoning_effort': 'high',
@@ -473,7 +633,7 @@ def test_transport_ai_settings_endpoint_returns_controlled_error_when_saved_prov
                     'api_key_hint': '***1234',
                 }
 
-                fetched = client.get('/api/transport/ai/settings')
+                fetched = client.get('/api/transport/ai/settings', params={'project_id': project_id})
                 assert fetched.status_code == 200, fetched.text
                 assert fetched.json() == repaired.json()
             finally:
@@ -503,7 +663,7 @@ def test_transport_ai_latest_suggestion_keeps_run_llm_snapshot_after_provider_ch
 
                 from sistema.app.main import app
                 from sistema.app.database import Base, SessionLocal, engine
-                from sistema.app.models import AdminUser, TransportAIRun
+                from sistema.app.models import AdminUser, Project, TransportAIRun
                 from sistema.app.schemas import (
                     TransportAgentChangeSummary,
                     TransportAgentCostSummary,
@@ -533,6 +693,18 @@ def test_transport_ai_latest_suggestion_keeps_run_llm_snapshot_after_provider_ch
                     )
                     session.add(admin_user)
                     session.flush()
+
+                    project = Project(
+                        name='Transport AI Snapshot Project',
+                        country_code='SG',
+                        country_name='Singapore',
+                        timezone_name='Asia/Singapore',
+                        address='103 Snapshot Avenue',
+                        zip_code='018992',
+                    )
+                    session.add(project)
+                    session.flush()
+                    project_id = project.id
 
                     run = TransportAIRun(
                         run_key="transport-ai-run:latest-llm-snapshot-001",
@@ -622,7 +794,11 @@ def test_transport_ai_latest_suggestion_keeps_run_llm_snapshot_after_provider_ch
 
                     current_settings = client.put(
                         '/api/transport/ai/settings',
-                        json={'provider': 'openai', 'api_key': 'sk-openai-1234'},
+                        json={
+                            'project_id': project_id,
+                            'provider': 'openai',
+                            'api_key': 'sk-openai-1234',
+                        },
                     )
                     assert current_settings.status_code == 200, current_settings.text
                     assert current_settings.json()['provider'] == 'openai'
@@ -673,12 +849,25 @@ def test_transport_ai_settings_endpoint_sanitizes_failed_update_details_and_audi
 
         from sistema.app.main import app
         from sistema.app.database import Base, SessionLocal, engine
-        from sistema.app.models import CheckEvent
+        from sistema.app.models import CheckEvent, Project
         from sistema.app.routers import transport_ai as transport_ai_router_module
         from sistema.app.services.transport_ai_llm_settings import TransportAILlmSettingsValidationError
 
 
         Base.metadata.create_all(bind=engine)
+
+        with SessionLocal() as session:
+            project = Project(
+                name='Transport AI Failure Project',
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='104 Failure Avenue',
+                zip_code='018993',
+            )
+            session.add(project)
+            session.commit()
+            project_id = project.id
 
 
         def _boom(*args, **kwargs):
@@ -700,7 +889,11 @@ def test_transport_ai_settings_endpoint_sanitizes_failed_update_details_and_audi
 
                 failed = client.put(
                     '/api/transport/ai/settings',
-                    json={'provider': 'deepseek', 'api_key': 'deepseek-secret-5678'},
+                    json={
+                        'project_id': project_id,
+                        'provider': 'deepseek',
+                        'api_key': 'deepseek-secret-5678',
+                    },
                 )
                 assert failed.status_code == 409, failed.text
                 assert 'deepseek-secret-5678' not in failed.text
@@ -726,18 +919,128 @@ def test_transport_ai_settings_endpoint_sanitizes_failed_update_details_and_audi
                     assert 'deepseek-secret-5678' not in (audit_event.details or '')
                     assert 'Bearer top-secret' not in audit_event.message
                     assert 'Bearer top-secret' not in (audit_event.details or '')
+                    assert 'project_id=1' in audit_event.message
+                    assert 'project=Transport AI Failure Project' in audit_event.message
                     assert '***5678' in audit_event.message
 
                     audit_details = json.loads(audit_event.details)
+                    assert audit_details['project_id'] == project_id
+                    assert audit_details['project_name'] == 'Transport AI Failure Project'
                     assert audit_details['requested_provider'] == 'deepseek'
                     assert bool(audit_details['submitted_has_api_key']) is True
-                    assert audit_details['submitted_api_key_hint'] == '***5678'
+                    assert audit_details['api_key_hint'] == '***5678'
                     assert audit_details['failure_detail'] == failed.json()['detail']
                     assert audit_details['request_path'] == '/api/transport/ai/settings'
         finally:
             transport_ai_router_module.upsert_transport_ai_llm_settings = original_upsert
 
         print('transport-ai-settings-failure-sanitized-ok')
+        """
+    ).strip()
+
+    _run_transport_ai_router_script(tmp_path, script=script)
+
+
+def test_transport_ai_settings_endpoint_sanitizes_encryption_failure_on_save(tmp_path):
+    script = textwrap.dedent(
+        """
+        import json
+
+        from fastapi.testclient import TestClient
+        from sqlalchemy import select
+
+        from sistema.app.main import app
+        from sistema.app.database import Base, SessionLocal, engine
+        from sistema.app.models import CheckEvent, Project
+        from sistema.app.routers import transport_ai as transport_ai_router_module
+        from sistema.app.services.transport_ai_llm_settings import TransportAILlmSettingsEncryptionError
+
+
+        Base.metadata.create_all(bind=engine)
+
+        with SessionLocal() as session:
+            project = Project(
+                name='Transport AI Encryption Failure Project',
+                country_code='SG',
+                country_name='Singapore',
+                timezone_name='Asia/Singapore',
+                address='105 Encryption Avenue',
+                zip_code='018994',
+            )
+            session.add(project)
+            session.commit()
+            project_id = project.id
+
+
+        def _boom(*args, **kwargs):
+            raise TransportAILlmSettingsEncryptionError(
+                'Transport AI settings encryption key is invalid; leaked deepseek-secret-9911, Bearer encryption-secret, and gAAAAABmCiphertextValue9911_ABCDEFGHIJKLMN.'
+            )
+
+
+        original_upsert = transport_ai_router_module.upsert_transport_ai_llm_settings
+        transport_ai_router_module.upsert_transport_ai_llm_settings = _boom
+        try:
+            with TestClient(app) as client:
+                login = client.post(
+                    '/api/transport/auth/verify',
+                    json={'chave': 'HR70', 'senha': 'eAcacdLe2'},
+                )
+                assert login.status_code == 200, login.text
+                assert login.json()['authenticated'] is True
+
+                failed = client.put(
+                    '/api/transport/ai/settings',
+                    json={
+                        'project_id': project_id,
+                        'provider': 'deepseek',
+                        'api_key': 'deepseek-secret-9911',
+                    },
+                )
+                assert failed.status_code == 503, failed.text
+                assert failed.json()['detail'] == 'Transport AI settings encryption is unavailable.'
+                assert 'deepseek-secret-9911' not in failed.text
+                assert 'Bearer encryption-secret' not in failed.text
+                assert 'gAAAAABmCiphertextValue9911_ABCDEFGHIJKLMN' not in failed.text
+
+                with SessionLocal() as session:
+                    audit_event = session.execute(
+                        select(CheckEvent)
+                        .where(
+                            CheckEvent.source == 'transport_ai',
+                            CheckEvent.action == 'settings_update',
+                            CheckEvent.status == 'failed',
+                        )
+                        .order_by(CheckEvent.id.desc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+
+                    assert audit_event is not None
+                    assert audit_event.request_path == '/api/transport/ai/settings'
+                    assert audit_event.http_status == 503
+                    assert 'deepseek-secret-9911' not in audit_event.message
+                    assert 'deepseek-secret-9911' not in (audit_event.details or '')
+                    assert 'Bearer encryption-secret' not in audit_event.message
+                    assert 'Bearer encryption-secret' not in (audit_event.details or '')
+                    assert 'gAAAAABmCiphertextValue9911_ABCDEFGHIJKLMN' not in audit_event.message
+                    assert 'gAAAAABmCiphertextValue9911_ABCDEFGHIJKLMN' not in (audit_event.details or '')
+                    assert 'project=Transport AI Encryption Failure Project' in audit_event.message
+                    assert 'api_key_hint=***9911' in audit_event.message
+
+                    audit_details = json.loads(audit_event.details)
+                    assert audit_details['project_id'] == project_id
+                    assert audit_details['project_name'] == 'Transport AI Encryption Failure Project'
+                    assert audit_details['requested_provider'] == 'deepseek'
+                    assert audit_details['api_key_hint'] == '***9911'
+                    assert audit_details['response_detail'] == 'Transport AI settings encryption is unavailable.'
+                    assert 'deepseek-secret-9911' not in audit_details['failure_detail']
+                    assert 'Bearer encryption-secret' not in audit_details['failure_detail']
+                    assert 'gAAAAABmCiphertextValue9911_ABCDEFGHIJKLMN' not in audit_details['failure_detail']
+                    assert '[REDACTED]' in audit_details['failure_detail']
+        finally:
+            transport_ai_router_module.upsert_transport_ai_llm_settings = original_upsert
+
+        print('transport-ai-settings-encryption-failure-sanitized-ok')
         """
     ).strip()
 
@@ -885,17 +1188,28 @@ def test_transport_ai_runs_endpoint_lists_recent_runs_filters_and_redacts_sensit
                             actor_user_id=admin_user.id,
                             earliest_boarding_time="06:50",
                             arrival_at_work_time="07:45",
-                            llm_provider="deepseek",
-                            llm_model="deepseek-v4-pro",
+                            llm_provider="openai",
+                            llm_model="gpt-5-2025-08-07",
                             llm_reasoning_effort="high",
-                            openai_model="deepseek-v4-pro",
+                            openai_model="gpt-5-2025-08-07",
                             route_provider="fake",
                             price_currency_code="SGD",
                             price_rate_unit="day",
                             baseline_snapshot_json='{}',
                             baseline_assignments_json='{}',
                             baseline_vehicle_state_json='{}',
-                            planning_input_json='{}',
+                            planning_input_json=json.dumps({
+                                "llm_runtime_projects": [
+                                    {
+                                        "project_id": 41,
+                                        "project_name": "Diagnostics Project",
+                                        "partition_keys": ["project:41:home_to_work"],
+                                        "provider": "deepseek",
+                                        "model_name": "deepseek-v4-pro",
+                                        "reasoning_effort": "high",
+                                    }
+                                ]
+                            }),
                             planning_input_hash="2" * 64,
                             preflight_issues_json='[]',
                             error_code=None,

@@ -563,7 +563,34 @@ function createTransportPageTestDocument() {
   const document = new FakeDocument();
   const body = document.body;
 
+  document.visibilityState = 'visible';
+  document.hidden = false;
+
   appendFakeElement(body, 'div', { attributes: { 'data-status-message': '' } });
+
+  const authKeyShell = appendFakeElement(body, 'div', {
+    className: 'is-logged-out',
+    attributes: { 'data-transport-auth-shell': 'key' },
+  });
+  appendFakeElement(authKeyShell, 'input', {
+    type: 'text',
+    value: '',
+    attributes: { 'data-transport-auth-key': '' },
+  });
+  appendFakeElement(authKeyShell, 'button', {
+    type: 'button',
+    attributes: { 'data-request-user-link': '' },
+  });
+
+  const authPasswordShell = appendFakeElement(body, 'div', {
+    className: 'is-logged-out',
+    attributes: { 'data-transport-auth-shell': 'password' },
+  });
+  appendFakeElement(authPasswordShell, 'input', {
+    type: 'password',
+    value: '',
+    attributes: { 'data-transport-auth-password': '' },
+  });
 
   const aiMenuShell = appendFakeElement(body, 'div', { attributes: { 'data-ai-menu-shell': '' } });
   appendFakeElement(aiMenuShell, 'button', {
@@ -597,6 +624,13 @@ function createTransportPageTestDocument() {
     type: 'button',
     className: 'transport-modal-close',
     attributes: { 'data-close-ai-settings-modal': '' },
+  });
+  appendFakeElement(aiSettingsModal, 'span', {
+    attributes: { 'data-ai-settings-project-label': '' },
+  });
+  appendFakeElement(aiSettingsModal, 'select', {
+    value: '',
+    attributes: { 'data-ai-settings-project': '' },
   });
   appendFakeElement(aiSettingsModal, 'span', {
     attributes: { 'data-ai-settings-provider-label': '' },
@@ -720,6 +754,22 @@ function createFetchResponse(payload, status) {
   };
 }
 
+function createTransportProjectRow(id, name, overrides) {
+  return Object.assign(
+    {
+      id,
+      name,
+      country_code: 'SG',
+      country_name: 'Singapore',
+      timezone_name: 'Asia/Singapore',
+      timezone_label: 'SGT',
+      address: `${name} Avenue`,
+      zip_code: '018989',
+    },
+    overrides || {}
+  );
+}
+
 function createFetchMock(options) {
   const nextOptions = options || {};
   const calls = [];
@@ -727,6 +777,16 @@ function createFetchMock(options) {
     authenticated: true,
     user: { chave: 'OPS-100', nome: 'Transport Ops' },
   };
+  const authVerifyResponse = Object.prototype.hasOwnProperty.call(nextOptions, 'authVerifyResponse')
+    ? nextOptions.authVerifyResponse
+    : {
+      authenticated: true,
+      user: { chave: 'OPS-100', nome: 'Transport Ops' },
+      message: 'Transport access granted.',
+    };
+  const authVerifyHandler = typeof nextOptions.authVerifyHandler === 'function'
+    ? nextOptions.authVerifyHandler
+    : null;
   const settingsResponse = nextOptions.settingsResponse || {
     work_to_home_time: '16:15',
     last_update_time: '16:00',
@@ -746,6 +806,10 @@ function createFetchMock(options) {
   const dashboardResponse = nextOptions.dashboardResponse || {
     selected_route: 'home_to_work',
     selected_date: '2026-06-13',
+    projects: [
+      createTransportProjectRow(101, 'Project Atlas'),
+      createTransportProjectRow(202, 'Project Borealis', { zip_code: '018990' }),
+    ],
     project_rows: [],
     regular_requests: [],
     weekend_requests: [],
@@ -756,18 +820,27 @@ function createFetchMock(options) {
     regular_vehicle_registry: [],
     weekend_vehicle_registry: [],
     extra_vehicle_registry: [],
+    workplaces: [],
   };
+  const projectListResponse = Object.prototype.hasOwnProperty.call(nextOptions, 'projectListResponse')
+    ? nextOptions.projectListResponse
+    : (Array.isArray(dashboardResponse.projects) ? dashboardResponse.projects : []);
   const latestSuggestionResponse = nextOptions.latestSuggestionResponse;
   const commandResponses = nextOptions.commandResponses || {};
   const aiSettingsResponse = Object.prototype.hasOwnProperty.call(nextOptions, 'aiSettingsResponse')
     ? nextOptions.aiSettingsResponse
     : {
+      project_id: 101,
+      project_name: 'Project Atlas',
       provider: 'openai',
       resolved_model: 'gpt-5.4-2026-03-05',
       reasoning_effort: 'high',
       has_api_key: true,
       api_key_hint: '***1234',
     };
+  const aiSettingsGetHandler = typeof nextOptions.aiSettingsGetHandler === 'function'
+    ? nextOptions.aiSettingsGetHandler
+    : null;
   const aiSettingsGetError = nextOptions.aiSettingsGetError || null;
   const aiSettingsPutError = nextOptions.aiSettingsPutError || null;
   const aiSettingsPutResponse = Object.prototype.hasOwnProperty.call(nextOptions, 'aiSettingsPutResponse')
@@ -789,7 +862,22 @@ function createFetchMock(options) {
     if (request.method === 'GET' && request.url.includes('/auth/session')) {
       return createFetchResponse(authSessionResponse, 200);
     }
+    if (request.method === 'POST' && request.url.includes('/auth/verify')) {
+      if (authVerifyHandler) {
+        return authVerifyHandler(request);
+      }
+      return createFetchResponse(authVerifyResponse, 200);
+    }
+    if (request.method === 'POST' && request.url.includes('/auth/logout')) {
+      return createFetchResponse({ ok: true }, 200);
+    }
+    if (request.method === 'GET' && request.url.includes('/projects')) {
+      return createFetchResponse(projectListResponse, 200);
+    }
     if (request.method === 'GET' && request.url.includes('/ai/settings')) {
+      if (aiSettingsGetHandler) {
+        return aiSettingsGetHandler(request);
+      }
       if (aiSettingsGetError) {
         return createFetchResponse(aiSettingsGetError.payload, aiSettingsGetError.status);
       }
@@ -864,6 +952,115 @@ function createImmediateTimerHarness() {
     clearTimeout(timerId) {
       activeTimers.delete(timerId);
     },
+  };
+}
+
+function createScheduledTimerHarness() {
+  let nextTimerId = 1;
+  let currentTimeMs = 0;
+  const activeTimers = new Map();
+
+  function getDueTimers(targetTimeMs) {
+    return Array.from(activeTimers.entries())
+      .filter(([, timer]) => timer.runAt <= targetTimeMs)
+      .sort((left, right) => {
+        if (left[1].runAt !== right[1].runAt) {
+          return left[1].runAt - right[1].runAt;
+        }
+        return left[0] - right[0];
+      });
+  }
+
+  return {
+    setTimeout(callback, delayMs) {
+      const timerId = nextTimerId;
+      const normalizedDelayMs = Number.isFinite(Number(delayMs)) ? Math.max(0, Number(delayMs)) : 0;
+      nextTimerId += 1;
+      activeTimers.set(timerId, {
+        callback,
+        runAt: currentTimeMs + normalizedDelayMs,
+      });
+      return timerId;
+    },
+    clearTimeout(timerId) {
+      activeTimers.delete(timerId);
+    },
+    getCurrentTime() {
+      return currentTimeMs;
+    },
+    async advanceTime(delayMs) {
+      const normalizedDelayMs = Number.isFinite(Number(delayMs)) ? Math.max(0, Number(delayMs)) : 0;
+      const targetTimeMs = currentTimeMs + normalizedDelayMs;
+
+      while (true) {
+        const dueTimers = getDueTimers(targetTimeMs);
+        if (!dueTimers.length) {
+          break;
+        }
+
+        currentTimeMs = dueTimers[0][1].runAt;
+
+        dueTimers.forEach(([timerId, timer]) => {
+          if (!activeTimers.has(timerId)) {
+            return;
+          }
+          activeTimers.delete(timerId);
+          timer.callback();
+        });
+        await flushAsyncWork(4);
+      }
+
+      currentTimeMs = targetTimeMs;
+    },
+  };
+}
+
+function createFakeEventSourceHarness(timers, options) {
+  const nextOptions = options || {};
+  const events = [];
+  const errorDelayMs = Number.isFinite(Number(nextOptions.errorDelayMs)) ? Math.max(0, Number(nextOptions.errorDelayMs)) : 0;
+
+  class FakeEventSource {
+    constructor(url) {
+      this.url = String(url);
+      this.readyState = 0;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      this._closed = false;
+      this._record = {
+        url: this.url,
+        openedAt: typeof timers.getCurrentTime === 'function' ? timers.getCurrentTime() : 0,
+        erroredAt: null,
+        closedAt: null,
+      };
+      events.push(this._record);
+
+      this._errorTimerId = timers.setTimeout(() => {
+        if (this._closed) {
+          return;
+        }
+        this._record.erroredAt = typeof timers.getCurrentTime === 'function' ? timers.getCurrentTime() : 0;
+        if (typeof this.onerror === 'function') {
+          this.onerror(createFakeEvent('error', { target: this }));
+        }
+      }, errorDelayMs);
+    }
+
+    close() {
+      if (this._closed) {
+        return;
+      }
+      this._closed = true;
+      this.readyState = 2;
+      timers.clearTimeout(this._errorTimerId);
+      this._record.closedAt = typeof timers.getCurrentTime === 'function' ? timers.getCurrentTime() : 0;
+    }
+  }
+
+  return {
+    EventSource: FakeEventSource,
+    events,
   };
 }
 
@@ -1061,6 +1258,83 @@ async function withTransportPageHarness(options, callback) {
       fetchCalls: fetchMock.calls,
       transportPageApi: localizedTransportPage,
       flushAsyncWork,
+      getElement(selector) {
+        const element = document.querySelector(selector);
+        assert.ok(element, `Expected to find element matching ${selector}`);
+        return element;
+      },
+      countFetchCalls(fragment) {
+        return fetchMock.calls.filter((call) => call.url.includes(fragment)).length;
+      },
+    });
+  } finally {
+    if (previousGlobals.document === undefined) {
+      delete global.document;
+    } else {
+      global.document = previousGlobals.document;
+    }
+    global.fetch = previousGlobals.fetch;
+    global.addEventListener = previousGlobals.addEventListener;
+    global.removeEventListener = previousGlobals.removeEventListener;
+    global.dispatchEvent = previousGlobals.dispatchEvent;
+    global.setTimeout = previousGlobals.setTimeout;
+    global.clearTimeout = previousGlobals.clearTimeout;
+    global.EventSource = previousGlobals.EventSource;
+  }
+}
+
+async function withTransportPageControlledHarness(options, callback) {
+  const nextOptions = options || {};
+  const previousGlobals = {
+    document: global.document,
+    fetch: global.fetch,
+    addEventListener: global.addEventListener,
+    removeEventListener: global.removeEventListener,
+    dispatchEvent: global.dispatchEvent,
+    setTimeout: global.setTimeout,
+    clearTimeout: global.clearTimeout,
+    EventSource: global.EventSource,
+  };
+  const document = createTransportPageTestDocument();
+  const windowEvents = new FakeEventTarget();
+  const timers = nextOptions.timerHarness || createImmediateTimerHarness();
+  const fetchMock = createFetchMock(nextOptions.fetchOptions || nextOptions);
+
+  document.visibilityState = nextOptions.initialVisibilityState === 'hidden' ? 'hidden' : 'visible';
+  document.hidden = document.visibilityState === 'hidden';
+
+  global.document = document;
+  global.fetch = fetchMock.fetch;
+  global.addEventListener = windowEvents.addEventListener.bind(windowEvents);
+  global.removeEventListener = windowEvents.removeEventListener.bind(windowEvents);
+  global.dispatchEvent = windowEvents.dispatchEvent.bind(windowEvents);
+  global.setTimeout = timers.setTimeout.bind(timers);
+  global.clearTimeout = timers.clearTimeout.bind(timers);
+  global.EventSource = nextOptions.eventSourceHarness ? nextOptions.eventSourceHarness.EventSource : undefined;
+
+  try {
+    const localizedTransportPage = loadTransportPageWithI18n();
+    document.dispatchEvent(createFakeEvent('DOMContentLoaded', { target: document }));
+    await flushAsyncWork();
+    return await callback({
+      document,
+      fetchCalls: fetchMock.calls,
+      transportPageApi: localizedTransportPage,
+      flushAsyncWork,
+      timers,
+      async advanceTime(delayMs) {
+        if (typeof timers.advanceTime !== 'function') {
+          throw new Error('The active timer harness does not support time control.');
+        }
+        await timers.advanceTime(delayMs);
+        await flushAsyncWork();
+      },
+      async setVisibility(nextVisibilityState) {
+        document.visibilityState = nextVisibilityState === 'hidden' ? 'hidden' : 'visible';
+        document.hidden = document.visibilityState === 'hidden';
+        document.dispatchEvent(createFakeEvent('visibilitychange', { target: document }));
+        await flushAsyncWork();
+      },
       getElement(selector) {
         const element = document.querySelector(selector);
         assert.ok(element, `Expected to find element matching ${selector}`);
@@ -1584,6 +1858,7 @@ test('transport ai settings modal keeps dedicated menu, request, and feedback ho
   );
   assert.match(transportHtml, /data-ai-menu-action="settings"/);
   assert.match(transportHtml, /data-ai-settings-modal/);
+  assert.match(transportHtml, /data-ai-settings-project/);
   assert.match(transportHtml, /data-ai-settings-provider/);
   assert.match(transportHtml, /data-ai-settings-api-key/);
   assert.match(transportHtml, /data-ai-settings-api-key-hint/);
@@ -1591,10 +1866,12 @@ test('transport ai settings modal keeps dedicated menu, request, and feedback ho
   assert.match(transportHtml, /data-ai-settings-save/);
   assert.match(transportI18n, /settingsMenuLabel:/);
   assert.match(transportI18n, /settingsSave:/);
+  assert.match(transportI18n, /settingsProject:/);
   assert.match(transportI18n, /settingsProviderChangeRequiresKey:/);
   assert.match(transportScript, /function openAiSettingsModal\(\) \{/);
   assert.match(transportScript, /function saveTransportAiSettings\(\) \{/);
-  assert.match(transportScript, /requestJson\(`\$\{TRANSPORT_API_PREFIX\}\/ai\/settings`\)/);
+  assert.match(transportScript, /function buildTransportAiSettingsUrl\(projectId\) \{/);
+  assert.match(transportScript, /project_id: normalizedDraft\.projectId/);
   assert.match(transportCss, /\.transport-ai-settings-modal/);
   assert.match(transportCss, /\.transport-ai-settings-api-key-hint\[data-tone="warning"\]/);
 });
@@ -1608,6 +1885,9 @@ test('transport ai settings translations exist for every supported language incl
     'ai.settingsLoading',
     'ai.settingsSaving',
     'ai.settingsSaved',
+    'ai.settingsProject',
+    'ai.settingsSelectProject',
+    'ai.settingsNoProjectsAvailable',
     'ai.settingsProviderChangeRequiresKey',
     'ai.agentSettingsCancel',
     'ai.agentSettingsSubmit',
@@ -2629,11 +2909,17 @@ test('transport ai settings modal opens from the AI menu, loads masked state, an
     const putCallsBeforeCancel = fetchCalls.filter(
       (call) => call.method === 'PUT' && call.url.includes('/ai/settings')
     ).length;
+    const projectField = getElement('[data-ai-settings-project]');
     const providerField = getElement('[data-ai-settings-provider]');
     const apiKeyField = getElement('[data-ai-settings-api-key]');
 
-    assert.ok(fetchCalls.some((call) => call.method === 'GET' && call.url.includes('/ai/settings')));
+    const settingsGetCall = fetchCalls.find(
+      (call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=101')
+    );
+    assert.ok(settingsGetCall);
     assert.equal(getElement('[data-ai-settings-modal]').hidden, false);
+    assert.equal(projectField.tagName, 'SELECT');
+    assert.equal(projectField.value, '101');
     assert.equal(providerField.tagName, 'SELECT');
     assert.equal(providerField.value, 'openai');
     assert.equal(apiKeyField.tagName, 'INPUT');
@@ -2656,6 +2942,8 @@ test('transport ai settings save flow updates the provider note, posts the trimm
   await withTransportPageHarness(
     {
       aiSettingsPutResponse: {
+        project_id: 101,
+        project_name: 'Project Atlas',
         provider: 'deepseek',
         resolved_model: 'deepseek-v4-pro',
         reasoning_effort: 'high',
@@ -2683,6 +2971,7 @@ test('transport ai settings save flow updates the provider note, posts the trimm
       const saveCall = fetchCalls.find((call) => call.method === 'PUT' && call.url.includes('/ai/settings'));
       assert.ok(saveCall);
       assert.deepEqual(JSON.parse(saveCall.body), {
+        project_id: 101,
         provider: 'deepseek',
         api_key: 'sk-test-9999',
       });
@@ -2767,6 +3056,31 @@ test('transport ai settings modal keeps a controlled message when the saved prov
   );
 });
 
+test('transport ai settings load surfaces the encryption-unavailable error before save', async () => {
+  await withTransportPageHarness(
+    {
+      aiSettingsGetError: {
+        status: 503,
+        payload: {
+          detail: 'Transport AI settings encryption is unavailable.',
+        },
+      },
+    },
+    async ({ getElement, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      assert.equal(getElement('[data-ai-settings-modal]').hidden, false);
+      assert.equal(getElement('[data-ai-settings-provider]').value, 'openai');
+      assert.equal(getElement('[data-ai-settings-feedback]').hidden, false);
+      assert.equal(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'Transport AI settings encryption is unavailable.'
+      );
+    }
+  );
+});
+
 test('transport ai settings save surfaces the encryption-unavailable error without closing the modal', async () => {
   await withTransportPageHarness(
     {
@@ -2825,6 +3139,8 @@ test('transport ai settings modal does not close while a save request is still p
       pendingSave.resolve(
         createFetchResponse(
           {
+            project_id: 101,
+            project_name: 'Project Atlas',
             provider: 'openai',
             resolved_model: 'gpt-5.4-2026-03-05',
             reasoning_effort: 'high',
@@ -2837,6 +3153,184 @@ test('transport ai settings modal does not close while a save request is still p
       await flushAsyncWork();
 
       assert.equal(getElement('[data-ai-settings-modal]').hidden, true);
+    }
+  );
+});
+
+test('transport ai settings modal switches projects, reloads isolated hints, and sends the selected project_id on save', async () => {
+  await withTransportPageHarness(
+    {
+      aiSettingsGetHandler(request) {
+        const requestUrl = new URL(request.url, 'https://example.test');
+        const projectId = Number(requestUrl.searchParams.get('project_id'));
+        if (projectId === 202) {
+          return createFetchResponse(
+            {
+              project_id: 202,
+              project_name: 'Project Borealis',
+              provider: 'deepseek',
+              resolved_model: 'deepseek-v4-pro',
+              reasoning_effort: 'high',
+              has_api_key: true,
+              api_key_hint: '***2020',
+            },
+            200
+          );
+        }
+
+        return createFetchResponse(
+          {
+            project_id: 101,
+            project_name: 'Project Atlas',
+            provider: 'openai',
+            resolved_model: 'gpt-5.4-2026-03-05',
+            reasoning_effort: 'high',
+            has_api_key: true,
+            api_key_hint: '***1010',
+          },
+          200
+        );
+      },
+      aiSettingsPutResponse: {
+        project_id: 202,
+        project_name: 'Project Borealis',
+        provider: 'deepseek',
+        resolved_model: 'deepseek-v4-pro',
+        reasoning_effort: 'high',
+        has_api_key: true,
+        api_key_hint: '***8888',
+      },
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectField = getElement('[data-ai-settings-project]');
+      assert.equal(projectField.value, '101');
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+
+      projectField.value = '202';
+      projectField.dispatchEvent(createFakeEvent('change', { target: projectField }));
+      await flushAsyncWork();
+
+      assert.equal(getElement('[data-ai-settings-provider]').value, 'deepseek');
+      assert.match(getElement('[data-ai-settings-provider-note]').textContent, /deepseek-v4-pro/i);
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*2020/);
+
+      const apiKeyField = getElement('[data-ai-settings-api-key]');
+      apiKeyField.value = '  sk-project-202  ';
+      apiKeyField.dispatchEvent(createFakeEvent('input', { target: apiKeyField }));
+
+      getElement('[data-ai-settings-save]').click();
+      await flushAsyncWork();
+
+      const projectGetCalls = fetchCalls.filter(
+        (call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=')
+      );
+      assert.equal(projectGetCalls.length, 2);
+      assert.ok(projectGetCalls.some((call) => call.url.includes('project_id=101')));
+      assert.ok(projectGetCalls.some((call) => call.url.includes('project_id=202')));
+
+      const saveCall = fetchCalls.find((call) => call.method === 'PUT' && call.url.includes('/ai/settings'));
+      assert.ok(saveCall);
+      assert.deepEqual(JSON.parse(saveCall.body), {
+        project_id: 202,
+        provider: 'deepseek',
+        api_key: 'sk-project-202',
+      });
+    }
+  );
+});
+
+test('transport ai settings modal keeps the selected project and shows controlled feedback when a project switch load fails', async () => {
+  await withTransportPageHarness(
+    {
+      aiSettingsGetHandler(request) {
+        const requestUrl = new URL(request.url, 'https://example.test');
+        const projectId = Number(requestUrl.searchParams.get('project_id'));
+        if (projectId === 202) {
+          return createFetchResponse({}, 500);
+        }
+
+        return createFetchResponse(
+          {
+            project_id: 101,
+            project_name: 'Project Atlas',
+            provider: 'openai',
+            resolved_model: 'gpt-5.4-2026-03-05',
+            reasoning_effort: 'high',
+            has_api_key: true,
+            api_key_hint: '***1010',
+          },
+          200
+        );
+      },
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      const projectField = getElement('[data-ai-settings-project]');
+      assert.equal(projectField.value, '101');
+      assert.match(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+
+      projectField.value = '202';
+      projectField.dispatchEvent(createFakeEvent('change', { target: projectField }));
+      await flushAsyncWork();
+
+      assert.equal(getElement('[data-ai-settings-modal]').hidden, false);
+      assert.equal(projectField.value, '202');
+      assert.equal(getElement('[data-ai-settings-provider]').value, 'openai');
+      assert.equal(getElement('[data-ai-settings-feedback]').hidden, false);
+      assert.match(
+        getElement('[data-ai-settings-feedback]').textContent,
+        /Transport AI could not load the current AI settings\./i
+      );
+      assert.doesNotMatch(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*1010/);
+      assert.doesNotMatch(getElement('[data-ai-settings-api-key-hint]').textContent, /\*\*\*2020/);
+
+      const projectGetCalls = fetchCalls.filter(
+        (call) => call.method === 'GET' && call.url.includes('/ai/settings?project_id=')
+      );
+      assert.equal(projectGetCalls.length, 2);
+      assert.ok(projectGetCalls.some((call) => call.url.includes('project_id=101')));
+      assert.ok(projectGetCalls.some((call) => call.url.includes('project_id=202')));
+    }
+  );
+});
+
+test('transport ai settings modal falls back to the projects endpoint and shows a controlled warning when no projects exist', async () => {
+  await withTransportPageHarness(
+    {
+      dashboardResponse: {
+        selected_route: 'home_to_work',
+        selected_date: '2026-06-13',
+        projects: [],
+        regular_requests: [],
+        weekend_requests: [],
+        extra_requests: [],
+        regular_vehicles: [],
+        weekend_vehicles: [],
+        extra_vehicles: [],
+        regular_vehicle_registry: [],
+        weekend_vehicle_registry: [],
+        extra_vehicle_registry: [],
+        workplaces: [],
+      },
+      projectListResponse: [],
+    },
+    async ({ getElement, fetchCalls, flushAsyncWork }) => {
+      getElement('[data-ai-menu-action="settings"]').click();
+      await flushAsyncWork();
+
+      assert.ok(fetchCalls.some((call) => call.method === 'GET' && call.url.includes('/projects')));
+      assert.equal(getElement('[data-ai-settings-project]').value, '');
+      assert.equal(getElement('[data-ai-settings-provider]').disabled, true);
+      assert.equal(getElement('[data-ai-settings-save]').disabled, true);
+      assert.equal(
+        getElement('[data-ai-settings-feedback]').textContent,
+        'No projects are available yet. Create a project before configuring AI settings.'
+      );
     }
   );
 });
@@ -2930,6 +3424,100 @@ test('transport ai cancel command posts the cancel action and refreshes the dash
       assert.equal(countFetchCalls('/dashboard?'), dashboardRequestCount + 1);
       assert.equal(getElement('[data-ai-changes-modal]').hidden, true);
       assert.match(getElement('[data-status-message]').textContent, /cancelled/i);
+    }
+  );
+});
+
+test('transport multi-tab validation bounds stream retries and avoids transport ai requests without user action', async () => {
+  const perTabMetrics = [];
+
+  for (let tabIndex = 0; tabIndex < 3; tabIndex += 1) {
+    const timers = createScheduledTimerHarness();
+    const eventSourceHarness = createFakeEventSourceHarness(timers);
+
+    await withTransportPageControlledHarness(
+      {
+        timerHarness: timers,
+        eventSourceHarness,
+      },
+      async ({ countFetchCalls, fetchCalls, advanceTime }) => {
+        assert.equal(countFetchCalls('/auth/session'), 1);
+        assert.equal(countFetchCalls('/dashboard?'), 1);
+        assert.equal(countFetchCalls('/auth/verify'), 0);
+        assert.equal(eventSourceHarness.events.length, 1);
+
+        await advanceTime(7500);
+
+        assert.equal(countFetchCalls('/dashboard?'), 1);
+        assert.equal(countFetchCalls('/auth/verify'), 0);
+        assert.equal(fetchCalls.filter((call) => call.url.includes('/api/transport/ai/')).length, 0);
+        assert.deepEqual(
+          eventSourceHarness.events.map((event) => event.openedAt),
+          [0, 1000, 3000, 7000]
+        );
+
+        perTabMetrics.push({
+          streamAttempts: eventSourceHarness.events.length,
+          dashboardRequests: countFetchCalls('/dashboard?'),
+          authVerifyRequests: countFetchCalls('/auth/verify'),
+          aiRequests: fetchCalls.filter((call) => call.url.includes('/api/transport/ai/')).length,
+        });
+      }
+    );
+  }
+
+  assert.deepEqual(perTabMetrics, [
+    { streamAttempts: 4, dashboardRequests: 1, authVerifyRequests: 0, aiRequests: 0 },
+    { streamAttempts: 4, dashboardRequests: 1, authVerifyRequests: 0, aiRequests: 0 },
+    { streamAttempts: 4, dashboardRequests: 1, authVerifyRequests: 0, aiRequests: 0 },
+  ]);
+});
+
+test('transport auth validation only verifies on commit and keeps the session during partial edits', async () => {
+  const timers = createScheduledTimerHarness();
+  const eventSourceHarness = createFakeEventSourceHarness(timers);
+
+  await withTransportPageControlledHarness(
+    {
+      timerHarness: timers,
+      eventSourceHarness,
+    },
+    async ({ getElement, countFetchCalls, fetchCalls, advanceTime }) => {
+      const authKeyInput = getElement('[data-transport-auth-key]');
+      const authPasswordInput = getElement('[data-transport-auth-password]');
+      const authKeyShell = getElement('[data-transport-auth-shell="key"]');
+      const requestUserButton = getElement('[data-request-user-link]');
+
+      assert.equal(countFetchCalls('/auth/verify'), 0);
+      assert.equal(requestUserButton.hidden, true);
+      assert.equal(authKeyShell.classList.contains('is-authenticated'), true);
+
+      authKeyInput.value = 'hr70';
+      authKeyInput.dispatchEvent(createFakeEvent('input', { target: authKeyInput }));
+      authPasswordInput.value = 'n';
+      authPasswordInput.dispatchEvent(createFakeEvent('input', { target: authPasswordInput }));
+      await advanceTime(700);
+
+      assert.equal(countFetchCalls('/auth/verify'), 0);
+      assert.equal(fetchCalls.filter((call) => call.url.includes('/auth/logout')).length, 0);
+      assert.equal(authKeyShell.classList.contains('is-authenticated'), true);
+
+      authPasswordInput.value = 'new-secret';
+      authPasswordInput.dispatchEvent(createFakeEvent('blur', { target: authPasswordInput }));
+      await advanceTime(0);
+
+      assert.equal(countFetchCalls('/auth/verify'), 1);
+      assert.equal(countFetchCalls('/dashboard?'), 2);
+      assert.equal(authKeyShell.classList.contains('is-authenticated'), true);
+
+      authPasswordInput.value = '';
+      authPasswordInput.dispatchEvent(createFakeEvent('input', { target: authPasswordInput }));
+      await advanceTime(700);
+
+      assert.equal(countFetchCalls('/auth/verify'), 1);
+      assert.equal(fetchCalls.filter((call) => call.url.includes('/auth/logout')).length, 0);
+      assert.equal(authKeyShell.classList.contains('is-authenticated'), true);
+      assert.equal(requestUserButton.hidden, true);
     }
   );
 });

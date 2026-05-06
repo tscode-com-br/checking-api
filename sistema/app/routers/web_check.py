@@ -44,6 +44,7 @@ from ..services.location_matching import (
 from ..services.managed_locations import filter_locations_for_project
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
+    get_mixed_zone_interval_minutes,
     get_minimum_checkout_distance_meters_for_project,
 )
 from ..services.passwords import hash_password, verify_password
@@ -51,6 +52,7 @@ from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
 from ..services.time_utils import build_timezone_label, now_sgt, resolve_project_timezone_name
 from ..services.transport import (
+    TransportRequestConflictError,
     acknowledge_transport_assignments,
     build_web_transport_state,
     cancel_transport_request_and_assignments,
@@ -221,28 +223,46 @@ def _build_web_transport_request_message(*, request_kind: str, created: bool) ->
     return f"Ja existe uma solicitacao de {request_label} ativa."
 
 
+def _has_complete_web_transport_address(user: User) -> bool:
+    normalized_address = str(user.end_rua or "").strip()
+    normalized_zip_code = "".join(ch for ch in str(user.zip or "") if ch.isdigit())
+    return len(normalized_address) >= 3 and len(normalized_zip_code) == 6
+
+
+def _validate_web_transport_request_eligibility(*, user: User, payload: WebTransportRequestCreate) -> None:
+    if not _has_complete_web_transport_address(user):
+        raise HTTPException(status_code=400, detail="Cadastre um endereco completo antes de solicitar o transporte.")
+
+    if payload.request_kind == "extra":
+        if payload.requested_date is None:
+            raise HTTPException(status_code=400, detail="Informe a data do transporte extra.")
+        if not payload.requested_time:
+            raise HTTPException(status_code=400, detail="Informe o horario do transporte extra.")
+
+
 def _create_web_transport_request_response(
     payload: WebTransportRequestCreate,
     request: Request,
     db: Session,
 ) -> WebTransportActionResponse:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    _validate_web_transport_request_eligibility(user=user, payload=payload)
 
-    service_date = now_sgt().date()
     requested_time = payload.requested_time or now_sgt().strftime("%H:%M")
     requested_date = payload.requested_date if payload.request_kind == "extra" else None
-    if payload.request_kind == "extra" and requested_date is None:
-        requested_date = service_date
 
-    _transport_request, created = upsert_transport_request(
-        db,
-        user=user,
-        request_kind=payload.request_kind,
-        requested_time=requested_time,
-        requested_date=requested_date,
-        created_via="web",
-        selected_weekdays=payload.selected_weekdays,
-    )
+    try:
+        _transport_request, created = upsert_transport_request(
+            db,
+            user=user,
+            request_kind=payload.request_kind,
+            requested_time=requested_time,
+            requested_date=requested_date,
+            created_via="web",
+            selected_weekdays=payload.selected_weekdays,
+        )
+    except TransportRequestConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if created:
         db.commit()
         notify_admin_data_changed("event")
@@ -597,6 +617,7 @@ def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> 
     return WebLocationOptionsResponse(
         items=items,
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
+        mixed_zone_interval_minutes=get_mixed_zone_interval_minutes(db),
     )
 
 

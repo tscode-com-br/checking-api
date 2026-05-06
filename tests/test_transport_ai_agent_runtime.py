@@ -20,7 +20,10 @@ from sistema.app.services.transport_ai_agent import (
     build_transport_ai_langchain_tools,
     run_transport_ai_agent,
 )
-from sistema.app.services.transport_ai_llm_settings import TransportAILlmRuntimeSettings, upsert_transport_ai_llm_settings
+from sistema.app.services.transport_ai_llm_settings import (
+    TransportAILlmRuntimeSettings,
+    upsert_transport_ai_llm_settings,
+)
 from sistema.app.services.transport_route_provider import FakeTransportRouteProvider
 
 
@@ -436,14 +439,15 @@ def test_run_transport_ai_agent_uses_run_llm_snapshot_and_sanitizes_persisted_ap
         with session_factory() as session:
             _configure_transport_settings(session)
             admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-DP", address="1 Marina Boulevard", zip_code="018989")
             upsert_transport_ai_llm_settings(
                 session,
+                project_id=project.id,
                 provider="deepseek",
                 api_key="deepseek-test-secret-4321",
                 actor_admin_user_id=admin_user.id,
                 settings_obj=settings_obj,
             )
-            project = _create_project(session, name="PRUNTIME-DP", address="1 Marina Boulevard", zip_code="018989")
             user = _create_user(
                 session,
                 chave="RTD1",
@@ -498,6 +502,100 @@ def test_run_transport_ai_agent_uses_run_llm_snapshot_and_sanitizes_persisted_ap
         engine.dispose()
 
 
+def test_run_transport_ai_agent_persists_project_llm_runtime_snapshots_without_api_keys(tmp_path, monkeypatch):
+    from sistema.app.services import transport_ai_agent as transport_ai_agent_module
+
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_snapshot.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-SNAPSHOT", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="deepseek",
+                api_key="deepseek-snapshot-secret-7788",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RTSP",
+                nome="Runtime Snapshot Worker",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7444A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model="",
+            )
+            session.commit()
+
+            valid_plan = _build_valid_plan(
+                session,
+                service_date=service_date,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+            fake_model = _FakeChatModel([
+                {
+                    "raw": AIMessage(content="deepseek snapshot secret deepseek-snapshot-secret-7788"),
+                    "parsed": valid_plan,
+                    "parsing_error": None,
+                }
+            ])
+            monkeypatch.setattr(
+                transport_ai_agent_module,
+                "build_transport_ai_chat_model_for_provider",
+                lambda **kwargs: fake_model,
+            )
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=None,
+            )
+
+            planning_input_payload = json.loads(run.planning_input_json or "{}")
+            runtime_projects = planning_input_payload.get("llm_runtime_projects")
+
+            assert result.plan is not None
+            assert runtime_projects == [
+                {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "partition_keys": [f"extra:{project.name}:{project.country_code}"],
+                    "provider": "deepseek",
+                    "model_name": "deepseek-v4-pro",
+                    "reasoning_effort": "high",
+                }
+            ]
+            assert "deepseek-snapshot-secret-7788" not in run.planning_input_json
+            assert "api_key" not in run.planning_input_json
+            assert "api_key_ciphertext" not in run.planning_input_json
+            assert run.llm_provider == "deepseek"
+            assert run.llm_model == "deepseek-v4-pro"
+            assert run.llm_reasoning_effort == "high"
+            assert run.openai_model == "deepseek-v4-pro"
+    finally:
+        engine.dispose()
+
+
 def test_run_transport_ai_agent_retries_without_reasoning_payload_when_deepseek_rejects_it(tmp_path, monkeypatch):
     from sistema.app.services import transport_ai_agent as transport_ai_agent_module
 
@@ -513,14 +611,15 @@ def test_run_transport_ai_agent_retries_without_reasoning_payload_when_deepseek_
         with session_factory() as session:
             _configure_transport_settings(session)
             admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-DP-R", address="1 Marina Boulevard", zip_code="018989")
             upsert_transport_ai_llm_settings(
                 session,
+                project_id=project.id,
                 provider="deepseek",
                 api_key="deepseek-test-secret-5678",
                 actor_admin_user_id=admin_user.id,
                 settings_obj=settings_obj,
             )
-            project = _create_project(session, name="PRUNTIME-DP-R", address="1 Marina Boulevard", zip_code="018989")
             user = _create_user(
                 session,
                 chave="RTDR",
@@ -586,6 +685,221 @@ def test_run_transport_ai_agent_retries_without_reasoning_payload_when_deepseek_
             assert len(compatible_model.invocations) == 1
             assert run.status == "proposed"
             assert run.completed_at is not None
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_retries_without_reasoning_payload_when_deepseek_reasoner_rejects_tool_choice(tmp_path, monkeypatch):
+    from sistema.app.services import transport_ai_agent as transport_ai_agent_module
+
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_deepseek_tool_choice_retry.db")
+
+    class _MethodAwareStructuredRunnable:
+        def __init__(self, method: str, valid_plan: TransportAgentPlan) -> None:
+            self._method = method
+            self._valid_plan = valid_plan
+
+        def invoke(self, messages):
+            if self._method == "function_calling":
+                raise ValueError(
+                    "Error code: 400 - {'error': {'message': 'deepseek-reasoner does not support this tool_choice'}}"
+                )
+            return {
+                "raw": AIMessage(content=f"deepseek tool choice retry response via {self._method}"),
+                "parsed": self._valid_plan,
+                "parsing_error": None,
+            }
+
+    class _MethodAwareChatModel:
+        def __init__(self, valid_plan: TransportAgentPlan) -> None:
+            self.valid_plan = valid_plan
+            self.invocations: list[str] = []
+            self.structured_output_calls: list[dict[str, object]] = []
+            self.bind_tools_calls: list[dict[str, object]] = []
+
+        def with_structured_output(self, schema, **kwargs):
+            self.structured_output_calls.append({"schema": schema, **kwargs})
+            self.invocations.append(str(kwargs.get("method")))
+            return _MethodAwareStructuredRunnable(str(kwargs.get("method")), self.valid_plan)
+
+        def bind_tools(self, tools, **kwargs):
+            self.bind_tools_calls.append({"tools": tools, **kwargs})
+            owner = self
+
+            class _AutoToolRunnable:
+                def invoke(self_inner, messages):
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "TransportAgentPlan",
+                                "args": owner.valid_plan.model_dump(mode="json"),
+                                "id": "call_runtime_fallback",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+
+            return _AutoToolRunnable()
+
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-DP-T", address="1 Marina Boulevard", zip_code="018989")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project.id,
+                provider="deepseek",
+                api_key="deepseek-test-secret-7788",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user = _create_user(
+                session,
+                chave="RTDT",
+                nome="Runtime Worker DeepSeek Tool Choice",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7999A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model="deepseek-v4-pro",
+                llm_provider="deepseek",
+                llm_model="deepseek-v4-pro",
+                llm_reasoning_effort="high",
+            )
+            session.commit()
+
+            valid_plan = _build_valid_plan(
+                session,
+                service_date=service_date,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+            build_calls: list[bool] = []
+
+            def _fake_build_transport_ai_chat_model_for_provider(*, include_reasoning_effort=True, **kwargs):
+                build_calls.append(include_reasoning_effort)
+                return _MethodAwareChatModel(valid_plan)
+
+            monkeypatch.setattr(
+                transport_ai_agent_module,
+                "build_transport_ai_chat_model_for_provider",
+                _fake_build_transport_ai_chat_model_for_provider,
+            )
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=None,
+            )
+
+            assert result.plan is not None
+            assert result.plan.plan_key == valid_plan.plan_key
+            assert result.openai_model == "deepseek-v4-pro"
+            assert build_calls == [True]
+            assert run.status == "proposed"
+            assert run.completed_at is not None
+    finally:
+        engine.dispose()
+
+
+def test_invoke_transport_ai_structured_model_falls_back_from_function_calling_when_tool_choice_is_unsupported(tmp_path):
+    from sistema.app.services.transport_ai_agent import _invoke_transport_ai_structured_model
+
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_structured_output_fallback.db")
+
+    class _MethodAwareChatModel:
+        def __init__(self, valid_plan: TransportAgentPlan) -> None:
+            self.valid_plan = valid_plan
+            self.structured_output_calls: list[dict[str, object]] = []
+            self.bind_tools_calls: list[dict[str, object]] = []
+
+        def with_structured_output(self, schema, **kwargs):
+            self.structured_output_calls.append({"schema": schema, **kwargs})
+            class _FunctionCallingRunnable:
+                def invoke(self_inner, messages):
+                    raise ValueError(
+                        "Error code: 400 - {'error': {'message': 'deepseek-reasoner does not support this tool_choice'}}"
+                    )
+
+            return _FunctionCallingRunnable()
+
+        def bind_tools(self, tools, **kwargs):
+            self.bind_tools_calls.append({"tools": tools, **kwargs})
+            owner = self
+
+            class _AutoToolRunnable:
+                def invoke(self_inner, messages):
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "TransportAgentPlan",
+                                "args": owner.valid_plan.model_dump(mode="json"),
+                                "id": "call_fallback",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+
+            return _AutoToolRunnable()
+
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(transport_ai_agent_mode="agent")
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project = _create_project(session, name="PRUNTIME-DP-S", address="1 Marina Boulevard", zip_code="018989")
+            user = _create_user(
+                session,
+                chave="RTDS",
+                nome="Runtime Worker DeepSeek Structured Output",
+                projeto=project.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            _create_transport_request(session, user_id=user.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7333A", service_date=service_date)
+            session.commit()
+
+            valid_plan = _build_valid_plan(
+                session,
+                service_date=service_date,
+                settings_obj=settings_obj,
+                provider=provider,
+            )
+            model = _MethodAwareChatModel(valid_plan)
+
+            parsed_plan, raw_response, parsing_error = _invoke_transport_ai_structured_model(
+                model=model,
+                messages=[],
+            )
+
+            assert parsed_plan is not None
+            assert parsed_plan.plan_key == valid_plan.plan_key
+            assert parsing_error is None
+            assert isinstance(raw_response, AIMessage)
+            assert [call["method"] for call in model.structured_output_calls] == ["function_calling"]
+            assert model.bind_tools_calls[0]["tool_choice"] == "auto"
     finally:
         engine.dispose()
 
@@ -877,6 +1191,158 @@ def test_run_transport_ai_agent_requires_persisted_llm_settings_in_agent_mode(tm
             assert result.plan is None
             assert result.error_code == "transport_ai_agent_execution_failed"
             assert run.status == "failed"
-            assert "Transport AI LLM settings have not been configured yet." in (run.error_message or "")
+            assert "Transport AI LLM settings have not been configured for this project yet." in (run.error_message or "")
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_fails_for_conflicting_project_llm_runtime_settings(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_project_conflict.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            transport_ai_agent_mode="agent",
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project_a = _create_project(session, name="PRUNTIME6A", address="1 Marina Boulevard", zip_code="018989")
+            project_b = _create_project(session, name="PRUNTIME6B", address="2 Marina Boulevard", zip_code="018990")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project_a.id,
+                provider="openai",
+                api_key="conflict-openai-secret",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project_b.id,
+                provider="deepseek",
+                api_key="conflict-deepseek-secret",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user_a = _create_user(
+                session,
+                chave="RT6A",
+                nome="Runtime Worker Six A",
+                projeto=project_a.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            user_b = _create_user(
+                session,
+                chave="RT6B",
+                nome="Runtime Worker Six B",
+                projeto=project_b.name,
+                address="20 Bayfront Avenue",
+                zip_code="018957",
+            )
+            _create_transport_request(session, user_id=user_a.id, service_date=service_date)
+            _create_transport_request(session, user_id=user_b.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7666A", service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7667A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=None,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_execution_failed"
+            assert run.status == "failed"
+            assert "requires the same project-specific LLM provider" in (run.error_message or "")
+    finally:
+        engine.dispose()
+
+
+def test_run_transport_ai_agent_fails_for_conflicting_project_api_keys_with_same_provider(tmp_path):
+    engine, session_factory = _build_session_factory(tmp_path / "transport_ai_agent_runtime_project_key_conflict.db")
+    try:
+        service_date = date(2026, 5, 3)
+        settings_obj = _build_settings(
+            transport_ai_agent_mode="agent",
+            openai_api_key=None,
+            openai_model="legacy-openai-model-ignored",
+        )
+        provider = FakeTransportRouteProvider(settings_obj=settings_obj, allow_synthetic_geocode=False)
+
+        with session_factory() as session:
+            _configure_transport_settings(session)
+            admin_user = _create_admin_user(session)
+            project_a = _create_project(session, name="PRUNTIME7A", address="1 Marina Boulevard", zip_code="018989")
+            project_b = _create_project(session, name="PRUNTIME7B", address="2 Marina Boulevard", zip_code="018990")
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project_a.id,
+                provider="openai",
+                api_key="same-provider-conflict-1111",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            upsert_transport_ai_llm_settings(
+                session,
+                project_id=project_b.id,
+                provider="openai",
+                api_key="same-provider-conflict-2222",
+                actor_admin_user_id=admin_user.id,
+                settings_obj=settings_obj,
+            )
+            user_a = _create_user(
+                session,
+                chave="RT7A",
+                nome="Runtime Worker Seven A",
+                projeto=project_a.name,
+                address="10 Bayfront Avenue",
+                zip_code="018956",
+            )
+            user_b = _create_user(
+                session,
+                chave="RT7B",
+                nome="Runtime Worker Seven B",
+                projeto=project_b.name,
+                address="20 Bayfront Avenue",
+                zip_code="018957",
+            )
+            _create_transport_request(session, user_id=user_a.id, service_date=service_date)
+            _create_transport_request(session, user_id=user_b.id, service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7771A", service_date=service_date)
+            _create_extra_vehicle_candidate(session, placa="SBA7772A", service_date=service_date)
+            run = _create_transport_ai_run(
+                session,
+                actor_user_id=admin_user.id,
+                service_date=service_date,
+                openai_model=settings_obj.openai_model,
+            )
+            session.commit()
+
+            result = run_transport_ai_agent(
+                db=session,
+                run=run,
+                settings_obj=settings_obj,
+                provider=provider,
+                model=None,
+            )
+
+            assert result.plan is None
+            assert result.error_code == "transport_ai_agent_execution_failed"
+            assert run.status == "failed"
+            assert "API key across all referenced projects" in (run.error_message or "")
     finally:
         engine.dispose()

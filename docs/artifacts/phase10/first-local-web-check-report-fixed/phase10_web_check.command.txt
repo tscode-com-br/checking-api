@@ -1,0 +1,8 @@
+base_url=http://127.0.0.1:8000
+profile=web-check
+config=C:\dev\projetos\checkcheck\scripts\load\phase10_integrated.example.json
+users=4
+spawn_rate=2.0
+run_time=30s
+web_ui=False
+command=C:\dev\projetos\checkcheck\.venv\Scripts\python.exe -m locust -f C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py --host http://127.0.0.1:8000 -u 4 -r 2.0 -t 30s --csv C:\dev\projetos\checkcheck\docs\artifacts\phase10\first-local-web-check-report-fixed\phase10_web_check --html C:\dev\projetos\checkcheck\docs\artifacts\phase10\first-local-web-check-report-fixed\phase10_web_check.html --headless

@@ -12,6 +12,7 @@ def test_transport_ai_settings_default_to_safe_server_side_values():
 
     assert settings.transport_ai_enabled is False
     assert settings.transport_ai_agent_mode == "agent"
+    assert settings.transport_ai_operational_approval_evidence is None
     assert settings.openai_api_key is None
     assert settings.openai_model == "gpt-5-2025-08-07"
     assert settings.openai_temperature == 0
@@ -26,6 +27,7 @@ def test_transport_ai_settings_default_to_safe_server_side_values():
     assert settings.transport_ai_route_provider == "mapbox"
     assert settings.transport_ai_fake_matrix_asymmetric is False
     assert settings.transport_ai_max_passengers_per_run == 80
+    assert settings.transport_ai_max_concurrent_runs == 1
     assert settings.transport_ai_max_runtime_seconds == 180
     assert settings.transport_ai_route_cache_ttl_seconds == 3600
     assert settings.transport_ai_geocode_cache_ttl_days == 30

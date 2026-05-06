@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from sistema.app.core.config import settings
 from sistema.app.models import AdminUser, TransportAIRun
+from sistema.app.services.transport_ai_runs import resolve_transport_ai_run_llm_snapshot_fields
 
 
 def _build_database_url(db_path: Path) -> str:
@@ -185,3 +186,75 @@ def test_transport_ai_run_can_be_fetched_by_run_key(tmp_path):
     assert persisted_run.id == transport_ai_run.id
     assert persisted_run.run_key == "run-query-001"
     assert persisted_run.actor_user_id == admin_user.id
+
+
+def test_resolve_transport_ai_run_llm_snapshot_fields_prefers_single_project_snapshot():
+    run = _build_transport_ai_run(actor_user_id=1, run_key="run-llm-snapshot-single")
+    run.llm_provider = "openai"
+    run.llm_model = "gpt-5-2025-08-07"
+    run.llm_reasoning_effort = "high"
+    run.planning_input_json = json.dumps(
+        {
+            "llm_runtime_projects": [
+                {
+                    "project_id": 41,
+                    "project_name": "Projeto Snapshot",
+                    "partition_keys": ["project:41:home_to_work"],
+                    "provider": "deepseek",
+                    "model_name": "deepseek-v4-pro",
+                    "reasoning_effort": "high",
+                }
+            ]
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+
+    llm_fields = resolve_transport_ai_run_llm_snapshot_fields(run)
+
+    assert llm_fields == {
+        "llm_provider": "deepseek",
+        "llm_model": "deepseek-v4-pro",
+        "llm_reasoning_effort": "high",
+        "openai_model": "deepseek-v4-pro",
+    }
+
+
+def test_resolve_transport_ai_run_llm_snapshot_fields_reports_multiple_for_conflicting_projects():
+    run = _build_transport_ai_run(actor_user_id=1, run_key="run-llm-snapshot-multiple")
+    run.llm_provider = "openai"
+    run.llm_model = "gpt-5-2025-08-07"
+    run.llm_reasoning_effort = "high"
+    run.planning_input_json = json.dumps(
+        {
+            "llm_runtime_projects": [
+                {
+                    "project_id": 41,
+                    "project_name": "Projeto A",
+                    "partition_keys": ["project:41:home_to_work"],
+                    "provider": "openai",
+                    "model_name": "gpt-5-2025-08-07",
+                    "reasoning_effort": "high",
+                },
+                {
+                    "project_id": 42,
+                    "project_name": "Projeto B",
+                    "partition_keys": ["project:42:home_to_work"],
+                    "provider": "deepseek",
+                    "model_name": "deepseek-v4-pro",
+                    "reasoning_effort": "high",
+                },
+            ]
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+
+    llm_fields = resolve_transport_ai_run_llm_snapshot_fields(run)
+
+    assert llm_fields == {
+        "llm_provider": "multiple",
+        "llm_model": "multiple",
+        "llm_reasoning_effort": "multiple",
+        "openai_model": "multiple",
+    }

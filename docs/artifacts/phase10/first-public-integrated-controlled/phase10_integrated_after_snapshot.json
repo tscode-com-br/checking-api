@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-05-05T17:18:38.266709+00:00",
+  "profile": "integrated",
+  "base_url": "https://tscode.com.br",
+  "health": {
+    "error": "HTTPSConnectionPool(host='tscode.com.br', port=443): Read timed out. (read timeout=15)"
+  },
+  "host": {
+    "body": {
+      "available": false,
+      "note": "Host CPU and memory capture only runs automatically for local targets."
+    }
+  },
+  "admin_login": {
+    "error": "HTTPSConnectionPool(host='tscode.com.br', port=443): Read timed out. (read timeout=15)"
+  },
+  "admin": {
+    "error": "Admin diagnostics were skipped because the admin login failed."
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "wait_time": {
+    "min_seconds": 0.3,
+    "max_seconds": 1.0
+  },
+  "location": {
+    "latitude": 1.265936,
+    "longitude": 103.621066,
+    "accuracy_meters": 8,
+    "fallback_local": "Escritório Principal"
+  },
+  "generated_users": {
+    "prefix": "A",
+    "count": 8,
+    "start_index": 1,
+    "password": "abc123",
+    "project": "P80",
+    "register_missing": true,
+    "name_prefix": "Phase10 Admin Base",
+    "email_domain": "load.invalid"
+  },
+  "admin": {
+    "chave": "HR70",
+    "senha": "eAcacdLe2"
+  }
+}

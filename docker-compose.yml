@@ -19,7 +19,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+        - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,16 +31,28 @@ services:
 
   app:
     image: ${CHECKCHECK_APP_IMAGE:-checkcheck-app:local}
-    build: .
+    build: &app_runtime_build
+      context: .
+      target: app-runtime
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    environment:
+    environment: &app_runtime_environment
       APP_ENV: ${APP_ENV:-production}
       APP_HOST: ${APP_HOST:-0.0.0.0}
       APP_PORT: ${APP_PORT:-8000}
+      APP_WORKERS: ${APP_WORKERS:-2}
+      APP_KEEPALIVE_SECONDS: ${APP_KEEPALIVE_SECONDS:-5}
+      APP_TIMEOUT_SECONDS: ${APP_TIMEOUT_SECONDS:-90}
+      APP_GRACEFUL_TIMEOUT_SECONDS: ${APP_GRACEFUL_TIMEOUT_SECONDS:-30}
+      APP_MAX_REQUESTS: ${APP_MAX_REQUESTS:-1000}
+      APP_MAX_REQUESTS_JITTER: ${APP_MAX_REQUESTS_JITTER:-100}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/checking}
+      DATABASE_POOL_SIZE: ${APP_DATABASE_POOL_SIZE:-6}
+      DATABASE_MAX_OVERFLOW: ${APP_DATABASE_MAX_OVERFLOW:-2}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${APP_DATABASE_POOL_TIMEOUT_SECONDS:-5}
+      DATABASE_POOL_RECYCLE_SECONDS: ${APP_DATABASE_POOL_RECYCLE_SECONDS:-1800}
       FORMS_URL: ${FORMS_URL}
       DEVICE_SHARED_KEY: ${DEVICE_SHARED_KEY:-change-me}
       MOBILE_APP_SHARED_KEY: ${MOBILE_APP_SHARED_KEY:-change-mobile-app-shared-key}
@@ -51,17 +63,67 @@ services:
       TZ_NAME: ${TZ_NAME:-Asia/Singapore}
       FORMS_TIMEOUT_SECONDS: ${FORMS_TIMEOUT_SECONDS:-30}
       FORMS_MAX_RETRIES: ${FORMS_MAX_RETRIES:-3}
+      TRANSPORT_AI_ENABLED: ${TRANSPORT_AI_ENABLED:-false}
+      TRANSPORT_AI_AGENT_MODE: ${TRANSPORT_AI_AGENT_MODE:-agent}
+      TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE: ${TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE:-}
+      TRANSPORT_AI_MAX_CONCURRENT_RUNS: ${TRANSPORT_AI_MAX_CONCURRENT_RUNS:-1}
+      TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY: ${TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY:-}
+      FORMS_QUEUE_ENABLED: ${APP_FORMS_QUEUE_ENABLED:-false}
       EVENT_ARCHIVES_DIR: ${EVENT_ARCHIVES_DIR:-/app/data/event_archives}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - event_archives:/app/data/event_archives
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=5)\""]
       interval: 20s
       timeout: 10s
       retries: 6
       start_period: 30s
+
+  migrate:
+    image: ${CHECKCHECK_APP_IMAGE:-checkcheck-app:local}
+    build: *app_runtime_build
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app_runtime_environment
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+
+  forms-worker:
+    image: ${CHECKCHECK_FORMS_WORKER_IMAGE:-checkcheck-forms-worker:local}
+    build:
+      context: .
+      target: forms-worker-runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@db:5432/checking}
+      DATABASE_POOL_SIZE: ${FORMS_WORKER_DATABASE_POOL_SIZE:-2}
+      DATABASE_MAX_OVERFLOW: ${FORMS_WORKER_DATABASE_MAX_OVERFLOW:-1}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${FORMS_WORKER_DATABASE_POOL_TIMEOUT_SECONDS:-5}
+      DATABASE_POOL_RECYCLE_SECONDS: ${FORMS_WORKER_DATABASE_POOL_RECYCLE_SECONDS:-1800}
+      FORMS_URL: ${FORMS_URL}
+      TZ_NAME: ${TZ_NAME:-Asia/Singapore}
+      FORMS_TIMEOUT_SECONDS: ${FORMS_TIMEOUT_SECONDS:-30}
+      FORMS_MAX_RETRIES: ${FORMS_MAX_RETRIES:-3}
+      FORMS_QUEUE_ENABLED: ${FORMS_QUEUE_ENABLED:-true}
+      FORMS_WORKER_HEALTH_UPDATE_SECONDS: ${FORMS_WORKER_HEALTH_UPDATE_SECONDS:-5}
+      FORMS_WORKER_HEALTH_STALE_SECONDS: ${FORMS_WORKER_HEALTH_STALE_SECONDS:-20}
+      FORMS_WORKER_UNHEALTHY_CONSECUTIVE_ERRORS: ${FORMS_WORKER_UNHEALTHY_CONSECUTIVE_ERRORS:-3}
+      EVENT_ARCHIVES_DIR: ${EVENT_ARCHIVES_DIR:-/app/data/event_archives}
+    volumes:
+      - event_archives:/app/data/event_archives
+    healthcheck:
+      test: ["CMD-SHELL", "python -m sistema.app.forms_worker_healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   pgdata:

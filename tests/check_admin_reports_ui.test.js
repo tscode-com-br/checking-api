@@ -55,11 +55,16 @@ test('admin reports controller keeps the tab full-admin only and wires the mutua
   assert.match(adminJs, /function getReportsResultTableColumns\(includeTime = canCurrentAdminViewActivityTime\(\)\) \{/);
   assert.match(adminJs, /if \(includeTime\) \{[\s\S]*header: "Horário"[\s\S]*colClass: "reports-col-time"[\s\S]*\}/);
   assert.match(adminJs, /row\.source_label \|\| row\.source \|\| "-"/);
+  assert.match(adminJs, /function buildReportsResultMobileCardMarkup\(row, options = \{\}\) \{/);
+  assert.match(adminJs, /function buildReportsResultCardsMarkup\(rows, options = \{\}\) \{[\s\S]*reports-results-cards/);
   assert.match(adminJs, /function buildReportsResultTableMarkup\(tbodyId, rows, options = \{\}\) \{/);
   assert.match(adminJs, /const tableClasses = \["responsive-table", "reports-results-table"\];/);
   assert.match(adminJs, /if \(!includeTime\) \{[\s\S]*tableClasses\.push\("reports-results-table--without-time"\);[\s\S]*\}/);
   assert.match(adminJs, /const canViewTime = canCurrentAdminViewActivityTime\(\);/);
-  assert.match(adminJs, /buildReportsResultTableMarkup\(tbodyId, group\.rows, \{ includeTime: canViewTime \}\)/);
+  assert.match(adminJs, /function buildReportsResultGroupMarkup\(group, groupIndex, options = \{\}\) \{[\s\S]*const mobile = options\.mobile === true;[\s\S]*buildReportsResultCardsMarkup\(group\.rows, \{ includeTime \}\)[\s\S]*buildReportsResultTableMarkup\(`reportsGroupBody\$\{groupIndex\}`, group\.rows, \{ includeTime \}\);/);
+  assert.match(adminJs, /const mobile = isMobileAdminViewport\(\);/);
+  assert.match(adminJs, /body\.innerHTML = groups\.map\(\(group, groupIndex\) => buildReportsResultGroupMarkup\(group, groupIndex, \{[\s\S]*includeTime: canViewTime,[\s\S]*mobile,[\s\S]*\}\)\)\.join\(""\);/);
+  assert.match(adminJs, /if \(!mobile\) \{[\s\S]*applyResponsiveLabels\(`reportsGroupBody\$\{groupIndex\}`\);[\s\S]*\}/);
   assert.match(adminJs, /if \(focusPrimary && reportsSearchChaveInput\) \{\s*reportsSearchChaveInput\.focus\(\);\s*\}/);
   assert.match(adminJs, /if \(activeTab === "relatorios"\) \{\s*return;\s*\}/);
   assert.match(adminJs, /reportsSearchButton\.addEventListener\("click", \(\) => \{\s*submitReportsSearch\(\);\s*\}\);/);
@@ -78,5 +83,5 @@ test('admin reports styles keep tabs uniform and align the new report search lay
   assert.match(adminCss, /\.reports-results-table--without-time col\.reports-col-timezone \{[\s\S]*width:\s*22%;/);
   assert.doesNotMatch(adminCss, /\.reports-results-table--without-time col\.reports-col-time\b/);
   assert.match(adminCss, /\.reports-results-body \{[\s\S]*display:\s*grid;[\s\S]*gap:\s*16px;/);
-  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.tabs \{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[\s\S]*\.reports-search-grid \{[\s\S]*grid-template-columns:\s*1fr;[\s\S]*\.reports-results-header \{[\s\S]*flex-direction:\s*column;/);
+  assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.tabs \{[\s\S]*display:\s*flex;[\s\S]*overflow-x:\s*auto;[\s\S]*scroll-snap-type:\s*x proximity;[\s\S]*\.tabs button \{[\s\S]*min-width:\s*max-content;[\s\S]*border-radius:\s*999px;[\s\S]*white-space:\s*nowrap;[\s\S]*\.reports-search-grid \{[\s\S]*grid-template-columns:\s*1fr;[\s\S]*\.reports-results-header \{[\s\S]*flex-direction:\s*column;[\s\S]*align-items:\s*stretch;[\s\S]*\.reports-group-header \{[\s\S]*flex-direction:\s*column;[\s\S]*align-items:\s*flex-start;[\s\S]*\.reports-results-cards \{[\s\S]*gap:\s*10px;/);
 });

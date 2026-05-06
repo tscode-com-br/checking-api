@@ -317,9 +317,131 @@ def _validate_monitored_projects_against_catalog(
     return monitored_projects
 
 
-class HealthResponse(BaseModel):
-    status: str
+class HealthComponentResponse(BaseModel):
+    status: Literal["ok", "degraded", "failed", "disabled", "unknown"]
+    detail: str | None = None
+
+
+class HealthLivenessResponse(BaseModel):
+    status: Literal["ok"]
     app: str
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok", "unready"]
+    app: str
+    ready: bool = True
+    overall_status: Literal["ok", "degraded", "unready"] = "ok"
+    components: dict[str, HealthComponentResponse] = Field(default_factory=dict)
+
+
+class FormsQueueWorkerDiagnosticsResponse(BaseModel):
+    enabled: bool
+    running: bool
+    status: str | None = None
+    poll_interval_seconds: float
+    thread_name: str | None = None
+    process_id: int | None = None
+    started_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
+    heartbeat_age_seconds: int | None = None
+    stale: bool = False
+    last_loop_started_at: datetime | None = None
+    last_loop_completed_at: datetime | None = None
+    last_loop_processed_count: int = 0
+    consecutive_error_count: int = 0
+    current_backoff_seconds: float = 0
+    restart_count: int = 0
+    last_error: str | None = None
+
+
+class FormsQueueDiagnosticsResponse(BaseModel):
+    generated_at: datetime
+    backlog_count: int
+    pending_count: int
+    processing_count: int
+    success_count: int
+    failed_count: int
+    oldest_backlog_age_seconds: int | None = None
+    oldest_pending_age_seconds: int | None = None
+    oldest_processing_age_seconds: int | None = None
+    recent_average_processing_ms: int | None = None
+    recent_processed_sample_size: int = 0
+    worker: FormsQueueWorkerDiagnosticsResponse
+
+
+class DatabaseHotPathTelemetryResponse(BaseModel):
+    path: str
+    recent_query_count: int
+    recent_average_query_ms: int | None = None
+    recent_p95_query_ms: int | None = None
+    total_query_count: int
+
+
+class DatabasePoolDiagnosticsResponse(BaseModel):
+    dialect: str
+    driver: str
+    pool_class: str
+    status: str | None = None
+    configured_pool_size: int | None = None
+    configured_max_overflow: int | None = None
+    configured_pool_timeout_seconds: int | None = None
+    configured_pool_recycle_seconds: int | None = None
+    pool_pre_ping: bool = True
+    checked_in: int | None = None
+    checked_out: int | None = None
+    current_overflow: int | None = None
+    total_capacity: int | None = None
+    usage_ratio: float | None = None
+    saturation: str
+    checked_out_high_watermark: int
+    current_open_connections: int
+    open_connections_high_watermark: int
+    total_connect_events: int
+    total_close_events: int
+    total_checkout_events: int
+    total_checkin_events: int
+
+
+class DatabaseLatencyDiagnosticsResponse(BaseModel):
+    query_count_total: int
+    query_error_count_total: int
+    slow_query_count_total: int
+    query_time_ms_total: int
+    recent_query_sample_size: int
+    recent_average_query_ms: int | None = None
+    recent_p95_query_ms: int | None = None
+    hot_paths: list[DatabaseHotPathTelemetryResponse]
+
+
+class DatabaseServerConnectionDiagnosticsResponse(BaseModel):
+    source: str
+    database_connections_total: int | None = None
+    active_database_connections: int | None = None
+    waiting_database_connections: int | None = None
+    idle_in_transaction_connections: int | None = None
+    error: str | None = None
+
+
+class DatabaseRecommendedAlertThresholdsResponse(BaseModel):
+    pool_usage_warning_ratio: float
+    pool_usage_critical_ratio: float
+    recent_query_p95_warning_ms: int
+    recent_query_p95_critical_ms: int
+    slow_query_log_threshold_ms: int
+    postgres_active_connections_warning: int
+    postgres_active_connections_critical: int
+    postgres_waiting_connections_warning: int
+    postgres_waiting_connections_critical: int
+    postgres_idle_in_transaction_warning: int
+
+
+class DatabaseDiagnosticsResponse(BaseModel):
+    generated_at: datetime
+    pool: DatabasePoolDiagnosticsResponse
+    latency: DatabaseLatencyDiagnosticsResponse
+    server_connections: DatabaseServerConnectionDiagnosticsResponse
+    recommended_alert_thresholds: DatabaseRecommendedAlertThresholdsResponse
 
 
 class HeartbeatRequest(BaseModel):
@@ -440,6 +562,7 @@ class LocationRow(BaseModel):
 class AdminLocationsResponse(BaseModel):
     items: list[LocationRow]
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    mixed_zone_interval_minutes: int = Field(ge=1)
 
 
 class AdminProjectMinimumCheckoutDistanceRow(BaseModel):
@@ -595,6 +718,7 @@ class AdminLocationUpsert(BaseModel):
 
 class AdminLocationSettingsUpdate(BaseModel):
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    mixed_zone_interval_minutes: int | None = Field(default=None, ge=1)
 
 
 class AdminLoginRequest(BaseModel):
@@ -987,6 +1111,7 @@ class ProjectUpdate(BaseModel):
 
 class AdminLocationSettingsResponse(AdminActionResponse):
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    mixed_zone_interval_minutes: int = Field(ge=1)
 
 
 class UserRow(BaseModel):
@@ -1749,12 +1874,22 @@ class TransportAgentPlanningVehicle(BaseModel):
 class TransportAgentPlanningPartition(BaseModel):
     partition_key: str = Field(min_length=1, max_length=180)
     request_kind: Literal["regular", "weekend", "extra"]
+    project_id: int = Field(ge=1)
     project_name: str = Field(min_length=1, max_length=120)
     country_code: str = Field(min_length=2, max_length=2)
     country_name: str = Field(min_length=2, max_length=80)
     destination_project: ProjectRow
     requests: list[TransportAgentPlanningRequest] = Field(default_factory=list)
     candidate_vehicles: list[TransportAgentPlanningVehicle] = Field(default_factory=list)
+
+
+class TransportAgentProjectLlmRuntimeSnapshot(BaseModel):
+    project_id: int = Field(ge=1)
+    project_name: str = Field(min_length=1, max_length=120)
+    partition_keys: list[str] = Field(default_factory=list)
+    provider: str = Field(min_length=1, max_length=40)
+    model_name: str = Field(min_length=1, max_length=120)
+    reasoning_effort: str = Field(min_length=1, max_length=40)
 
 
 class TransportAgentPlanningInput(BaseModel):
@@ -1769,6 +1904,7 @@ class TransportAgentPlanningInput(BaseModel):
     requests_by_scope: dict[str, list[TransportAgentPlanningRequest]] = Field(default_factory=dict)
     vehicles_by_scope: dict[str, list[TransportAgentPlanningVehicle]] = Field(default_factory=dict)
     partitions: list[TransportAgentPlanningPartition] = Field(default_factory=list)
+    llm_runtime_projects: list[TransportAgentProjectLlmRuntimeSnapshot] = Field(default_factory=list)
     preflight_issues: list[TransportAIPreflightIssue] = Field(default_factory=list)
     total_requests: int = Field(ge=0)
     total_candidate_vehicles: int = Field(ge=0)
@@ -2589,19 +2725,32 @@ TransportAILlmProvider = Literal["openai", "deepseek"]
 
 
 class TransportAISettingsResponse(BaseModel):
+    project_id: int | None = Field(default=None, ge=1)
+    project_name: str | None = Field(default=None, min_length=1, max_length=120)
     provider: TransportAILlmProvider
     resolved_model: str = Field(min_length=1, max_length=120)
     reasoning_effort: str = Field(min_length=1, max_length=32)
     has_api_key: bool = False
     api_key_hint: str | None = Field(default=None, max_length=32)
 
-    @field_validator("resolved_model", "reasoning_effort", "api_key_hint", mode="before")
+    @field_validator("project_name", mode="before")
+    @classmethod
+    def validate_transport_ai_settings_project_name(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O projeto", max_length=120)
+
+    @field_validator("resolved_model", "reasoning_effort", mode="before")
     @classmethod
     def validate_transport_ai_settings_response_text(cls, value: object) -> str | None:
         return _normalize_optional_compact_text(value, "O texto", max_length=120)
 
+    @field_validator("api_key_hint", mode="before")
+    @classmethod
+    def validate_transport_ai_settings_api_key_hint(cls, value: object) -> str | None:
+        return _normalize_optional_compact_text(value, "O texto", max_length=32)
+
 
 class TransportAISettingsUpdateRequest(BaseModel):
+    project_id: int = Field(ge=1)
     provider: TransportAILlmProvider
     api_key: str | None = Field(default=None, max_length=4096)
 
@@ -3282,6 +3431,7 @@ class WebCheckHistoryResponse(BaseModel):
 class WebLocationOptionsResponse(BaseModel):
     items: list[str]
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
+    mixed_zone_interval_minutes: int = Field(ge=1)
 
 
 class WebProjectUpdateRequest(BaseModel):

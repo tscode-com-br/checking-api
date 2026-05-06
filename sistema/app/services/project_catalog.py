@@ -234,7 +234,7 @@ def list_projects(db: Session) -> list[Project]:
 
 
 def list_project_names(db: Session) -> list[str]:
-    return [row.name for row in list_projects(db)]
+    return db.execute(select(Project.name).order_by(Project.name, Project.id)).scalars().all()
 
 
 def get_project_by_name(db: Session, project_name: str) -> Project | None:

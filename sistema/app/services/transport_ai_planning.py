@@ -1272,7 +1272,10 @@ def _build_transport_agent_vehicle_scope_index(
 def _build_transport_agent_planning_input_hash(
     planning_input: TransportAgentPlanningInput,
 ) -> str:
-    payload = planning_input.model_dump(mode="json", exclude={"planning_input_hash"})
+    payload = planning_input.model_dump(
+        mode="json",
+        exclude={"planning_input_hash", "llm_runtime_projects"},
+    )
     return hashlib.sha256(_dump_transport_ai_planning_json(payload).encode("utf-8")).hexdigest()
 
 
@@ -1341,6 +1344,7 @@ def build_transport_agent_planning_input(
         TransportAgentPlanningPartition(
             partition_key=f"{request_scope}:{project_name}:{country_code}",
             request_kind=request_scope,
+            project_id=referenced_project_rows[project_name].id,
             project_name=project_name,
             country_code=country_code,
             country_name=referenced_project_rows[project_name].country_name,

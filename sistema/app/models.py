@@ -309,6 +309,7 @@ class MobileAppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     location_accuracy_threshold_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    mixed_zone_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     transport_work_to_home_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:45")
     transport_last_update_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:00")
     transport_default_car_seats: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
@@ -341,6 +342,35 @@ class TransportAILlmSettings(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False)
+    api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_key_last4: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    updated_by_admin_id: Mapped[int] = mapped_column(ForeignKey("admin_users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TransportAIProjectLlmSettings(Base):
+    __tablename__ = "transport_ai_project_llm_settings"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            name="uq_transport_ai_project_llm_settings_project_id",
+        ),
+        CheckConstraint(
+            "provider IN ('openai', 'deepseek')",
+            name="ck_transport_ai_project_llm_settings_provider_allowed",
+        ),
+        CheckConstraint(
+            "reasoning_effort IN ('high')",
+            name="ck_transport_ai_project_llm_settings_reasoning_effort_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(16), nullable=False)
     model_name: Mapped[str] = mapped_column(String(120), nullable=False)
     reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -45,6 +45,8 @@ def _build_transport_ai_settings_message(
 ) -> str:
     message = (
         "Transport AI settings updated. "
+        f"project_id={payload.project_id or '-'}; "
+        f"project={payload.project_name or '-'}; "
         f"provider={payload.provider}; "
         f"model={payload.resolved_model}; "
         f"reasoning={payload.reasoning_effort}; "
@@ -64,6 +66,8 @@ def _build_transport_ai_settings_details(
         {
             "actor_admin_user_id": actor_admin_user.id,
             "actor_admin_key": actor_admin_user.chave,
+            "project_id": payload.project_id,
+            "project_name": payload.project_name,
             "provider": payload.provider,
             "resolved_model": payload.resolved_model,
             "reasoning_effort": payload.reasoning_effort,
@@ -79,14 +83,18 @@ def _build_transport_ai_settings_details(
 
 def _build_transport_ai_settings_failure_message(
     *,
+    project_id: int | None,
+    project_name: str | None,
     provider: str | None,
     api_key: str | None,
     response_detail: str,
 ) -> str:
     message = (
         "Transport AI settings update failed. "
+        f"project_id={project_id or '-'}; "
+        f"project={project_name or '-'}; "
         f"provider={str(provider or '').strip().lower() or '-'}; "
-        f"api_key={mask_transport_ai_api_key(api_key=api_key) or '-'}; "
+        f"api_key_hint={mask_transport_ai_api_key(api_key=api_key) or '-'}; "
         f"detail={response_detail}"
     )
     return sanitize_transport_ai_string(
@@ -98,6 +106,8 @@ def _build_transport_ai_settings_failure_message(
 def _build_transport_ai_settings_failure_details(
     *,
     actor_admin_user: AdminUser,
+    project_id: int | None,
+    project_name: str | None,
     provider: str | None,
     api_key: str | None,
     previous_provider: str | None,
@@ -109,9 +119,11 @@ def _build_transport_ai_settings_failure_details(
         {
             "actor_admin_user_id": actor_admin_user.id,
             "actor_admin_key": actor_admin_user.chave,
+            "project_id": project_id,
+            "project_name": project_name,
             "requested_provider": str(provider or "").strip().lower() or None,
             "submitted_has_api_key": bool(str(api_key or "").strip()),
-            "submitted_api_key_hint": mask_transport_ai_api_key(api_key=api_key),
+            "api_key_hint": mask_transport_ai_api_key(api_key=api_key),
             "previous_provider": previous_provider,
             "failure_detail": failure_detail,
             "response_detail": response_detail,
@@ -254,6 +266,8 @@ def record_transport_ai_settings_failure(
     db: Session,
     *,
     actor_admin_user: AdminUser,
+    project_id: int | None,
+    project_name: str | None,
     provider: str | None,
     api_key: str | None,
     previous_provider: str | None,
@@ -263,12 +277,16 @@ def record_transport_ai_settings_failure(
     http_status: int | None = None,
 ) -> None:
     message = _build_transport_ai_settings_failure_message(
+        project_id=project_id,
+        project_name=project_name,
         provider=provider,
         api_key=api_key,
         response_detail=response_detail,
     )
     details = _build_transport_ai_settings_failure_details(
         actor_admin_user=actor_admin_user,
+        project_id=project_id,
+        project_name=project_name,
         provider=provider,
         api_key=api_key,
         previous_provider=previous_provider,

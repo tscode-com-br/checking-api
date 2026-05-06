@@ -369,7 +369,6 @@ function createManualOverrideUiHarness() {
     'let transportAddressSaveInProgress = false;',
     'let transportRequestInProgress = false;',
     'let transportCancelInProgress = false;',
-    'let transportAcknowledgeInProgress = false;',
     'let submitInProgress = false;',
     'let passwordRegisterInProgress = false;',
     'let passwordChangeInProgress = false;',
@@ -395,7 +394,7 @@ function createManualOverrideUiHarness() {
     'const passwordDialogControls = [];',
     'const registrationDialogControls = [];',
     'const transportScreenControls = [];',
-    'const transportUiState = { acknowledgementChecked: false };',
+    'const transportUiState = {};',
     'const transportButton = null;',
     'const transportScreen = null;',
     'const passwordDialog = null;',
@@ -666,6 +665,364 @@ function createProjectSelectionHarness() {
   };
 }
 
+function createLocationCatalogSettingsHarness() {
+  const context = {
+    Array,
+    Number,
+    Math,
+    Promise,
+    Set,
+    JSON,
+    __calls: {
+      fetch: [],
+      syncManualLocationControl: 0,
+    },
+    __applicationUnlocked: true,
+    __payload: {
+      items: [],
+      location_accuracy_threshold_meters: 30,
+      mixed_zone_interval_minutes: 20,
+    },
+    __fetchFailure: false,
+    isApplicationUnlocked: () => context.__applicationUnlocked,
+    fetch: async (url, options) => {
+      context.__calls.fetch.push({ url, options });
+      if (context.__fetchFailure) {
+        throw new Error('network failure');
+      }
+      return {
+        ok: true,
+        json: async () => context.__payload,
+      };
+    },
+    buildProtectedRequestError: () => new Error('request failed'),
+    syncManualLocationControl: () => {
+      context.__calls.syncManualLocationControl += 1;
+    },
+  };
+
+  const moduleSource = [
+    'let availableLocations = [];',
+    'let locationAccuracyThresholdMeters = null;',
+    'let mixedZoneIntervalMinutes = null;',
+    'const locationsEndpoint = "/api/web/check/locations";',
+    extractConstSource(checkScript, 'DEFAULT_MIXED_ZONE_INTERVAL_MINUTES'),
+    extractFunctionSource(checkScript, 'setLocationAccuracyThresholdMeters'),
+    extractFunctionSource(checkScript, 'setMixedZoneIntervalMinutes'),
+    `async ${extractFunctionSource(checkScript, 'loadManualLocations')}`,
+    `globalThis.__locationCatalogSettingsTestExports = {
+      async loadManualLocations() {
+        return loadManualLocations();
+      },
+      setApplicationUnlocked(value) {
+        globalThis.__applicationUnlocked = Boolean(value);
+      },
+      setPayload(value) {
+        globalThis.__payload = value;
+      },
+      setFetchFailure(value) {
+        globalThis.__fetchFailure = Boolean(value);
+      },
+      getSnapshot() {
+        return {
+          availableLocations: availableLocations.slice(),
+          locationAccuracyThresholdMeters,
+          mixedZoneIntervalMinutes,
+          fetchCalls: globalThis.__calls.fetch.slice(),
+          syncManualLocationControl: globalThis.__calls.syncManualLocationControl,
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-location-catalog-settings.vm.js' });
+  return {
+    helpers: context.__locationCatalogSettingsTestExports,
+    context,
+  };
+}
+
+function createAuthenticatedApplicationHarness() {
+  const context = {
+    Promise,
+    Boolean,
+    String,
+    __calls: [],
+    chaveInput: { value: '' },
+    sanitizeChave: (value) => String(value || '').trim().toUpperCase(),
+    isApplicationUnlocked: () => true,
+    loadProjectCatalog: async (options) => {
+      context.__calls.push({ step: 'loadProjectCatalog', options });
+    },
+    restorePersistedUserSettingsForChave: (chave) => {
+      context.__calls.push({ step: 'restorePersistedUserSettingsForChave', chave });
+    },
+    loadManualLocations: async () => {
+      context.__calls.push({ step: 'loadManualLocations' });
+    },
+    setStatus: (message, tone) => {
+      context.__calls.push({ step: 'setStatus', message, tone });
+    },
+    runLifecycleUpdateSequence: async (options) => {
+      context.__calls.push({ step: 'runLifecycleUpdateSequence', options });
+      return true;
+    },
+  };
+
+  const moduleSource = [
+    'let authenticatedApplicationLoadPromise = null;',
+    'let authenticatedApplicationLoadFingerprint = "";',
+    'let authenticatedApplicationReadyFingerprint = "";',
+    'let lastVerifiedPassword = "persisted-secret";',
+    'const passwordInput = { value: "persisted-secret" };',
+    extractFunctionSource(checkScript, 'buildPasswordVerificationFingerprint'),
+    `async ${extractFunctionSource(checkScript, 'loadAuthenticatedApplication')}`,
+    `globalThis.__authenticatedApplicationTestExports = {
+      async loadAuthenticatedApplication(chave, options) {
+        return loadAuthenticatedApplication(chave, options);
+      },
+      getSnapshot() {
+        return globalThis.__calls.slice();
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-authenticated-application.vm.js' });
+  return {
+    helpers: context.__authenticatedApplicationTestExports,
+    context,
+  };
+}
+
+function createPasswordInputAuthenticationHarness() {
+  const context = {
+    Boolean,
+    Promise,
+    String,
+    __calls: {
+      applyAuthenticationLockedState: [],
+      logoutWebSession: [],
+      schedulePasswordVerification: [],
+      clearPasswordVerificationTimer: 0,
+      setAuthenticationPrompt: [],
+    },
+    __authState: {
+      found: true,
+      hasPassword: true,
+      authenticated: false,
+      passwordVerified: false,
+      statusResolved: true,
+    },
+    __chaveInput: { value: 'AB12' },
+    __passwordInput: { value: '' },
+    getActiveChave: () => 'AB12',
+    isApplicationUnlocked: () => false,
+    applyAuthenticationLockedState: (options) => {
+      context.__calls.applyAuthenticationLockedState.push(options);
+    },
+    logoutWebSession: (options) => {
+      context.__calls.logoutWebSession.push(options);
+      return Promise.resolve();
+    },
+    schedulePasswordVerification: (options) => {
+      context.__calls.schedulePasswordVerification.push(options);
+    },
+    clearPasswordVerificationTimer: () => {
+      context.__calls.clearPasswordVerificationTimer += 1;
+    },
+    setAuthenticationPrompt: (message) => {
+      context.__calls.setAuthenticationPrompt.push(message);
+    },
+    syncFormControlStates: () => {},
+    clientState: {
+      isPasswordLengthValid(password) {
+        const rawPassword = String(password ?? '');
+        return rawPassword.length >= 3 && rawPassword.length <= 10 && rawPassword.trim().length > 0;
+      },
+    },
+  };
+
+  const moduleSource = [
+    'const authState = globalThis.__authState;',
+    'const chaveInput = globalThis.__chaveInput;',
+    'const passwordInput = globalThis.__passwordInput;',
+    'let lastObservedPasswordFieldValue = "";',
+    'let lastVerifiedPassword = "";',
+    extractFunctionSource(checkScript, 'syncPasswordInputState'),
+    `globalThis.__passwordInputAuthenticationTestExports = {
+      syncPasswordInputState(options) {
+        return syncPasswordInputState(options);
+      },
+      setPasswordValue(value) {
+        passwordInput.value = value;
+      },
+      resetCalls() {
+        globalThis.__calls.applyAuthenticationLockedState = [];
+        globalThis.__calls.logoutWebSession = [];
+        globalThis.__calls.schedulePasswordVerification = [];
+        globalThis.__calls.clearPasswordVerificationTimer = 0;
+        globalThis.__calls.setAuthenticationPrompt = [];
+      },
+      getSnapshot() {
+        return {
+          schedulePasswordVerification: globalThis.__calls.schedulePasswordVerification.slice(),
+          clearPasswordVerificationTimer: globalThis.__calls.clearPasswordVerificationTimer,
+          setAuthenticationPrompt: globalThis.__calls.setAuthenticationPrompt.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-password-input-authentication.vm.js' });
+  return {
+    helpers: context.__passwordInputAuthenticationTestExports,
+    context,
+  };
+}
+
+function createAuthenticationStatusHarness() {
+  const context = {
+    AbortController,
+    Promise,
+    Boolean,
+    String,
+    __fetchPayload: { found: true, has_password: true },
+    __persistedPasswordMap: {},
+    __calls: {
+      applyAuthenticationStatusPayload: [],
+      schedulePasswordVerification: [],
+      schedulePasswordAutofillSync: 0,
+      persistPasswordForChave: [],
+      clearTypedPasswordAuthentication: 0,
+      applyAuthenticationLockedState: [],
+    },
+    __authState: {
+      chave: '',
+      found: false,
+      hasPassword: false,
+      authenticated: false,
+      passwordVerified: false,
+      statusResolved: false,
+      statusLoading: false,
+      statusErrored: false,
+    },
+    __passwordInput: { value: '' },
+    sanitizeChave: (value) => String(value || '').trim().toUpperCase(),
+    fetchAuthenticationStatus: async () => context.__fetchPayload,
+    applyAuthenticationStatusPayload: (payload) => {
+      context.__calls.applyAuthenticationStatusPayload.push(payload);
+      context.__authState.hasPassword = Boolean(payload && payload.has_password);
+    },
+    schedulePasswordVerification: (options) => {
+      context.__calls.schedulePasswordVerification.push(options);
+    },
+    schedulePasswordAutofillSync: () => {
+      context.__calls.schedulePasswordAutofillSync += 1;
+    },
+    persistPasswordForChave: (chave, password) => {
+      context.__calls.persistPasswordForChave.push({ chave, password });
+    },
+    clearTypedPasswordAuthentication: () => {
+      context.__calls.clearTypedPasswordAuthentication += 1;
+      context.__authState.authenticated = false;
+      context.__authState.passwordVerified = false;
+    },
+    syncFormControlStates: () => {},
+    clearProtectedClientState: () => {},
+    setAuthenticationPrompt: () => {},
+    applyAuthenticationLockedState: (options) => {
+      context.__calls.applyAuthenticationLockedState.push(options);
+    },
+    clientState: {
+      isPasswordLengthValid(password) {
+        const rawPassword = String(password ?? '');
+        return rawPassword.length >= 3 && rawPassword.length <= 10 && rawPassword.trim().length > 0;
+      },
+      resolvePersistedPassword(passwordMap, chave) {
+        const normalizedChave = String(chave || '').trim().toUpperCase();
+        return passwordMap[normalizedChave] || '';
+      },
+    },
+    readPersistedUserPasswordMap: () => context.__persistedPasswordMap,
+  };
+
+  const moduleSource = [
+    'let authStatusRequestToken = 0;',
+    'let authStatusAbortController = null;',
+    'const authState = globalThis.__authState;',
+    'const passwordInput = globalThis.__passwordInput;',
+    extractFunctionSource(checkScript, 'resolvePersistedPasswordForChave'),
+    `async ${extractFunctionSource(checkScript, 'refreshAuthenticationStatus')}`,
+    `globalThis.__authenticationStatusTestExports = {
+      async refreshAuthenticationStatus(chave, options) {
+        return refreshAuthenticationStatus(chave, options);
+      },
+      setPasswordValue(value) {
+        passwordInput.value = value;
+      },
+      setPersistedPasswordMap(value) {
+        globalThis.__persistedPasswordMap = value;
+      },
+      setFetchPayload(value) {
+        globalThis.__fetchPayload = value;
+      },
+      resetCalls() {
+        globalThis.__calls.applyAuthenticationStatusPayload = [];
+        globalThis.__calls.schedulePasswordVerification = [];
+        globalThis.__calls.schedulePasswordAutofillSync = 0;
+        globalThis.__calls.persistPasswordForChave = [];
+        globalThis.__calls.clearTypedPasswordAuthentication = 0;
+        globalThis.__calls.applyAuthenticationLockedState = [];
+      },
+      getSnapshot() {
+        return {
+          schedulePasswordVerification: globalThis.__calls.schedulePasswordVerification.slice(),
+          schedulePasswordAutofillSync: globalThis.__calls.schedulePasswordAutofillSync,
+          clearTypedPasswordAuthentication: globalThis.__calls.clearTypedPasswordAuthentication,
+          applyAuthenticationLockedState: globalThis.__calls.applyAuthenticationLockedState.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-authentication-status.vm.js' });
+  return {
+    helpers: context.__authenticationStatusTestExports,
+    context,
+  };
+}
+
+function createAutomaticLocationDecisionHarness() {
+  const context = {
+    __calls: [],
+    automaticActivities: {
+      shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, settings) {
+        context.__calls.push({ locationPayload, remoteState, settings });
+        return true;
+      },
+    },
+  };
+
+  const moduleSource = [
+    'let mixedZoneIntervalMinutes = 35;',
+    extractFunctionSource(checkScript, 'shouldAttemptAutomaticLocationEvent'),
+    `globalThis.__automaticLocationDecisionTestExports = {
+      shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, options) {
+        return shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, options);
+      },
+      getSnapshot() {
+        return globalThis.__calls.slice();
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-automatic-location-decision.vm.js' });
+  return {
+    helpers: context.__automaticLocationDecisionTestExports,
+    context,
+  };
+}
+
 function createManualRefreshSequenceHarness(overrides = {}) {
   const context = {
     Boolean,
@@ -719,20 +1076,29 @@ function createManualRefreshSequenceHarness(overrides = {}) {
 }
 
 function createManualRefreshAutomaticActivityHarness(overrides = {}) {
+  const shouldAttemptAutomaticLocationEventImpl = overrides.shouldAttemptAutomaticLocationEvent
+    || ((locationPayload, remoteState, settings) => (
+      checkAutomaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, settings)
+    ));
   const context = {
     Boolean,
     Promise,
     automaticCheckoutLocation: checkAutomaticActivities.AUTOMATIC_CHECKOUT_LOCATION,
+    automaticActivities: checkAutomaticActivities,
     gpsLocationPermissionGranted: overrides.gpsLocationPermissionGranted !== undefined
       ? Boolean(overrides.gpsLocationPermissionGranted)
       : true,
     latestHistoryState: null,
+    mixedZoneIntervalMinutes: overrides.mixedZoneIntervalMinutes !== undefined
+      ? overrides.mixedZoneIntervalMinutes
+      : 35,
     chaveInput: { value: overrides.chave || 'A123' },
     __calls: {
       runWithLockedUserInteraction: 0,
       resolveCurrentLocation: [],
       fetchWebState: [],
       applyHistoryState: [],
+      shouldAttemptAutomaticLocationEvent: [],
       submitAutomaticActivity: [],
     },
     __locationPayload: null,
@@ -761,11 +1127,10 @@ function createManualRefreshAutomaticActivityHarness(overrides = {}) {
     applyHistoryState: overrides.applyHistoryState || ((remoteState) => {
       context.__calls.applyHistoryState.push(remoteState);
     }),
-    shouldAttemptAutomaticLocationEvent:
-      overrides.shouldAttemptAutomaticLocationEvent
-      || ((locationPayload, remoteState) => (
-        checkAutomaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState)
-      )),
+    shouldAttemptAutomaticLocationEvent: (locationPayload, remoteState, settings) => {
+      context.__calls.shouldAttemptAutomaticLocationEvent.push({ locationPayload, remoteState, settings });
+      return shouldAttemptAutomaticLocationEventImpl(locationPayload, remoteState, settings);
+    },
     shouldAttemptAutomaticOutOfRangeCheckout:
       overrides.shouldAttemptAutomaticOutOfRangeCheckout
       || ((locationPayload, remoteState) => (
@@ -794,9 +1159,13 @@ function createManualRefreshAutomaticActivityHarness(overrides = {}) {
   };
 
   const moduleSource = [
+    extractFunctionSource(checkScript, 'resolveAutomaticLocationAction'),
     `async ${extractFunctionSource(checkScript, 'runAutomaticActivitiesIfNeeded')}`,
     `async ${extractFunctionSource(checkScript, 'runManualLocationRefreshSequence')}`,
     `globalThis.__manualRefreshAutomaticActivityTestExports = {
+      async runAutomaticActivitiesIfNeeded(locationPayload, options) {
+        return runAutomaticActivitiesIfNeeded(locationPayload, options);
+      },
       async runManualLocationRefreshSequence() {
         return runManualLocationRefreshSequence();
       },
@@ -812,6 +1181,7 @@ function createManualRefreshAutomaticActivityHarness(overrides = {}) {
           resolveCurrentLocation: globalThis.__calls.resolveCurrentLocation.slice(),
           fetchWebState: globalThis.__calls.fetchWebState.slice(),
           applyHistoryState: globalThis.__calls.applyHistoryState.slice(),
+          shouldAttemptAutomaticLocationEvent: globalThis.__calls.shouldAttemptAutomaticLocationEvent.slice(),
           submitAutomaticActivity: globalThis.__calls.submitAutomaticActivity.slice(),
           latestHistoryState: globalThis.latestHistoryState,
         };
@@ -822,6 +1192,307 @@ function createManualRefreshAutomaticActivityHarness(overrides = {}) {
   vm.runInNewContext(moduleSource, context, { filename: 'check-manual-refresh-automatic-activity.vm.js' });
   return {
     helpers: context.__manualRefreshAutomaticActivityTestExports,
+    context,
+  };
+}
+
+function createLifecycleAutomaticActivityHarness(overrides = {}) {
+  const shouldAttemptAutomaticLocationEventImpl = overrides.shouldAttemptAutomaticLocationEvent
+    || ((locationPayload, remoteState, settings) => (
+      checkAutomaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, settings)
+    ));
+  const context = {
+    Boolean,
+    Promise,
+    Date: overrides.Date || {
+      now: () => 10_000,
+    },
+    automaticCheckoutLocation: checkAutomaticActivities.AUTOMATIC_CHECKOUT_LOCATION,
+    gpsLocationPermissionGranted: overrides.gpsLocationPermissionGranted !== undefined
+      ? Boolean(overrides.gpsLocationPermissionGranted)
+      : true,
+    latestHistoryState: null,
+    mixedZoneIntervalMinutes: overrides.mixedZoneIntervalMinutes !== undefined
+      ? overrides.mixedZoneIntervalMinutes
+      : 35,
+    chaveInput: { value: overrides.chave || 'A123' },
+    lifecycleTriggerCooldownMs: overrides.lifecycleTriggerCooldownMs !== undefined
+      ? overrides.lifecycleTriggerCooldownMs
+      : 5000,
+    lastLifecycleTriggerAt: overrides.lastLifecycleTriggerAt !== undefined
+      ? overrides.lastLifecycleTriggerAt
+      : 0,
+    lifecycleRefreshInProgress: false,
+    __locationPayload: null,
+    __remoteState: overrides.remoteState || {
+      current_action: 'checkout',
+      current_local: 'Zona de CheckOut',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+    __calls: {
+      refreshHistory: [],
+      updateLocationForLifecycleSequence: [],
+      fetchWebState: [],
+      applyHistoryState: [],
+      shouldAttemptAutomaticLocationEvent: [],
+      setSequenceStatus: [],
+      restorePersistedUserSettingsForChave: [],
+      setNotificationMessage: [],
+      setStatus: [],
+      submitAutomaticActivity: [],
+    },
+    isUserInteractionLocked: overrides.isUserInteractionLocked || (() => false),
+    sanitizeChave: overrides.sanitizeChave || ((value) => String(value || '').trim().toUpperCase()),
+    isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
+    refreshHistory: overrides.refreshHistory || (async (chave, options) => {
+      context.__calls.refreshHistory.push({ chave, options });
+      return context.__remoteState;
+    }),
+    updateLocationForLifecycleSequence: overrides.updateLocationForLifecycleSequence || (async (options) => {
+      context.__calls.updateLocationForLifecycleSequence.push(options);
+      return context.__locationPayload;
+    }),
+    isAutomaticActivitiesEnabled: overrides.isAutomaticActivitiesEnabled || (() => true),
+    fetchWebState: overrides.fetchWebState || (async (chave) => {
+      context.__calls.fetchWebState.push(chave);
+      return context.__remoteState;
+    }),
+    applyHistoryState: overrides.applyHistoryState || ((remoteState) => {
+      context.__calls.applyHistoryState.push(remoteState);
+    }),
+    shouldAttemptAutomaticLocationEvent: (locationPayload, remoteState, settings) => {
+      context.__calls.shouldAttemptAutomaticLocationEvent.push({ locationPayload, remoteState, settings });
+      return shouldAttemptAutomaticLocationEventImpl(locationPayload, remoteState, settings);
+    },
+    shouldAttemptAutomaticOutOfRangeCheckout:
+      overrides.shouldAttemptAutomaticOutOfRangeCheckout || (() => false),
+    shouldAttemptAutomaticNearbyWorkplaceCheckIn:
+      overrides.shouldAttemptAutomaticNearbyWorkplaceCheckIn || (() => false),
+    resolveAutomaticCheckInLocation:
+      overrides.resolveAutomaticCheckInLocation
+      || ((locationPayload) => checkAutomaticActivities.resolveAutomaticCheckInLocation(locationPayload)),
+    isCheckoutZoneLocationName:
+      overrides.isCheckoutZoneLocationName
+      || ((value) => checkAutomaticActivities.isCheckoutZoneLocationName(value)),
+    submitAutomaticActivity: overrides.submitAutomaticActivity || (async ({ action, local, suppressStatus }) => {
+      context.__calls.submitAutomaticActivity.push({ action, local, suppressStatus });
+      return {
+        state: {
+          current_action: action,
+          current_local: local,
+        },
+      };
+    }),
+    setSequenceStatus: (message) => {
+      context.__calls.setSequenceStatus.push(message);
+    },
+    restorePersistedUserSettingsForChave: (chave) => {
+      context.__calls.restorePersistedUserSettingsForChave.push(chave);
+    },
+    setNotificationMessage: (channel, message, tone) => {
+      context.__calls.setNotificationMessage.push({ channel, message, tone });
+    },
+    setStatus: (message, tone) => {
+      context.__calls.setStatus.push({ message, tone });
+    },
+  };
+
+  const moduleSource = [
+    'const lifecycleDataReuseWindowMs = 5000;',
+    extractFunctionSource(checkScript, 'resolveAutomaticLocationAction'),
+    `async ${extractFunctionSource(checkScript, 'runAutomaticActivitiesIfNeeded')}`,
+    `async ${extractFunctionSource(checkScript, 'runLifecycleUpdateSequence')}`,
+    `globalThis.__lifecycleAutomaticActivityTestExports = {
+      async runLifecycleUpdateSequence(options) {
+        return runLifecycleUpdateSequence(options);
+      },
+      setLocationPayload(value) {
+        globalThis.__locationPayload = value;
+      },
+      getSnapshot() {
+        return {
+          refreshHistory: globalThis.__calls.refreshHistory.slice(),
+          updateLocationForLifecycleSequence: globalThis.__calls.updateLocationForLifecycleSequence.slice(),
+          fetchWebState: globalThis.__calls.fetchWebState.slice(),
+          applyHistoryState: globalThis.__calls.applyHistoryState.slice(),
+          shouldAttemptAutomaticLocationEvent: globalThis.__calls.shouldAttemptAutomaticLocationEvent.slice(),
+          setSequenceStatus: globalThis.__calls.setSequenceStatus.slice(),
+          restorePersistedUserSettingsForChave: globalThis.__calls.restorePersistedUserSettingsForChave.slice(),
+          setNotificationMessage: globalThis.__calls.setNotificationMessage.slice(),
+          setStatus: globalThis.__calls.setStatus.slice(),
+          submitAutomaticActivity: globalThis.__calls.submitAutomaticActivity.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-lifecycle-automatic-activity.vm.js' });
+  return {
+    helpers: context.__lifecycleAutomaticActivityTestExports,
+    context,
+  };
+}
+
+function createHistoryRefreshHarness(overrides = {}) {
+  let currentNow = overrides.now !== undefined ? overrides.now : 10_000;
+  const context = {
+    AbortController,
+    Promise,
+    Boolean,
+    Date: {
+      now: () => currentNow,
+    },
+    __payload: overrides.payload || {
+      found: true,
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+      projeto: 'BASE',
+    },
+    __calls: {
+      fetch: [],
+      setHistoryMessage: [],
+      applyHistoryState: [],
+      resetHistory: [],
+    },
+    sanitizeChave: overrides.sanitizeChave || ((value) => String(value || '').trim().toUpperCase()),
+    isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
+    buildProtectedRequestError: overrides.buildProtectedRequestError || (() => new Error('request failed')),
+    fetch: overrides.fetch || (async (url, options) => {
+      context.__calls.fetch.push({ url, options });
+      return {
+        ok: true,
+        json: async () => context.__payload,
+      };
+    }),
+    setHistoryMessage: (message, tone) => {
+      context.__calls.setHistoryMessage.push({ message, tone });
+    },
+  };
+
+  const moduleSource = [
+    'const stateEndpoint = "/api/web/check/state";',
+    'let latestHistoryState = null;',
+    'let historyRequestToken = 0;',
+    'let historyAbortController = null;',
+    'let historyRequestPromise = null;',
+    'let historyRequestPromiseChave = "";',
+    'let lastHistoryStateAppliedAt = 0;',
+    'let lastHistoryStateAppliedChave = "";',
+    'function getActiveChave() { return "A123"; }',
+    `function applyHistoryState(state) {
+      latestHistoryState = state;
+      if (state) {
+        lastHistoryStateAppliedAt = Date.now();
+        lastHistoryStateAppliedChave = getActiveChave();
+      } else {
+        lastHistoryStateAppliedAt = 0;
+        lastHistoryStateAppliedChave = '';
+      }
+      globalThis.__calls.applyHistoryState.push(state);
+    }`,
+    `function resetHistory(message) {
+      applyHistoryState(null);
+      globalThis.__calls.resetHistory.push(message || null);
+      if (message) {
+        setHistoryMessage(message);
+      }
+    }`,
+    extractFunctionSource(checkScript, 'readRecentHistoryState'),
+    `async ${extractFunctionSource(checkScript, 'refreshHistory')}`,
+    `globalThis.__historyRefreshTestExports = {
+      async refreshHistory(chave, options) {
+        return refreshHistory(chave, options);
+      },
+      advanceTime(ms) {
+        globalThis.__advanceTime(ms);
+      },
+      getSnapshot() {
+        return {
+          fetch: globalThis.__calls.fetch.slice(),
+          setHistoryMessage: globalThis.__calls.setHistoryMessage.slice(),
+          applyHistoryState: globalThis.__calls.applyHistoryState.slice(),
+          resetHistory: globalThis.__calls.resetHistory.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  context.__advanceTime = (ms) => {
+    currentNow += Number(ms) || 0;
+  };
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-history-refresh.vm.js' });
+  return {
+    helpers: context.__historyRefreshTestExports,
+    context,
+  };
+}
+
+function createSubmitGuardLocationHarness(overrides = {}) {
+  let currentNow = overrides.now !== undefined ? overrides.now : 10_000;
+  const context = {
+    Promise,
+    Boolean,
+    Date: {
+      now: () => currentNow,
+    },
+    __calls: {
+      queryLocationPermissionState: 0,
+      captureAndResolveLocation: [],
+    },
+    isApplicationUnlocked: overrides.isApplicationUnlocked || (() => true),
+    getActiveChave: overrides.getActiveChave || (() => 'A123'),
+    sanitizeChave: overrides.sanitizeChave || ((value) => String(value || '').trim().toUpperCase()),
+    queryLocationPermissionState: overrides.queryLocationPermissionState || (async () => {
+      context.__calls.queryLocationPermissionState += 1;
+      return 'granted';
+    }),
+    readStorageFlag: overrides.readStorageFlag || (() => true),
+    clientState: {
+      shouldAttemptSilentLocationLookup: overrides.shouldAttemptSilentLocationLookup || (() => true),
+    },
+    captureAndResolveLocation: overrides.captureAndResolveLocation || (async (options) => {
+      context.__calls.captureAndResolveLocation.push(options);
+      return { status: 'matched', resolved_local: 'Portaria' };
+    }),
+  };
+
+  const moduleSource = [
+    'const lifecycleDataReuseWindowMs = 5000;',
+    'const locationPermissionGrantedKey = "checking.web.user.location.permission-granted";',
+    'let locationRequestPromise = null;',
+    'let recentLocationResolutionPayload = null;',
+    'let recentLocationResolutionAt = 0;',
+    'let recentLocationResolutionChave = "";',
+    extractFunctionSource(checkScript, 'readRecentLocationResolution'),
+    `async ${extractFunctionSource(checkScript, 'ensureLocationReadyForSubmit')}`,
+    `globalThis.__submitGuardLocationTestExports = {
+      async ensureLocationReadyForSubmit() {
+        return ensureLocationReadyForSubmit();
+      },
+      setRecentLocationResolution(payload, ageMs) {
+        recentLocationResolutionPayload = payload;
+        recentLocationResolutionAt = Date.now() - (Number(ageMs) || 0);
+        recentLocationResolutionChave = 'A123';
+      },
+      clearRecentLocationResolution() {
+        recentLocationResolutionPayload = null;
+        recentLocationResolutionAt = 0;
+        recentLocationResolutionChave = '';
+      },
+      getSnapshot() {
+        return {
+          queryLocationPermissionState: globalThis.__calls.queryLocationPermissionState,
+          captureAndResolveLocation: globalThis.__calls.captureAndResolveLocation.slice(),
+        };
+      },
+    };`,
+  ].join('\n\n');
+
+  vm.runInNewContext(moduleSource, context, { filename: 'check-submit-guard-location.vm.js' });
+  return {
+    helpers: context.__submitGuardLocationTestExports,
     context,
   };
 }
@@ -1066,6 +1737,410 @@ test('check controller reloads project locations during accuracy_too_low even wh
   assert.equal(snapshot.loadManualLocations, 1);
   assert.equal(snapshot.lastCommittedProjectValue, 'Projeto B');
   assert.equal(snapshot.latestHistoryProject, 'Projeto B');
+});
+
+test('check controller stores mixed zone interval from the web locations catalog, falls back during partial rollout, and clears it on reset paths', async () => {
+  const { helpers } = createLocationCatalogSettingsHarness();
+
+  helpers.setPayload({
+    items: ['Portaria', 'Portaria', 'Zona Mista'],
+    location_accuracy_threshold_meters: 25,
+    mixed_zone_interval_minutes: 35,
+  });
+  await helpers.loadManualLocations();
+
+  let snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.availableLocations, ['Portaria', 'Zona Mista']);
+  assert.equal(snapshot.locationAccuracyThresholdMeters, 25);
+  assert.equal(snapshot.mixedZoneIntervalMinutes, 35);
+
+  helpers.setPayload({
+    items: ['Portaria'],
+    location_accuracy_threshold_meters: 30,
+  });
+  await helpers.loadManualLocations();
+
+  snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.locationAccuracyThresholdMeters, 30);
+  assert.equal(snapshot.mixedZoneIntervalMinutes, 20);
+
+  helpers.setApplicationUnlocked(false);
+  await helpers.loadManualLocations();
+
+  snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.availableLocations, []);
+  assert.equal(snapshot.locationAccuracyThresholdMeters, null);
+  assert.equal(snapshot.mixedZoneIntervalMinutes, null);
+});
+
+test('check controller keeps loading the locations catalog before the startup lifecycle refresh', async () => {
+  const { helpers } = createAuthenticatedApplicationHarness();
+
+  const result = await helpers.loadAuthenticatedApplication('ab12', { showReadyMessage: true });
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.equal(result, true);
+  assert.deepStrictEqual(snapshot, [
+    { step: 'loadProjectCatalog', options: { showError: false } },
+    { step: 'restorePersistedUserSettingsForChave', chave: 'AB12' },
+    { step: 'loadManualLocations' },
+    { step: 'setStatus', message: 'Autenticação concluída. Atualizando a aplicação...', tone: 'info' },
+    { step: 'runLifecycleUpdateSequence', options: { ignoreCooldown: true, triggerSource: 'startup' } },
+  ]);
+});
+
+test('check controller does not auto-verify while the user is still typing the password', () => {
+  const { helpers } = createPasswordInputAuthenticationHarness();
+
+  helpers.setPasswordValue('abc');
+  helpers.syncPasswordInputState({ showReadyMessage: true });
+
+  let snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.schedulePasswordVerification, []);
+  assert.equal(snapshot.clearPasswordVerificationTimer, 1);
+
+  helpers.resetCalls();
+  helpers.syncPasswordInputState({
+    showReadyMessage: true,
+    allowAutomaticVerification: true,
+    requirePersistedPasswordMatch: false,
+  });
+
+  snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.schedulePasswordVerification, [{
+    showReadyMessage: true,
+    requirePersistedPasswordMatch: false,
+  }]);
+});
+
+test('check controller only auto-verifies after auth status when the restored password matches the persisted value', async () => {
+  const { helpers } = createAuthenticationStatusHarness();
+
+  helpers.setPersistedPasswordMap({ AB12: 'segredo' });
+  helpers.setPasswordValue('segredo');
+  await helpers.refreshAuthenticationStatus('ab12', { schedulePasswordVerification: true });
+
+  let snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.schedulePasswordVerification, [{ showReadyMessage: true }]);
+  assert.equal(snapshot.schedulePasswordAutofillSync, 1);
+
+  helpers.resetCalls();
+  helpers.setPasswordValue('digitando');
+  await helpers.refreshAuthenticationStatus('ab12', { schedulePasswordVerification: true });
+
+  snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.schedulePasswordVerification, []);
+  assert.equal(snapshot.schedulePasswordAutofillSync, 1);
+});
+
+test('check controller does not replay the authenticated bootstrap for the same verified session', async () => {
+  const { helpers } = createAuthenticatedApplicationHarness();
+
+  const firstResult = await helpers.loadAuthenticatedApplication('ab12', { showReadyMessage: true });
+  const secondResult = await helpers.loadAuthenticatedApplication('ab12', { showReadyMessage: true });
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.equal(firstResult, true);
+  assert.equal(secondResult, true);
+  assert.deepStrictEqual(snapshot, [
+    { step: 'loadProjectCatalog', options: { showError: false } },
+    { step: 'restorePersistedUserSettingsForChave', chave: 'AB12' },
+    { step: 'loadManualLocations' },
+    { step: 'setStatus', message: 'Autenticação concluída. Atualizando a aplicação...', tone: 'info' },
+    { step: 'runLifecycleUpdateSequence', options: { ignoreCooldown: true, triggerSource: 'startup' } },
+  ]);
+});
+
+test('check controller forwards the loaded mixed zone interval into the automatic location decision engine', () => {
+  const { helpers } = createAutomaticLocationDecisionHarness();
+
+  helpers.shouldAttemptAutomaticLocationEvent(
+    { resolved_local: 'Zona Mista' },
+    { current_action: 'checkout', current_local: 'Zona Mista' },
+    { referenceTime: '2026-04-16T09:20:00' }
+  );
+
+  assert.deepStrictEqual(toPlainValue(helpers.getSnapshot()), [
+    {
+      locationPayload: { resolved_local: 'Zona Mista' },
+      remoteState: { current_action: 'checkout', current_local: 'Zona Mista' },
+      settings: {
+        mixedZoneIntervalMinutes: 35,
+        referenceTime: '2026-04-16T09:20:00',
+      },
+    },
+  ]);
+});
+
+test('check controller injects the mixed zone interval into runtime automatic activity decisions', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    shouldAttemptAutomaticLocationEvent: () => false,
+  });
+
+  await helpers.runAutomaticActivitiesIfNeeded(
+    { matched: true, resolved_local: 'Zona Mista', status: 'matched' },
+    { suppressStatus: true }
+  );
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.shouldAttemptAutomaticLocationEvent, [{
+    locationPayload: { matched: true, resolved_local: 'Zona Mista', status: 'matched' },
+    remoteState: {
+      current_action: 'checkout',
+      current_local: 'Zona de CheckOut',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+    settings: {
+      mixedZoneIntervalMinutes: 35,
+    },
+  }]);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
+});
+
+test('check lifecycle sequence forwards the stored mixed zone interval into the automatic engine', async () => {
+  const { helpers } = createLifecycleAutomaticActivityHarness({
+    shouldAttemptAutomaticLocationEvent: () => false,
+  });
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Zona Mista',
+    status: 'matched',
+  });
+
+  const result = await helpers.runLifecycleUpdateSequence({ triggerSource: 'visibility' });
+  const snapshot = toPlainValue(helpers.getSnapshot());
+
+  assert.equal(result, true);
+  assert.deepStrictEqual(snapshot.refreshHistory, [{
+    chave: 'A123',
+    options: {
+      showLoadingMessage: false,
+      silentSuccessMessage: true,
+      suppressMessages: true,
+      rethrowErrors: true,
+      cacheWindowMs: 5000,
+    },
+  }]);
+  assert.deepStrictEqual(snapshot.updateLocationForLifecycleSequence, [{
+    triggerSource: 'visibility',
+    cacheWindowMs: 5000,
+  }]);
+  assert.deepStrictEqual(snapshot.fetchWebState, []);
+  assert.deepStrictEqual(snapshot.shouldAttemptAutomaticLocationEvent, [{
+    locationPayload: {
+      matched: true,
+      resolved_local: 'Zona Mista',
+      status: 'matched',
+    },
+    remoteState: {
+      current_action: 'checkout',
+      current_local: 'Zona de CheckOut',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+    settings: {
+      mixedZoneIntervalMinutes: 35,
+    },
+  }]);
+  assert.deepStrictEqual(snapshot.setSequenceStatus, [
+    'Atualizando as atividades.....',
+    'Atualizando a localização.....',
+    'Realizando check-in ou check-out, se aplicável.....',
+  ]);
+  assert.deepStrictEqual(snapshot.restorePersistedUserSettingsForChave, ['A123']);
+  assert.deepStrictEqual(snapshot.setStatus, [{
+    message: 'Aplicação atualizada com sucesso.',
+    tone: 'success',
+  }]);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
+});
+
+test('check controller reuses recent history state during lifecycle refreshes inside the cache window', async () => {
+  const { helpers } = createHistoryRefreshHarness();
+
+  await helpers.refreshHistory('a123', {
+    suppressMessages: true,
+    cacheWindowMs: 5000,
+  });
+  await helpers.refreshHistory('a123', {
+    suppressMessages: true,
+    cacheWindowMs: 5000,
+  });
+
+  let snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.fetch.length, 1);
+  assert.equal(snapshot.applyHistoryState.length, 1);
+
+  helpers.advanceTime(6000);
+  await helpers.refreshHistory('a123', {
+    suppressMessages: true,
+    cacheWindowMs: 5000,
+  });
+
+  snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.fetch.length, 2);
+  assert.equal(snapshot.applyHistoryState.length, 2);
+});
+
+test('check controller reuses a recent lifecycle location for the submit guard instead of recapturing immediately', async () => {
+  const { helpers } = createSubmitGuardLocationHarness();
+
+  helpers.setRecentLocationResolution({
+    matched: true,
+    resolved_local: 'Portaria',
+    status: 'matched',
+  }, 1500);
+
+  await helpers.ensureLocationReadyForSubmit();
+
+  let snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.queryLocationPermissionState, 0);
+  assert.deepStrictEqual(snapshot.captureAndResolveLocation, []);
+
+  helpers.clearRecentLocationResolution();
+  await helpers.ensureLocationReadyForSubmit();
+
+  snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.queryLocationPermissionState, 1);
+  assert.deepStrictEqual(snapshot.captureAndResolveLocation, [{
+    interactive: false,
+    forceRefresh: true,
+    measurementTrigger: 'submit_guard',
+  }]);
+});
+
+test('check controller submits automatic checkout when Zona Mista is reached after a remote check-in', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    remoteState: {
+      current_action: 'checkin',
+      current_local: 'Recepção',
+      last_checkin_at: '2026-04-16T09:00:00',
+      last_checkout_at: '2026-04-16T08:00:00',
+    },
+  });
+
+  await helpers.runAutomaticActivitiesIfNeeded({
+    matched: true,
+    resolved_local: 'Zona Mista',
+    status: 'matched',
+  });
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkout',
+    local: 'Zona Mista',
+  }]);
+});
+
+test('check controller keeps checkout zone forcing automatic checkout after a mixed-zone check-in', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    remoteState: {
+      current_action: 'checkin',
+      current_local: 'Zona Mista',
+      last_checkin_at: '2026-04-16T09:00:00',
+      last_checkout_at: '2026-04-16T08:00:00',
+    },
+  });
+
+  await helpers.runAutomaticActivitiesIfNeeded({
+    matched: true,
+    resolved_local: 'Zona de CheckOut',
+    status: 'matched',
+  }, {
+    suppressStatus: true,
+    referenceTime: '2026-04-16T09:10:00',
+  });
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkout',
+    local: 'Zona de CheckOut',
+    suppressStatus: true,
+  }]);
+});
+
+test('check controller keeps outside_workplace forcing automatic checkout after a mixed-zone check-in', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    remoteState: {
+      current_action: 'checkin',
+      current_local: 'Zona Mista',
+      last_checkin_at: '2026-04-16T09:00:00',
+      last_checkout_at: '2026-04-16T08:00:00',
+    },
+  });
+
+  await helpers.runAutomaticActivitiesIfNeeded({
+    matched: false,
+    status: 'outside_workplace',
+    minimum_checkout_distance_meters: 2500,
+  }, {
+    suppressStatus: true,
+    referenceTime: '2026-04-16T09:10:00',
+  });
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkout',
+    local: 'Fora do Local de Trabalho',
+    suppressStatus: true,
+  }]);
+});
+
+test('check controller keeps automatic check-in immediate when leaving mixed zone for a known location after checkout', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    remoteState: {
+      current_action: 'checkout',
+      current_local: 'Zona Mista',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+  });
+
+  await helpers.runAutomaticActivitiesIfNeeded({
+    matched: true,
+    resolved_local: 'Escritório Principal',
+    status: 'matched',
+  }, {
+    suppressStatus: true,
+    referenceTime: '2026-04-16T09:10:00',
+  });
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkin',
+    local: 'Escritório Principal',
+    suppressStatus: true,
+  }]);
+});
+
+test('check controller keeps automatic check-in immediate when leaving mixed zone for a nearby eligible unregistered location', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    remoteState: {
+      current_action: 'checkout',
+      current_local: 'Zona Mista',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+  });
+
+  await helpers.runAutomaticActivitiesIfNeeded({
+    matched: false,
+    status: 'not_in_known_location',
+    label: 'Localização não Cadastrada',
+    nearest_workplace_distance_meters: 180,
+  }, {
+    suppressStatus: true,
+    referenceTime: '2026-04-16T09:10:00',
+  });
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, [{
+    action: 'checkin',
+    local: 'Localização não Cadastrada',
+    suppressStatus: true,
+  }]);
 });
 
 test('check controller re-enables manual local fallback when GPS ends below the required accuracy', () => {
@@ -1352,8 +2427,15 @@ test('check watched GPS acquisition refreshes progress for each valid sample whi
 test('check controller keeps lifecycle GPS acquisition wired through the expected settings handoff', () => {
   assert.match(checkScript, /function requestCurrentPositionForPlan\(capturePlan, measurementSession, options\) \{[\s\S]*capturePlan\.strategy !== 'watch_window'[\s\S]*navigator\.geolocation\.watchPosition/);
   assert.match(checkScript, /async function updateLocationForLifecycleSequence\(options\) \{[\s\S]*showDetectingState: settings\.showDetectingState !== false,[\s\S]*\}/);
-  assert.match(checkScript, /const locationPayload = await updateLocationForLifecycleSequence\(settings\);/);
+  assert.match(checkScript, /const locationPayload = await updateLocationForLifecycleSequence\(\{[\s\S]*cacheWindowMs: settings\.locationCacheWindowMs \?\? lifecycleDataReuseWindowMs,[\s\S]*\}\);/);
   assert.match(checkScript, /const position = await requestCurrentPositionForPlan\(capturePlan, measurementSession, \{[\s\S]*showDetectingState: settings\.showDetectingState,[\s\S]*\}\);/);
+});
+
+test('check controller keeps visibility, focus and pageshow routed through the shared lifecycle update sequence', () => {
+  assert.match(checkScript, /function requestLifecycleUpdateFromUi\(triggerSource\) \{[\s\S]*window\.setTimeout\([\s\S]*runLifecycleUpdateSequence\(\{ triggerSource: nextTriggerSource \}\);/);
+  assert.match(checkScript, /document\.addEventListener\('visibilitychange', \(\) => \{[\s\S]*requestLifecycleUpdateFromUi\('visibility'\);/);
+  assert.match(checkScript, /window\.addEventListener\('focus', \(\) => \{[\s\S]*requestLifecycleUpdateFromUi\('focus'\);/);
+  assert.match(checkScript, /window\.addEventListener\('pageshow', \(\) => \{[\s\S]*requestLifecycleUpdateFromUi\('pageshow'\);/);
 });
 
 test('manual refresh should evaluate automatic activities after a changed location during an active check-in', async () => {
@@ -1384,6 +2466,49 @@ test('manual refresh should evaluate automatic activities after a changed locati
       status: 'matched',
     },
   }]);
+});
+
+test('manual refresh forwards the stored mixed zone interval into the automatic engine', async () => {
+  const { helpers } = createManualRefreshAutomaticActivityHarness({
+    shouldAttemptAutomaticLocationEvent: () => false,
+  });
+
+  helpers.setLocationPayload({
+    matched: true,
+    resolved_local: 'Zona Mista',
+    status: 'matched',
+  });
+
+  await helpers.runManualLocationRefreshSequence();
+
+  const snapshot = toPlainValue(helpers.getSnapshot());
+  assert.equal(snapshot.runWithLockedUserInteraction, 1);
+  assert.deepStrictEqual(snapshot.resolveCurrentLocation, [{
+    interactive: true,
+    forceRefresh: true,
+    measurementTrigger: 'manual_refresh',
+    showDetectingState: true,
+    showCompletionStatus: true,
+    suppressNotification: false,
+  }]);
+  assert.deepStrictEqual(snapshot.fetchWebState, ['A123']);
+  assert.deepStrictEqual(snapshot.shouldAttemptAutomaticLocationEvent, [{
+    locationPayload: {
+      matched: true,
+      resolved_local: 'Zona Mista',
+      status: 'matched',
+    },
+    remoteState: {
+      current_action: 'checkout',
+      current_local: 'Zona de CheckOut',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    },
+    settings: {
+      mixedZoneIntervalMinutes: 35,
+    },
+  }]);
+  assert.deepStrictEqual(snapshot.submitAutomaticActivity, []);
 });
 
 test('manual refresh should submit an automatic location update after an active check-in moves to another known location', async () => {

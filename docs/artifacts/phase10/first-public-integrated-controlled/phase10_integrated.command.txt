@@ -1,0 +1,8 @@
+base_url=https://tscode.com.br
+profile=integrated
+config=C:\dev\projetos\checkcheck\scripts\load\phase10_integrated.example.json
+users=24
+spawn_rate=6.0
+run_time=3m
+web_ui=False
+command=C:\dev\projetos\checkcheck\.venv\Scripts\python.exe -m locust -f C:\dev\projetos\checkcheck\scripts\load\phase10_locustfile.py --host https://tscode.com.br -u 24 -r 6.0 -t 3m --csv C:\dev\projetos\checkcheck\docs\artifacts\phase10\first-public-integrated-controlled\phase10_integrated --html C:\dev\projetos\checkcheck\docs\artifacts\phase10\first-public-integrated-controlled\phase10_integrated.html --headless

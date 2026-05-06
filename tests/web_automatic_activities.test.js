@@ -23,6 +23,265 @@ test('resolveLastRecordedAction honors timestamps and current action fallback', 
   );
 });
 
+test('mixed zone helper recognizes normalized mixed zone names', () => {
+  assert.equal(automation.isMixedZoneLocationName('Zona Mista'), true);
+  assert.equal(automation.isMixedZoneLocationName('  zona   mista '), true);
+  assert.equal(automation.isMixedZoneLocationName('Zona de CheckOut'), false);
+});
+
+test('mixed zone helper resolves the latest relevant mixed zone activity from current state and timestamps', () => {
+  const activity = automation.resolveLastRelevantMixedZoneActivity({
+    current_action: 'checkout',
+    current_local: 'Zona Mista',
+    last_checkin_at: '2026-04-16T08:00:00',
+    last_checkout_at: '2026-04-16T09:00:00',
+  });
+
+  assert.deepStrictEqual(activity, {
+    action: 'checkout',
+    local: 'Zona Mista',
+    timestamp: new Date('2026-04-16T09:00:00'),
+  });
+  assert.equal(
+    automation.resolveLastRelevantMixedZoneActivity({
+      current_action: 'checkout',
+      current_local: 'Escritório Principal',
+      last_checkin_at: '2026-04-16T08:00:00',
+      last_checkout_at: '2026-04-16T09:00:00',
+    }),
+    null
+  );
+});
+
+test('mixed zone helper identifies when the latest relevant activity happened in Zona Mista', () => {
+  assert.equal(
+    automation.isLastRelevantActivityInMixedZone({
+      current_action: 'checkin',
+      current_local: 'Zona Mista',
+      last_checkin_at: '2026-04-16T09:00:00',
+      last_checkout_at: '2026-04-16T08:00:00',
+    }),
+    true
+  );
+  assert.equal(
+    automation.isLastRelevantActivityInMixedZone({
+      current_action: 'checkin',
+      current_local: 'Escritório Principal',
+      last_checkin_at: '2026-04-16T09:00:00',
+      last_checkout_at: '2026-04-16T08:00:00',
+    }),
+    false
+  );
+});
+
+test('mixed zone helper reports cooldown activity only while the configured interval is still open', () => {
+  const state = {
+    current_action: 'checkout',
+    current_local: 'Zona Mista',
+    last_checkin_at: '2026-04-16T08:00:00',
+    last_checkout_at: '2026-04-16T09:00:00',
+  };
+
+  assert.equal(
+    automation.isMixedZoneCooldownActive(state, 20, '2026-04-16T09:10:00'),
+    true
+  );
+  assert.equal(
+    automation.isMixedZoneCooldownActive(state, 20, '2026-04-16T09:20:00'),
+    false
+  );
+  assert.equal(
+    automation.isMixedZoneCooldownActive(
+      {
+        current_action: 'checkout',
+        current_local: 'Escritório Principal',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      },
+      20,
+      '2026-04-16T09:10:00'
+    ),
+    false
+  );
+  assert.equal(automation.isMixedZoneCooldownActive(state, null, '2026-04-16T09:10:00'), false);
+});
+
+test('mixed zone repeated reads stay blocked while the cooldown is active and reopen when it expires', () => {
+  const remoteState = {
+    current_action: 'checkout',
+    current_local: 'Zona Mista',
+    last_checkin_at: '2026-04-16T08:00:00',
+    last_checkout_at: '2026-04-16T09:00:00',
+  };
+
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona Mista' },
+      remoteState,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+    ),
+    false
+  );
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona Mista' },
+      remoteState,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:20:00' }
+    ),
+    true
+  );
+});
+
+test('mixed zone repeated reads also reopen for a prior mixed-zone check-in only after the interval expires', () => {
+  const remoteState = {
+    current_action: 'checkin',
+    current_local: 'Zona Mista',
+    last_checkin_at: '2026-04-16T09:00:00',
+    last_checkout_at: '2026-04-16T08:00:00',
+  };
+
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona Mista' },
+      remoteState,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+    ),
+    false
+  );
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona Mista' },
+      remoteState,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:20:00' }
+    ),
+    true
+  );
+});
+
+test('mixed zone repeated reads stay blocked when the interval is unavailable, preserving the old same-location guard', () => {
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona Mista' },
+      {
+        current_action: 'checkout',
+        current_local: 'Zona Mista',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      },
+      { referenceTime: '2026-04-16T09:20:00' }
+    ),
+    false
+  );
+});
+
+test('mixed zone initial entry triggers automatic alternation from prior non-mixed states', () => {
+  const cases = [
+    {
+      name: 'regular checked-in location',
+      remoteState: {
+        current_action: 'checkin',
+        current_local: 'Escritório Principal',
+        last_checkin_at: '2026-04-16T09:00:00',
+        last_checkout_at: '2026-04-16T08:00:00',
+      },
+    },
+    {
+      name: 'regular checked-out location',
+      remoteState: {
+        current_action: 'checkout',
+        current_local: 'Escritório Principal',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      },
+    },
+    {
+      name: 'checkout zone',
+      remoteState: {
+        current_action: 'checkout',
+        current_local: 'Zona de CheckOut',
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      },
+    },
+    {
+      name: 'outside workplace checkout',
+      remoteState: {
+        current_action: 'checkout',
+        current_local: automation.AUTOMATIC_CHECKOUT_LOCATION,
+        last_checkin_at: '2026-04-16T08:00:00',
+        last_checkout_at: '2026-04-16T09:00:00',
+      },
+    },
+  ];
+
+  for (const { name, remoteState } of cases) {
+    assert.equal(
+      automation.shouldAttemptAutomaticLocationEvent(
+        { resolved_local: 'Zona Mista' },
+        remoteState,
+        { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+      ),
+      true,
+      name
+    );
+  }
+});
+
+test('mixed zone exit exceptions keep automatic checkout immediate after a mixed-zone check-in', () => {
+  const remoteState = {
+    current_action: 'checkin',
+    current_local: 'Zona Mista',
+    last_checkin_at: '2026-04-16T09:00:00',
+    last_checkout_at: '2026-04-16T08:00:00',
+  };
+
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Zona de CheckOut' },
+      remoteState,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+    ),
+    true
+  );
+  assert.equal(
+    automation.shouldAttemptAutomaticOutOfRangeCheckout(
+      { status: 'outside_workplace', minimum_checkout_distance_meters: 2500 },
+      remoteState
+    ),
+    true
+  );
+});
+
+test('mixed zone exit exceptions keep automatic check-in immediate after a mixed-zone checkout', () => {
+  const remoteState = {
+    current_action: 'checkout',
+    current_local: 'Zona Mista',
+    last_checkin_at: '2026-04-16T08:00:00',
+    last_checkout_at: '2026-04-16T09:00:00',
+  };
+
+  assert.equal(
+    automation.shouldAttemptAutomaticLocationEvent(
+      { resolved_local: 'Escritório Principal' },
+      remoteState,
+      { mixedZoneIntervalMinutes: 20, referenceTime: '2026-04-16T09:10:00' }
+    ),
+    true
+  );
+  assert.equal(
+    automation.shouldAttemptAutomaticNearbyWorkplaceCheckIn(
+      {
+        matched: false,
+        label: 'Localização não Cadastrada',
+        status: 'not_in_known_location',
+        nearest_workplace_distance_meters: 180,
+      },
+      remoteState
+    ),
+    true
+  );
+});
+
 test('automatic check-in runs for a regular monitored location after checkout', () => {
   assert.equal(
     automation.shouldAttemptAutomaticLocationEvent(

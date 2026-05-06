@@ -44,6 +44,17 @@ Implementacao inicial do sistema de check-in/check-out com:
 6. Abrir painel admin:
    http://127.0.0.1:8000/admin
 
+### Chave de criptografia do Transport AI
+`TRANSPORT_AI_SETTINGS_ENCRYPTION_KEY` e obrigatoria para abrir e salvar `IA Settings` do Transport. Gere uma chave Fernet uma unica vez e mantenha esse valor estavel no `.env` local e no ambiente de deploy:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Sem essa variavel, o backend passa a bloquear `GET/PUT /api/transport/ai/settings` com erro controlado de criptografia indisponivel, em vez de deixar o problema aparecer apenas no momento do save.
+
+Em homologacao e producao, manter `TRANSPORT_AI_ENABLED=false` por padrao. Se a feature for habilitada em uma janela controlada, preencher `TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE` e `TRANSPORT_AI_MAX_CONCURRENT_RUNS` no mesmo deploy; sem esses gates, o backend passa a bloquear novas execucoes da IA e o readiness fica `unready` por desenho.
+
 ### Preview local rapido do Transport fora do Compose
 Se o `.env` atual estiver apontando `DATABASE_URL` para `postgresql+psycopg://...@db:5432/...`, esse host `db` so existe dentro da rede Docker Compose e o boot local falhara com `getaddrinfo failed`.
 
@@ -67,7 +78,7 @@ Por padrao ele sobe em `http://127.0.0.1:8010`. Para manter a porta `8000`, rode
 - Procedimento oficial consolidado: `docs/context/procedimento_oficial_repositorios.md`.
 - Todo push em `main` dispara o workflow `.github/workflows/deploy-oceandrive.yml`.
 - O workflow agora compila a imagem da aplicacao no GitHub Actions, publica no GHCR e faz o droplet apenas sincronizar o codigo operacional e executar `docker compose pull` seguido de `docker compose up -d --no-build --force-recreate`. Isso reduz o crescimento recorrente de SSD causado por builds completos dentro do servidor. Depois do rollout, o deploy valida `GET /api/health`, reinstala a automacao periodica de limpeza de SSD e remove cache Docker e temporarios antigos remanescentes.
-- O arquivo `.env` de producao permanece somente no servidor e nao e enviado pelo GitHub Actions.
+- O arquivo `.env` de producao nao deve ser commitado no repositório. Por padrao ele permanece somente no servidor; opcionalmente o GitHub Actions pode materializa-lo no host a partir do secret `OCEAN_APP_ENV_B64`.
 - O remoto `origin` pode apontar para SSH ou HTTPS. Se a maquina local nao tiver chave SSH autorizada no GitHub, use HTTPS para o push.
 
 Observacao:

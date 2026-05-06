@@ -1,0 +1,44 @@
+{
+  "wait_time": {
+    "min_seconds": 0.05,
+    "max_seconds": 0.15
+  },
+  "location": {
+    "latitude": 1.265936,
+    "longitude": 103.621066,
+    "accuracy_meters": 8,
+    "fallback_local": "Escritório Principal"
+  },
+  "generated_users": {
+    "prefix": "F",
+    "count": 40,
+    "start_index": 1,
+    "password": "abc123",
+    "project": "P80",
+    "register_missing": true,
+    "name_prefix": "Phase10 Forms",
+    "email_domain": "load.invalid"
+  },
+  "web_check": {
+    "include_page_open": false,
+    "include_project_catalog": false,
+    "include_location_options": false,
+    "include_location_resolution": false,
+    "action_cycle": [
+      "checkin",
+      "checkout"
+    ],
+    "informe": "normal"
+  },
+  "forms_backlog": {
+    "ready_path": "/api/health/ready",
+    "producer_action_cycle": [
+      "checkin",
+      "checkout"
+    ]
+  },
+  "admin": {
+    "chave": "HR70",
+    "senha": "eAcacdLe2"
+  }
+}

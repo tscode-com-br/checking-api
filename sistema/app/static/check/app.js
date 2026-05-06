@@ -12,7 +12,6 @@
   const transportAddressEndpoint = form.dataset.transportAddressEndpoint || '/api/web/transport/address';
   const transportRequestEndpoint = form.dataset.transportRequestEndpoint || '/api/web/transport/request';
   const transportCancelEndpoint = form.dataset.transportCancelEndpoint || '/api/web/transport/cancel';
-  const transportAcknowledgeEndpoint = form.dataset.transportAckEndpoint || '/api/web/transport/acknowledge';
   const submitEndpoint = form.dataset.submitEndpoint || '/api/web/check';
   const stateEndpoint = form.dataset.stateEndpoint || '/api/web/check/state';
   const projectsEndpoint = form.dataset.projectsEndpoint || '/api/web/projects';
@@ -96,9 +95,6 @@
   const transportRequestWeekdayOptions = Array.from(document.querySelectorAll('[data-transport-weekday-option]'));
   const transportRequestHistorySection = document.getElementById('transportRequestHistorySection');
   const transportRequestHistoryList = document.getElementById('transportRequestHistoryList');
-  const transportAcknowledgementSection = document.getElementById('transportAcknowledgementSection');
-  const transportAcknowledgementCheckbox = document.getElementById('transportAcknowledgementCheckbox');
-  const transportAcknowledgementButton = document.getElementById('transportAcknowledgementButton');
   const transportRequestDetailWidget = document.getElementById('transportRequestDetailWidget');
   const transportRequestDetailBackdrop = document.getElementById('transportRequestDetailBackdrop');
   const transportRequestDetailTitle = document.getElementById('transportRequestDetailWidgetTitle');
@@ -149,8 +145,6 @@
     transportRequestBuilderBackButton,
     transportRequestBuilderSubmitButton,
     ...transportRequestWeekdayInputs,
-    transportAcknowledgementCheckbox,
-    transportAcknowledgementButton,
     transportScreenHeaderBackButton,
   ].filter(Boolean);
   const storageKey = 'checking.web.user.chave';
@@ -162,6 +156,7 @@
   const locationMeasurementStorageKey = 'checking.web.location.measurement.enabled';
   const locationMeasurementConsoleLabel = '[checking.location.measurement]';
   const locationMeasurementSessionLimit = 120;
+  const DEFAULT_MIXED_ZONE_INTERVAL_MINUTES = 20;
   const defaultManualLocationLabel = 'Escritório Principal';
   const accuracyFallbackManualLocationLabel = 'Precisao Insuficiente';
   const transportAutoRefreshIntervalMs = 10000;
@@ -171,6 +166,7 @@
     .filter(Boolean);
   let defaultProjectValue = allowedProjectValues[0] || '';
   const lifecycleTriggerCooldownMs = 1200;
+  const lifecycleDataReuseWindowMs = 5000;
   const passwordVerificationDebounceMs = 260;
   const unknownWebUserDetail = 'A chave do usuario nao esta cadastrada';
   const automaticCheckoutLocation = automaticActivities.AUTOMATIC_CHECKOUT_LOCATION;
@@ -214,9 +210,9 @@
     hour12: false,
   });
   const transportRequestKindLabels = {
-    regular: 'Transporte Rotineiro',
-    weekend: 'Transporte Fim de Semana',
-    extra: 'Transporte Extra',
+    regular: 'Dias Úteis',
+    weekend: 'Fim de Semana',
+    extra: 'Data Específica',
   };
   const transportRequestStatusLabels = {
     pending: 'Pendente',
@@ -236,7 +232,7 @@
   };
   const transportRequestBuilderConfigs = {
     regular: {
-      subtitle: 'Selecione os dias úteis desejados para o transporte rotineiro.',
+      subtitle: 'Selecione os dias úteis desejados para esta solicitação.',
       allowedWeekdays: [0, 1, 2, 3, 4],
       defaultSelectedWeekdays: [0, 1, 2, 3, 4],
       showWeekdays: true,
@@ -244,7 +240,7 @@
       showTime: false,
     },
     weekend: {
-      subtitle: 'Selecione os dias de fim de semana desejados para o transporte.',
+      subtitle: 'Selecione os dias de fim de semana desejados para esta solicitação.',
       allowedWeekdays: [5, 6],
       defaultSelectedWeekdays: [5],
       showWeekdays: true,
@@ -252,7 +248,7 @@
       showTime: false,
     },
     extra: {
-      subtitle: 'Confira a data e o horário do transporte extra antes de solicitar.',
+      subtitle: 'Confira a data e o horário antes de solicitar.',
       allowedWeekdays: [],
       defaultSelectedWeekdays: [],
       showWeekdays: false,
@@ -273,10 +269,17 @@
   let currentLocationMatch = null;
   let currentLocationResolutionStatus = null;
   let latestHistoryState = null;
+  let lastHistoryStateAppliedAt = 0;
+  let lastHistoryStateAppliedChave = '';
+  let recentLocationResolutionPayload = null;
+  let recentLocationResolutionAt = 0;
+  let recentLocationResolutionChave = '';
   let availableLocations = [];
   let locationAccuracyThresholdMeters = null;
+  let mixedZoneIntervalMinutes = DEFAULT_MIXED_ZONE_INTERVAL_MINUTES;
   let gpsLocationPermissionGranted = false;
   let lifecycleRefreshInProgress = false;
+  let lifecycleUpdateRequestTimeoutId = null;
   let locationRefreshLoading = false;
   let passwordRegisterInProgress = false;
   let passwordLoginInProgress = false;
@@ -287,7 +290,6 @@
   let transportAddressSaveInProgress = false;
   let transportRequestInProgress = false;
   let transportCancelInProgress = false;
-  let transportAcknowledgeInProgress = false;
   let transportAutoRefreshTimeoutId = null;
   let transportRealtimeEventSource = null;
   let transportRealtimeStreamChave = '';
@@ -295,6 +297,9 @@
   let transportRealtimeRefreshPending = false;
   let projectCatalogPromise = null;
   let projectCatalogLoading = false;
+  let authenticatedApplicationLoadPromise = null;
+  let authenticatedApplicationLoadFingerprint = '';
+  let authenticatedApplicationReadyFingerprint = '';
   let projectUpdateInProgress = false;
   let lastCommittedProjectValue = defaultProjectValue;
   let userInteractionLockCount = 0;
@@ -355,8 +360,6 @@
     vehiclePlate: '',
     vehicleColor: '',
     toleranceMinutes: null,
-    awarenessRequired: false,
-    awarenessConfirmed: false,
     requests: [],
   };
 
@@ -365,7 +368,6 @@
     requestBuilderKind: null,
     selectedRequestId: null,
     detailRequestId: null,
-    acknowledgementChecked: false,
     inlineMessage: '',
     inlineTone: null,
     dismissedRequestIds: new Set(),
@@ -689,7 +691,6 @@
       && !transportAddressSaveInProgress
       && !transportRequestInProgress
       && !transportCancelInProgress
-      && !transportAcknowledgeInProgress
       && getTransportRequests().some(shouldAutoRefreshTransportRequest);
   }
 
@@ -718,8 +719,7 @@
       && !transportStateLoading
       && !transportAddressSaveInProgress
       && !transportRequestInProgress
-      && !transportCancelInProgress
-      && !transportAcknowledgeInProgress;
+      && !transportCancelInProgress;
   }
 
   function requestTransportRealtimeRefresh() {
@@ -889,6 +889,9 @@
   function clearTypedPasswordAuthentication() {
     clearPasswordVerificationTimer();
     clearPasswordAutofillSync();
+    authenticatedApplicationLoadPromise = null;
+    authenticatedApplicationLoadFingerprint = '';
+    authenticatedApplicationReadyFingerprint = '';
     lastVerifiedPassword = '';
     lastObservedPasswordFieldValue = passwordInput.value;
     authState.authenticated = false;
@@ -1015,8 +1018,7 @@
     const transportBusy = transportStateLoading
       || transportAddressSaveInProgress
       || transportRequestInProgress
-      || transportCancelInProgress
-      || transportAcknowledgeInProgress;
+      || transportCancelInProgress;
 
     syncAuthenticationFieldHighlights();
 
@@ -1155,6 +1157,13 @@
         return;
       }
 
+      if (control === transportRegularButton || control === transportWeekendButton || control === transportExtraButton) {
+        const transportOptionBlocked = control.dataset.transportOptionDisabled === 'true';
+        control.disabled = transportBusy || transportOptionBlocked;
+        control.setAttribute('aria-disabled', String(transportBusy || transportOptionBlocked));
+        return;
+      }
+
       if (control === transportAddressSubmitButton) {
         control.disabled = transportBusy;
         control.textContent = transportAddressSaveInProgress ? 'Cadastrando...' : 'Cadastrar';
@@ -1162,14 +1171,10 @@
       }
 
       if (control === transportRequestBuilderSubmitButton) {
-        control.disabled = transportBusy;
+        const transportSubmitBlocked = control.dataset.transportSubmitDisabled === 'true';
+        control.disabled = transportBusy || transportSubmitBlocked;
         control.textContent = transportRequestInProgress ? 'Solicitando...' : 'Solicitar';
-        return;
-      }
-
-      if (control === transportAcknowledgementButton) {
-        control.disabled = transportBusy || !transportUiState.acknowledgementChecked;
-        control.textContent = transportAcknowledgeInProgress ? 'CONFIRMANDO...' : 'CONFIRMAR CIÊNCIA';
+        control.setAttribute('aria-disabled', String(transportBusy || transportSubmitBlocked));
         return;
       }
 
@@ -1483,6 +1488,53 @@
     locationAccuracyThresholdMeters = typeof value === 'number' && Number.isFinite(value)
       ? value
       : null;
+  }
+
+  function setMixedZoneIntervalMinutes(value) {
+    const normalizedValue = Number(value);
+    mixedZoneIntervalMinutes = Number.isFinite(normalizedValue) && normalizedValue >= 1
+      ? Math.trunc(normalizedValue)
+      : DEFAULT_MIXED_ZONE_INTERVAL_MINUTES;
+  }
+
+  function readRecentHistoryState(chave, options) {
+    const settings = options || {};
+    const cacheWindowMs = Number(settings.cacheWindowMs);
+    const normalizedChave = sanitizeChave(typeof chave === 'string' ? chave : getActiveChave());
+
+    if (!Number.isFinite(cacheWindowMs) || cacheWindowMs < 1 || normalizedChave.length !== 4) {
+      return null;
+    }
+
+    if (!latestHistoryState || lastHistoryStateAppliedChave !== normalizedChave) {
+      return null;
+    }
+
+    if (Date.now() - lastHistoryStateAppliedAt > cacheWindowMs) {
+      return null;
+    }
+
+    return latestHistoryState;
+  }
+
+  function readRecentLocationResolution(options) {
+    const settings = options || {};
+    const cacheWindowMs = Number(settings.cacheWindowMs);
+    const normalizedChave = sanitizeChave(typeof settings.chave === 'string' ? settings.chave : getActiveChave());
+
+    if (!Number.isFinite(cacheWindowMs) || cacheWindowMs < 1 || normalizedChave.length !== 4) {
+      return null;
+    }
+
+    if (!recentLocationResolutionPayload || recentLocationResolutionChave !== normalizedChave) {
+      return null;
+    }
+
+    if (Date.now() - recentLocationResolutionAt > cacheWindowMs) {
+      return null;
+    }
+
+    return recentLocationResolutionPayload;
   }
 
   function isLocationSampleBetter(candidatePosition, currentBestPosition) {
@@ -2051,6 +2103,10 @@
     currentLocationMatch = null;
     availableLocations = [];
     locationAccuracyThresholdMeters = null;
+    mixedZoneIntervalMinutes = null;
+    recentLocationResolutionPayload = null;
+    recentLocationResolutionAt = 0;
+    recentLocationResolutionChave = '';
     setLocationPresentation('Aguardando autenticação.', '', null, '--', { suppressNotification: true });
   }
 
@@ -2232,14 +2288,11 @@
     transportState.vehicleType = '';
     transportState.vehiclePlate = '';
     transportState.toleranceMinutes = null;
-    transportState.awarenessRequired = false;
-    transportState.awarenessConfirmed = false;
     transportState.requests = [];
     transportUiState.addressEditorOpen = false;
     transportUiState.requestBuilderKind = null;
     transportUiState.selectedRequestId = null;
     transportUiState.detailRequestId = null;
-    transportUiState.acknowledgementChecked = false;
     resetTransportRequestLocalState();
     resetTransportRequestSwipeState();
     clearTransportInlineStatus();
@@ -2406,8 +2459,6 @@
       toleranceMinutes: payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
         ? Number(payload.tolerance_minutes)
         : null,
-      awarenessRequired: Boolean(payload && payload.awareness_required),
-      awarenessConfirmed: Boolean(payload && payload.awareness_confirmed),
       responseMessage: String(payload && payload.response_message || ''),
       createdAt: String(payload && payload.created_at || ''),
     };
@@ -2435,8 +2486,6 @@
       vehicle_plate: payload && payload.vehicle_plate,
       vehicle_color: payload && payload.vehicle_color,
       tolerance_minutes: payload && payload.tolerance_minutes,
-      awareness_required: payload && payload.awareness_required,
-      awareness_confirmed: payload && payload.awareness_confirmed,
     })];
   }
 
@@ -2482,8 +2531,6 @@
       vehicle_plate: transportState.vehiclePlate,
       vehicle_color: transportState.vehicleColor,
       tolerance_minutes: transportState.toleranceMinutes,
-      awareness_required: transportState.awarenessRequired,
-      awareness_confirmed: transportState.awarenessConfirmed,
     };
   }
 
@@ -2726,8 +2773,6 @@
         transportState.vehiclePlate = '';
         transportState.vehicleColor = '';
         transportState.toleranceMinutes = null;
-        transportState.awarenessRequired = false;
-        transportState.awarenessConfirmed = false;
         return;
       }
 
@@ -2747,8 +2792,6 @@
       transportState.toleranceMinutes = payload && payload.tolerance_minutes !== null && payload.tolerance_minutes !== undefined && Number.isFinite(Number(payload.tolerance_minutes))
         ? Number(payload.tolerance_minutes)
         : null;
-      transportState.awarenessRequired = Boolean(payload && payload.awareness_required);
-      transportState.awarenessConfirmed = Boolean(payload && payload.awareness_confirmed);
       return;
     }
 
@@ -2764,8 +2807,6 @@
     transportState.vehiclePlate = selectedRequest.vehiclePlate;
     transportState.vehicleColor = selectedRequest.vehicleColor;
     transportState.toleranceMinutes = selectedRequest.toleranceMinutes;
-    transportState.awarenessRequired = selectedRequest.awarenessRequired;
-    transportState.awarenessConfirmed = selectedRequest.awarenessConfirmed;
   }
 
   function applyTransportStatePayload(payload) {
@@ -2785,20 +2826,8 @@
     if (String(payload && payload.status || 'available') !== 'available') {
       transportUiState.requestBuilderKind = null;
     }
-    transportUiState.acknowledgementChecked = false;
     syncTransportAddressFormValues();
     renderTransportScreen();
-  }
-
-  function isTransportServiceDateToday(serviceDateValue) {
-    return Boolean(serviceDateValue && serviceDateValue === formatDateInputValue(new Date()));
-  }
-
-  function canAcknowledgeSelectedTransportRequest() {
-    return transportState.status === 'confirmed'
-      && transportState.awarenessRequired
-      && !transportState.awarenessConfirmed
-      && isTransportServiceDateToday(transportState.serviceDate);
   }
 
   function canCancelTransportRequestItem(requestItem) {
@@ -3148,16 +3177,6 @@
       }
     }
 
-    if (transportAcknowledgementSection) {
-      const showAcknowledgement = !transportUiState.addressEditorOpen && !activeBuilderConfig && canAcknowledgeSelectedTransportRequest();
-      transportAcknowledgementSection.hidden = !showAcknowledgement;
-      transportAcknowledgementSection.classList.toggle('is-hidden', !showAcknowledgement);
-    }
-
-    if (transportAcknowledgementCheckbox) {
-      transportAcknowledgementCheckbox.checked = transportUiState.acknowledgementChecked;
-    }
-
     renderTransportRequestDetailWidget({
       canShow: !transportUiState.addressEditorOpen && !activeBuilderConfig && hasRequests,
     });
@@ -3180,7 +3199,6 @@
     if (openDetails) {
       transportUiState.detailRequestId = selectedRequest.requestId;
     }
-    transportUiState.acknowledgementChecked = false;
     syncSelectedTransportRequestState({ status: selectedRequest.status });
     renderTransportScreen();
     syncFormControlStates();
@@ -3419,7 +3437,6 @@
       });
       applyTransportStatePayload(payload.state || {});
       transportUiState.requestBuilderKind = null;
-      transportUiState.acknowledgementChecked = false;
       setTransportInlineStatus(payload.message || 'Solicitação de transporte cancelada.', 'success');
     } catch (error) {
       if (error && error.isAuthExpired) {
@@ -3433,34 +3450,115 @@
     }
   }
 
-  async function acknowledgeTransportInformation() {
-    const normalizedChave = getActiveChave();
-    const selectedRequest = getTransportSelectedRequest();
-    if (!selectedRequest || !selectedRequest.requestId) {
-      return;
-    }
+  const transportScreenModule = window.CheckingWebTransportScreen.create({
+    buildProtectedRequestError,
+    clearTransportInlineStatus,
+    clientState,
+    dismissActiveKeyboard,
+    dom: {
+      transportScreen,
+      transportScreenBackdrop,
+      transportAddressSummaryValue,
+      transportAddressEditor,
+      transportAddressInput,
+      transportZipInput,
+      transportOptionButtons,
+      transportRequestBuilderPanel,
+      transportRequestBuilderSubtitle,
+      transportRequestWeekdayGroup,
+      transportRequestDateGroup,
+      transportRequestTimeGroup,
+      transportRequestDateInput,
+      transportRequestTimeInput,
+      transportRequestWeekdayInputs,
+      transportRequestWeekdayOptions,
+      transportRequestHistorySection,
+      transportRequestHistoryList,
+      transportRequestDetailWidget,
+      transportRequestDetailBackdrop,
+      transportRequestDetailTitle,
+      transportRequestDetailContent,
+      transportRequestDetailCloseButton,
+    },
+    getActiveChave,
+    isApplicationUnlocked,
+    isPasswordDialogOpen,
+    isRegistrationDialogOpen,
+    isTransportScreenOpen,
+    realignViewport,
+    resolveTransportEventTargetElement,
+    sanitizeChave,
+    setStatus,
+    setTransportInlineStatus,
+    state: {
+      transportState,
+      transportUiState,
+      transportRequestSwipeState,
+    },
+    config: {
+      transportStateEndpoint,
+      transportStreamEndpoint,
+      transportAddressEndpoint,
+      transportRequestEndpoint,
+      transportCancelEndpoint,
+      transportAutoRefreshIntervalMs,
+      transportRealtimeRefreshDebounceMs,
+      transportRequestDismissHoldDelayMs,
+      transportRequestDismissMoveTolerancePx,
+      transportRequestKindLabels,
+      transportRequestStatusLabels,
+      transportRequestWeekdayLabels,
+      transportRequestBuilderConfigs,
+      dateFormatter,
+      userTransportLocalStateStorageKey,
+    },
+    runtime: {
+      getTransportStateLoading: () => transportStateLoading,
+      setTransportStateLoading: (value) => {
+        transportStateLoading = value;
+      },
+      getTransportAddressSaveInProgress: () => transportAddressSaveInProgress,
+      setTransportAddressSaveInProgress: (value) => {
+        transportAddressSaveInProgress = value;
+      },
+      getTransportRequestInProgress: () => transportRequestInProgress,
+      setTransportRequestInProgress: (value) => {
+        transportRequestInProgress = value;
+      },
+      getTransportCancelInProgress: () => transportCancelInProgress,
+      setTransportCancelInProgress: (value) => {
+        transportCancelInProgress = value;
+      },
+    },
+    syncFormControlStates,
+  });
 
-    transportAcknowledgeInProgress = true;
-    clearTransportInlineStatus();
-    syncFormControlStates();
-    try {
-      const payload = await postTransportPayload(transportAcknowledgeEndpoint, {
-        chave: normalizedChave,
-        request_id: selectedRequest.requestId,
-      });
-      applyTransportStatePayload(payload.state || {});
-      clearTransportInlineStatus();
-    } catch (error) {
-      if (error && error.isAuthExpired) {
-        closeTransportScreen();
-        return;
-      }
-      setTransportInlineStatus(error instanceof Error ? error.message : 'Não foi possível registrar a ciência.', 'error');
-    } finally {
-      transportAcknowledgeInProgress = false;
-      syncFormControlStates();
-    }
-  }
+  // Preserve the original transport source in app.js for grep-based contract tests,
+  // but execute the transport flow through the dedicated module at runtime.
+  resetTransportState = transportScreenModule.resetTransportState;
+  applyTransportStatePayload = transportScreenModule.applyTransportStatePayload;
+  canMarkTransportRequestAsRealized = transportScreenModule.canMarkTransportRequestAsRealized;
+  createTransportRequestCard = transportScreenModule.createTransportRequestCard;
+  renderTransportScreen = transportScreenModule.renderTransportScreen;
+  selectTransportRequest = transportScreenModule.selectTransportRequest;
+  closeTransportAddressEditor = transportScreenModule.closeTransportAddressEditor;
+  openTransportAddressEditor = transportScreenModule.openTransportAddressEditor;
+  closeTransportRequestBuilder = transportScreenModule.closeTransportRequestBuilder;
+  initializeTransportRequestBuilder = transportScreenModule.initializeTransportRequestBuilder;
+  markTransportRequestAsRealized = transportScreenModule.markTransportRequestAsRealized;
+  beginTransportRequestSwipe = transportScreenModule.beginTransportRequestSwipe;
+  updateTransportRequestSwipe = transportScreenModule.updateTransportRequestSwipe;
+  endTransportRequestSwipe = transportScreenModule.endTransportRequestSwipe;
+  closeTransportRequestDetailWidget = transportScreenModule.closeTransportRequestDetailWidget;
+  openTransportScreen = transportScreenModule.openTransportScreen;
+  closeTransportScreen = transportScreenModule.closeTransportScreen;
+  fetchTransportStatePayload = transportScreenModule.fetchTransportStatePayload;
+  postTransportPayload = transportScreenModule.postTransportPayload;
+  loadTransportState = transportScreenModule.loadTransportState;
+  submitTransportAddress = transportScreenModule.submitTransportAddress;
+  requestTransport = transportScreenModule.requestTransport;
+  submitTransportRequestBuilder = transportScreenModule.submitTransportRequestBuilder;
+  cancelTransportRequest = transportScreenModule.cancelTransportRequest;
 
   function applyAuthenticationStatusPayload(payload) {
     const normalizedChave = sanitizeChave((payload && payload.chave) || chaveInput.value);
@@ -3551,6 +3649,9 @@
     const settings = options || {};
     const normalizedChave = getActiveChave();
     const currentPassword = passwordInput.value;
+    const canAutomaticallyVerifyPassword = typeof clientState.isPasswordVerificationInputValid === 'function'
+      ? clientState.isPasswordVerificationInputValid(currentPassword)
+      : clientState.isPasswordLengthValid(currentPassword);
 
     lastObservedPasswordFieldValue = currentPassword;
 
@@ -3564,8 +3665,16 @@
       void logoutWebSession({ silent: true });
     }
 
-    if (normalizedChave.length === 4 && authState.hasPassword && clientState.isPasswordVerificationInputValid(currentPassword)) {
-      schedulePasswordVerification({ showReadyMessage: settings.showReadyMessage !== false });
+    if (
+      settings.allowAutomaticVerification === true
+      && normalizedChave.length === 4
+      && authState.hasPassword
+      && canAutomaticallyVerifyPassword
+    ) {
+      schedulePasswordVerification({
+        showReadyMessage: settings.showReadyMessage !== false,
+        requirePersistedPasswordMatch: settings.requirePersistedPasswordMatch,
+      });
     } else if (normalizedChave.length === 4 && authState.hasPassword && !currentPassword) {
       clearPasswordVerificationTimer();
       setAuthenticationPrompt('Digite sua senha para iniciar.');
@@ -3581,7 +3690,10 @@
       return;
     }
 
-    syncPasswordInputState({ showReadyMessage: true });
+    syncPasswordInputState({
+      showReadyMessage: true,
+      allowAutomaticVerification: true,
+    });
   }
 
   function schedulePasswordAutofillSync(options) {
@@ -3612,26 +3724,73 @@
     passwordAutofillSyncFrameId = window.requestAnimationFrame(runAttempt);
   }
 
+  function buildPasswordVerificationFingerprint(chave) {
+    const normalizedChave = sanitizeChave(chave || chaveInput.value);
+    const normalizedPassword = String(lastVerifiedPassword || passwordInput.value || '');
+
+    if (normalizedChave.length !== 4 || !normalizedPassword) {
+      return '';
+    }
+
+    return `${normalizedChave}:${normalizedPassword}`;
+  }
+
+  function resolvePersistedPasswordForChave(chave) {
+    const normalizedChave = sanitizeChave(chave);
+    return clientState.resolvePersistedPassword(readPersistedUserPasswordMap(), normalizedChave);
+  }
+
   async function loadAuthenticatedApplication(chave, options) {
     const settings = options || {};
     const normalizedChave = sanitizeChave(chave || chaveInput.value);
+    const passwordVerificationFingerprint = buildPasswordVerificationFingerprint(normalizedChave);
     if (!isApplicationUnlocked(normalizedChave)) {
       return false;
     }
 
-    await loadProjectCatalog({ showError: false });
-    restorePersistedUserSettingsForChave(normalizedChave);
-    await loadManualLocations();
-    if (!isApplicationUnlocked(normalizedChave)) {
-      return false;
+    if (
+      authenticatedApplicationLoadPromise
+      && passwordVerificationFingerprint
+      && authenticatedApplicationLoadFingerprint === passwordVerificationFingerprint
+    ) {
+      return authenticatedApplicationLoadPromise;
     }
 
-    if (settings.showReadyMessage) {
-      setStatus('Autenticação concluída. Atualizando a aplicação...', 'info');
+    if (
+      passwordVerificationFingerprint
+      && authenticatedApplicationReadyFingerprint === passwordVerificationFingerprint
+    ) {
+      return true;
     }
 
-    await runLifecycleUpdateSequence({ ignoreCooldown: true, triggerSource: 'startup' });
-    return true;
+    const pendingLoad = (async () => {
+      await loadProjectCatalog({ showError: false });
+      restorePersistedUserSettingsForChave(normalizedChave);
+      await loadManualLocations();
+      if (!isApplicationUnlocked(normalizedChave)) {
+        return false;
+      }
+
+      if (settings.showReadyMessage) {
+        setStatus('Autenticação concluída. Atualizando a aplicação...', 'info');
+      }
+
+      await runLifecycleUpdateSequence({ ignoreCooldown: true, triggerSource: 'startup' });
+      authenticatedApplicationReadyFingerprint = passwordVerificationFingerprint;
+      return true;
+    })();
+
+    authenticatedApplicationLoadPromise = pendingLoad;
+    authenticatedApplicationLoadFingerprint = passwordVerificationFingerprint;
+
+    try {
+      return await pendingLoad;
+    } finally {
+      if (authenticatedApplicationLoadPromise === pendingLoad) {
+        authenticatedApplicationLoadPromise = null;
+        authenticatedApplicationLoadFingerprint = '';
+      }
+    }
   }
 
   async function refreshAuthenticationStatus(chave, options) {
@@ -3678,7 +3837,18 @@
       if (!payload.found || !payload.has_password) {
         persistPasswordForChave(normalizedChave, '');
       }
-      if (payload.has_password && settings.schedulePasswordVerification !== false && clientState.isPasswordVerificationInputValid(passwordInput.value)) {
+      const currentPassword = passwordInput.value;
+      const canAutomaticallyVerifyPassword = typeof clientState.isPasswordVerificationInputValid === 'function'
+        ? clientState.isPasswordVerificationInputValid(currentPassword)
+        : clientState.isPasswordLengthValid(currentPassword);
+      const persistedPassword = resolvePersistedPasswordForChave(normalizedChave);
+      if (
+        payload.has_password
+        && settings.schedulePasswordVerification !== false
+        && canAutomaticallyVerifyPassword
+        && currentPassword
+        && currentPassword === persistedPassword
+      ) {
         schedulePasswordVerification({ showReadyMessage: true });
       }
       if (payload.has_password) {
@@ -4516,8 +4686,12 @@
     });
   }
 
-  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState) {
-    return automaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState);
+  function shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, options) {
+    const settings = options || {};
+    return automaticActivities.shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, {
+      mixedZoneIntervalMinutes: settings.mixedZoneIntervalMinutes ?? mixedZoneIntervalMinutes,
+      referenceTime: settings.referenceTime,
+    });
   }
 
   function shouldAttemptAutomaticOutOfRangeCheckout(locationPayload, remoteState) {
@@ -4530,6 +4704,18 @@
 
   function resolveAutomaticCheckInLocation(locationPayload) {
     return automaticActivities.resolveAutomaticCheckInLocation(locationPayload);
+  }
+
+  function resolveAutomaticLocationAction(locationPayload, remoteState) {
+    const resolvedLocal = locationPayload && locationPayload.resolved_local;
+
+    if (automaticActivities.isMixedZoneLocationName(resolvedLocal)) {
+      return automaticActivities.resolveLastRecordedAction(remoteState) === 'checkin'
+        ? 'checkout'
+        : 'checkin';
+    }
+
+    return isCheckoutZoneLocationName(resolvedLocal) ? 'checkout' : 'checkin';
   }
 
   async function submitAutomaticActivity({ action, local, suppressStatus }) {
@@ -4597,12 +4783,19 @@
       return noActivityResult;
     }
 
-    const remoteState = await fetchWebState(chave);
+    const remoteState = settings.remoteState || await fetchWebState(chave);
     latestHistoryState = remoteState;
     applyHistoryState(remoteState);
 
-    if (locationPayload && locationPayload.matched && shouldAttemptAutomaticLocationEvent(locationPayload, remoteState)) {
-      const automaticAction = isCheckoutZoneLocationName(locationPayload.resolved_local) ? 'checkout' : 'checkin';
+    if (
+      locationPayload
+      && locationPayload.matched
+      && shouldAttemptAutomaticLocationEvent(locationPayload, remoteState, {
+        mixedZoneIntervalMinutes,
+        referenceTime: settings.referenceTime,
+      })
+    ) {
+      const automaticAction = resolveAutomaticLocationAction(locationPayload, remoteState);
       await submitAutomaticActivity({
         action: automaticAction,
         local: locationPayload.resolved_local,
@@ -4779,6 +4972,7 @@
     if (!isApplicationUnlocked()) {
       availableLocations = [];
       setLocationAccuracyThresholdMeters(null);
+      mixedZoneIntervalMinutes = null;
       syncManualLocationControl();
       return;
     }
@@ -4797,6 +4991,7 @@
       }
 
       setLocationAccuracyThresholdMeters(payload.location_accuracy_threshold_meters);
+      setMixedZoneIntervalMinutes(payload.mixed_zone_interval_minutes);
 
       availableLocations = Array.from(
         new Set(
@@ -4971,6 +5166,9 @@
       targetAccuracyMeters: capturePlan.targetAccuracyMeters,
     });
     if (!window.isSecureContext || !navigator.geolocation) {
+      recentLocationResolutionPayload = null;
+      recentLocationResolutionAt = 0;
+      recentLocationResolutionChave = '';
       setResolvedLocation(null);
       setLocationPresentation(
         'Indisponível',
@@ -4985,6 +5183,19 @@
         termination_reason: 'geolocation_unsupported',
       });
       return null;
+    }
+
+    if (!settings.forceRefresh) {
+      const recentLocationResolution = readRecentLocationResolution({
+        cacheWindowMs: settings.cacheWindowMs,
+      });
+      if (recentLocationResolution) {
+        finalizeLocationMeasurementSession(measurementSession, {
+          termination_reason: 'reused_recent_resolution',
+          cancelled: true,
+        });
+        return recentLocationResolution;
+      }
     }
 
     if (locationRequestPromise && !settings.forceRefresh) {
@@ -5021,6 +5232,9 @@
       );
 
       if (!shouldAttemptLookup) {
+        recentLocationResolutionPayload = null;
+        recentLocationResolutionAt = 0;
+        recentLocationResolutionChave = '';
         finalizeLocationMeasurementSession(measurementSession, {
           termination_reason: 'permission_not_granted',
         });
@@ -5035,6 +5249,9 @@
         writeStorageFlag(locationPermissionGrantedKey, true);
         setGpsLocationPermissionGranted(true);
         const matchPayload = await matchCurrentPosition(position, measurementSession);
+        recentLocationResolutionPayload = matchPayload;
+        recentLocationResolutionAt = Date.now();
+        recentLocationResolutionChave = getActiveChave();
         applyLocationMatch(matchPayload, { suppressNotification });
         finalizeLocationMeasurementSession(measurementSession, {
           final_status: matchPayload && typeof matchPayload.status === 'string' ? matchPayload.status : null,
@@ -5056,6 +5273,9 @@
         }
         return matchPayload;
       } catch (error) {
+        recentLocationResolutionPayload = null;
+        recentLocationResolutionAt = 0;
+        recentLocationResolutionChave = '';
         finalizeLocationMeasurementSession(
           measurementSession,
           describeLocationMeasurementFailure(error)
@@ -5094,6 +5314,7 @@
       interactive: false,
       forceRefresh: Boolean(settings.forceRefresh),
       measurementTrigger: settings.triggerSource,
+      cacheWindowMs: settings.cacheWindowMs,
       suppressNotification: settings.suppressNotification !== false,
       showDetectingState: settings.showDetectingState !== false,
     });
@@ -5106,6 +5327,10 @@
 
     if (locationRequestPromise) {
       await locationRequestPromise;
+      return;
+    }
+
+    if (readRecentLocationResolution({ cacheWindowMs: lifecycleDataReuseWindowMs })) {
       return;
     }
 
@@ -5260,6 +5485,13 @@
 
   function applyHistoryState(state) {
     latestHistoryState = state;
+    if (state) {
+      lastHistoryStateAppliedAt = Date.now();
+      lastHistoryStateAppliedChave = getActiveChave();
+    } else {
+      lastHistoryStateAppliedAt = 0;
+      lastHistoryStateAppliedChave = '';
+    }
     if (state && state.projeto) {
       const committedProject = normalizeKnownProjectValue(state.projeto, defaultProjectValue);
       lastCommittedProjectValue = committedProject;
@@ -5298,6 +5530,13 @@
     if (!isApplicationUnlocked(normalized)) {
       resetHistory();
       return;
+    }
+
+    const recentHistoryState = readRecentHistoryState(normalized, {
+      cacheWindowMs: settings.cacheWindowMs,
+    });
+    if (recentHistoryState) {
+      return recentHistoryState;
     }
 
     const requestToken = ++historyRequestToken;
@@ -5406,19 +5645,29 @@
 
     try {
       setSequenceStatus('Atualizando as atividades.....');
-      await refreshHistory(normalized, {
+      const remoteState = await refreshHistory(normalized, {
         showLoadingMessage: false,
         silentSuccessMessage: true,
         suppressMessages: true,
         rethrowErrors: true,
+        cacheWindowMs: lifecycleDataReuseWindowMs,
       });
 
       setSequenceStatus('Atualizando a localização.....');
-      const locationPayload = await updateLocationForLifecycleSequence(settings);
+      const locationPayload = await updateLocationForLifecycleSequence({
+        triggerSource: settings.triggerSource,
+        forceRefresh: settings.forceRefresh,
+        suppressNotification: settings.suppressNotification,
+        showDetectingState: settings.showDetectingState,
+        cacheWindowMs: settings.locationCacheWindowMs ?? lifecycleDataReuseWindowMs,
+      });
 
       if (isAutomaticActivitiesEnabled()) {
         setSequenceStatus('Realizando check-in ou check-out, se aplicável.....');
-        await runAutomaticActivitiesIfNeeded(locationPayload, { suppressStatus: true });
+        await runAutomaticActivitiesIfNeeded(locationPayload, {
+          suppressStatus: true,
+          remoteState,
+        });
       }
 
       restorePersistedUserSettingsForChave(normalized);
@@ -5462,6 +5711,21 @@
         await runAutomaticActivitiesIfNeeded(locationPayload);
       }
     });
+  }
+
+  function requestLifecycleUpdateFromUi(triggerSource) {
+    const nextTriggerSource = typeof triggerSource === 'string' && triggerSource
+      ? triggerSource
+      : 'visibility';
+
+    if (lifecycleUpdateRequestTimeoutId !== null) {
+      window.clearTimeout(lifecycleUpdateRequestTimeoutId);
+    }
+
+    lifecycleUpdateRequestTimeoutId = window.setTimeout(() => {
+      lifecycleUpdateRequestTimeoutId = null;
+      void runLifecycleUpdateSequence({ triggerSource: nextTriggerSource });
+    }, 0);
   }
 
   async function runAutomaticActivitiesEnableSequence() {
@@ -5760,19 +6024,6 @@
     transportRequestBuilderForm.addEventListener('submit', submitTransportRequestBuilder);
   }
 
-  if (transportAcknowledgementCheckbox) {
-    transportAcknowledgementCheckbox.addEventListener('change', () => {
-      transportUiState.acknowledgementChecked = transportAcknowledgementCheckbox.checked;
-      syncFormControlStates();
-    });
-  }
-
-  if (transportAcknowledgementButton) {
-    transportAcknowledgementButton.addEventListener('click', () => {
-      void acknowledgeTransportInformation();
-    });
-  }
-
   if (transportRequestDetailCloseButton) {
     transportRequestDetailCloseButton.addEventListener('click', closeTransportRequestDetailWidget);
   }
@@ -5923,7 +6174,7 @@
     if (document.visibilityState === 'visible') {
       scheduleViewportLayoutMetricsSync();
       schedulePasswordAutofillSync();
-      void runLifecycleUpdateSequence({ triggerSource: 'visibility' });
+      requestLifecycleUpdateFromUi('visibility');
       if (isTransportScreenOpen()) {
         void loadTransportState();
       }
@@ -5933,7 +6184,7 @@
   window.addEventListener('focus', () => {
     scheduleViewportLayoutMetricsSync();
     schedulePasswordAutofillSync();
-    void runLifecycleUpdateSequence({ triggerSource: 'focus' });
+    requestLifecycleUpdateFromUi('focus');
     if (isTransportScreenOpen()) {
       void loadTransportState();
     }
@@ -5941,7 +6192,7 @@
   window.addEventListener('pageshow', () => {
     scheduleViewportLayoutMetricsSync();
     schedulePasswordAutofillSync();
-    void runLifecycleUpdateSequence({ triggerSource: 'pageshow' });
+    requestLifecycleUpdateFromUi('pageshow');
     if (isTransportScreenOpen()) {
       void loadTransportState();
     }

@@ -144,7 +144,7 @@ def test_transport_ai_suggestions_migration_upgrades_head_on_sqlite(tmp_path):
     }.issubset(column_names)
     assert index_names["ix_transport_ai_suggestions_suggestion_key"]["unique"]
     assert index_names["ix_transport_ai_suggestions_suggestion_key"]["column_names"] == ["suggestion_key"]
-    assert index_names["ix_transport_ai_suggestions_service_date_route_kind_status_updated_at"]["column_names"] == [
+    assert index_names["ix_tai_suggestions_date_route_status_upd"]["column_names"] == [
         "service_date",
         "route_kind",
         "status",

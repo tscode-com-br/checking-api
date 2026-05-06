@@ -28,6 +28,8 @@ def _build_transport_ai_suggestion_commands_env(tmp_path: Path) -> dict[str, str
             "TRANSPORT_AI_ENABLED": "true",
             "TRANSPORT_AI_AGENT_MODE": "deterministic",
             "TRANSPORT_AI_ROUTE_PROVIDER": "fake",
+            "TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE": "phase8-loadtest-2026-05-05",
+            "TRANSPORT_AI_MAX_CONCURRENT_RUNS": "1",
             "OPENAI_API_KEY": "sk-test-openai-token",
             "MAPBOX_ACCESS_TOKEN": "test-mapbox-token",
         }
@@ -623,6 +625,8 @@ def _build_transport_ai_suggestion_script(
         settings.transport_ai_enabled = True
         settings.transport_ai_agent_mode = "deterministic"
         settings.transport_ai_route_provider = "fake"
+        settings.transport_ai_operational_approval_evidence = "phase8-loadtest-2026-05-05"
+        settings.transport_ai_max_concurrent_runs = 1
         settings.mapbox_access_token = "test-mapbox-token"
         clear_transport_reevaluation_events()
         seeded = _seed_transport_ai_suggestion_scenario(

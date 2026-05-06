@@ -10,6 +10,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$defaultProdDirs = @("~/checkcheck", "/root/checkcheck")
+$publicHealthUrl = if ($defaultProdDirs -contains $RemoteDir) { "https://tscode.com.br/api/health" } else { "" }
+
 function ConvertTo-BashLiteral {
   param([Parameter(Mandatory = $true)][string]$Value)
 
@@ -82,6 +85,73 @@ function Resolve-RegistryToken {
   throw "Nenhum token do GHCR foi encontrado. Defina GHCR_TOKEN/GH_TOKEN/GITHUB_TOKEN ou autentique o GitHub CLI com gh auth login."
 }
 
+function Read-DotEnvMap {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $values = @{}
+  foreach ($rawLine in Get-Content $Path) {
+    $line = $rawLine.Trim()
+    if (-not $line -or $line.StartsWith("#")) {
+      continue
+    }
+
+    $separatorIndex = $line.IndexOf("=")
+    if ($separatorIndex -lt 1) {
+      continue
+    }
+
+    $name = $line.Substring(0, $separatorIndex).Trim()
+    $value = $line.Substring($separatorIndex + 1).Trim()
+    $values[$name] = $value
+  }
+
+  return $values
+}
+
+function Assert-TransportAiEnvGate {
+  param([Parameter(Mandatory = $true)][hashtable]$EnvMap)
+
+  $enabledValue = if ($EnvMap.ContainsKey("TRANSPORT_AI_ENABLED")) { $EnvMap["TRANSPORT_AI_ENABLED"] } else { "" }
+  $normalizedEnabledValue = [string]$enabledValue
+  if ($normalizedEnabledValue.Trim().ToLowerInvariant() -ne "true") {
+    return
+  }
+
+  $approvalEvidence = if ($EnvMap.ContainsKey("TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE")) {
+    [string]$EnvMap["TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE"]
+  } else {
+    ""
+  }
+  if ([string]::IsNullOrWhiteSpace($approvalEvidence)) {
+    throw "TRANSPORT_AI_ENABLED=true exige TRANSPORT_AI_OPERATIONAL_APPROVAL_EVIDENCE preenchido no .env antes do deploy."
+  }
+
+  $maxConcurrentRunsRaw = if ($EnvMap.ContainsKey("TRANSPORT_AI_MAX_CONCURRENT_RUNS")) {
+    [string]$EnvMap["TRANSPORT_AI_MAX_CONCURRENT_RUNS"]
+  } else {
+    ""
+  }
+  $maxConcurrentRuns = 0
+  if (-not [int]::TryParse($maxConcurrentRunsRaw, [ref]$maxConcurrentRuns) -or $maxConcurrentRuns -le 0) {
+    throw "TRANSPORT_AI_ENABLED=true exige TRANSPORT_AI_MAX_CONCURRENT_RUNS inteiro e maior que zero no .env antes do deploy."
+  }
+}
+
+function Assert-AppWorkersEnvGate {
+  param([Parameter(Mandatory = $true)][hashtable]$EnvMap)
+
+  $workersRaw = if ($EnvMap.ContainsKey("APP_WORKERS")) {
+    [string]$EnvMap["APP_WORKERS"]
+  } else {
+    ""
+  }
+
+  $workers = 0
+  if (-not [int]::TryParse($workersRaw, [ref]$workers) -or $workers -ne 1) {
+    throw "APP_WORKERS=1 e obrigatorio no .env antes do deploy ate a validacao real de multiworker em tests/test_multiworker_realtime_postgres.py."
+  }
+}
+
 if ([string]::IsNullOrWhiteSpace($ImageTag)) {
   $ImageTag = Resolve-GitCommitSha
   if (-not $ImageTag) {
@@ -110,6 +180,10 @@ if (-not (Test-Path ".\\.env")) {
   throw "Missing .env in project root. Create it from deploy/.env.production.example before deploy."
 }
 
+$envMap = Read-DotEnvMap -Path ".\\.env"
+Assert-TransportAiEnvGate -EnvMap $envMap
+Assert-AppWorkersEnvGate -EnvMap $envMap
+
 Write-Host "[1/4] Uploading project files..."
 $tarCmd = "tar --exclude=.git --exclude=.venv --exclude=.pytest_cache --exclude=checking.db --exclude=test_checking.db -czf - ."
 cmd /c $tarCmd | ssh -i $KeyPath "$User@$ServerHost" "mkdir -p $RemoteDir && tar -xzf - -C $RemoteDir"
@@ -134,12 +208,22 @@ $remoteDeployLines = @(
   "printf '%s' $quotedRegistryToken | docker login ghcr.io -u $quotedRegistryUsername --password-stdin",
   "CHECKCHECK_APP_IMAGE=$quotedAppImage docker compose pull app",
   'docker logout ghcr.io || true',
-  "CHECKCHECK_APP_IMAGE=$quotedAppImage docker compose up -d --no-build --force-recreate --remove-orphans app"
+  "export CHECKCHECK_APP_IMAGE=$quotedAppImage"
 )
+$rolloutCommand = "bash deploy/maintenance/run_app_rollout.sh --phase full --deploy-dir $quotedRemoteDir --release-id $(ConvertTo-BashLiteral $ImageTag)"
+if (-not [string]::IsNullOrWhiteSpace($publicHealthUrl)) {
+  $rolloutCommand += " --public-health-url $(ConvertTo-BashLiteral $publicHealthUrl)"
+}
+$remoteDeployLines += $rolloutCommand
 $remoteDeployScript = [string]::Join("`n", $remoteDeployLines)
 ssh -i $KeyPath "$User@$ServerHost" "bash -lc $(ConvertTo-BashLiteral $remoteDeployScript)"
 
-Write-Host "[4/4] Health check..."
+Write-Host "[4/4] Local health check..."
 ssh -i $KeyPath "$User@$ServerHost" "curl -fsS http://127.0.0.1:8000/api/health || true"
+
+if (-not [string]::IsNullOrWhiteSpace($publicHealthUrl)) {
+  Write-Host "[5/5] Public health check..."
+  curl.exe -fsS $publicHealthUrl
+}
 
 Write-Host "Deploy completed."

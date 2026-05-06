@@ -114,7 +114,7 @@
     </div>
 
     <div id="adminShell" class="hidden">
-      <nav class="tabs">
+      <nav class="tabs" aria-label="Seções do painel administrativo">
         <button data-tab="checkin" class="active">Check-In</button>
         <button data-tab="checkout">Check-Out</button>
         <button data-tab="forms">Forms</button>
@@ -127,9 +127,22 @@
       <main>
       <section id="tab-checkin" class="tab active">
         <div class="section-header">
-          <h2 id="checkinTitle">Usuários em Check-In (0/0)</h2>
+          <div class="section-title-block">
+            <h2 id="checkinTitle">Usuários em Check-In (0/0)</h2>
+          </div>
+          <div class="section-header-actions section-header-actions--mobile-tools">
+            <button
+              type="button"
+              class="secondary-button filter-toggle-button hidden"
+              data-filter-toggle="checkin"
+              data-filter-open-label="Mostrar filtros"
+              data-filter-close-label="Ocultar filtros"
+              aria-controls="checkinFilters"
+              aria-expanded="true"
+            >Ocultar filtros</button>
+          </div>
         </div>
-        <div class="presence-controls" data-presence-table="checkin">
+        <div id="checkinFilters" class="presence-controls" data-presence-table="checkin" data-filter-panel="checkin">
           <div class="presence-controls-grid">
             <label class="presence-control-field">
               <span data-presence-primary-filter-label="checkin">Filtrar Horário</span>
@@ -138,7 +151,7 @@
               </select>
             </label>
             <label class="presence-control-field">
-              <span>Filtrar Nome</span>
+              <span data-presence-name-filter-label="checkin">Filtrar Nome</span>
               <select data-presence-filter="nome">
                 <option value="">Todos</option>
               </select>
@@ -177,7 +190,7 @@
             <thead>
               <tr>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="time"><span data-presence-primary-header-label="checkin">Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
-                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="nome"><span data-presence-name-header-label="checkin">Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkin" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th>Fuso horário</th>
@@ -192,9 +205,22 @@
 
       <section id="tab-checkout" class="tab">
         <div class="section-header">
-          <h2 id="checkoutTitle">Usuários em Check-Out (0/0)</h2>
+          <div class="section-title-block">
+            <h2 id="checkoutTitle">Usuários em Check-Out (0/0)</h2>
+          </div>
+          <div class="section-header-actions section-header-actions--mobile-tools">
+            <button
+              type="button"
+              class="secondary-button filter-toggle-button hidden"
+              data-filter-toggle="checkout"
+              data-filter-open-label="Mostrar filtros"
+              data-filter-close-label="Ocultar filtros"
+              aria-controls="checkoutFilters"
+              aria-expanded="true"
+            >Ocultar filtros</button>
+          </div>
         </div>
-        <div class="presence-controls" data-presence-table="checkout">
+        <div id="checkoutFilters" class="presence-controls" data-presence-table="checkout" data-filter-panel="checkout">
           <div class="presence-controls-grid">
             <label class="presence-control-field">
               <span data-presence-primary-filter-label="checkout">Filtrar Horário</span>
@@ -203,7 +229,7 @@
               </select>
             </label>
             <label class="presence-control-field">
-              <span>Filtrar Nome</span>
+              <span data-presence-name-filter-label="checkout">Filtrar Nome</span>
               <select data-presence-filter="nome">
                 <option value="">Todos</option>
               </select>
@@ -242,7 +268,7 @@
             <thead>
               <tr>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="time"><span data-presence-primary-header-label="checkout">Horário</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
-                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="nome"><span data-presence-name-header-label="checkout">Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="chave"><span>Chave</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button type="button" class="sortable-header" data-sort-table="checkout" data-sort-key="projeto"><span>Projeto</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th>Fuso horário</th>
@@ -275,10 +301,23 @@
 
       <section id="tab-inactive" class="tab">
         <div class="section-header">
-          <h2 id="inactiveTitle">Usuários Inativos (0)</h2>
-          <button id="refreshInactiveButton" type="button" class="secondary-button">Atualizar</button>
+          <div class="section-title-block">
+            <h2 id="inactiveTitle">Usuários Inativos (0)</h2>
+          </div>
+          <div class="section-header-actions section-header-actions--mobile-tools">
+            <button id="refreshInactiveButton" type="button" class="secondary-button">Atualizar</button>
+            <button
+              type="button"
+              class="secondary-button filter-toggle-button hidden"
+              data-filter-toggle="inactive"
+              data-filter-open-label="Mostrar filtros"
+              data-filter-close-label="Ocultar filtros"
+              aria-controls="inactiveFilters"
+              aria-expanded="true"
+            >Ocultar filtros</button>
+          </div>
         </div>
-        <div class="presence-controls" data-presence-table="inactive">
+        <div id="inactiveFilters" class="presence-controls" data-presence-table="inactive" data-filter-panel="inactive">
           <div class="presence-controls-grid">
             <label class="presence-control-field">
               <span>Filtrar Nome</span>
@@ -316,7 +355,7 @@
           </div>
         </div>
         <div class="table-wrap">
-          <table class="responsive-table">
+          <table class="responsive-table inactive-users-table">
             <thead>
               <tr>
                 <th><button type="button" class="sortable-header" data-sort-table="inactive" data-sort-key="nome"><span>Nome</span><span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -333,149 +372,179 @@
         </div>
       </section>
 
-      <section id="tab-cadastro" class="tab">
-        <div class="section-header">
-          <h2>Cadastro de Pendências</h2>
-        </div>
-        <div class="table-wrap">
-          <table class="responsive-table cadastro-table cadastro-pending-table">
-            <thead>
-              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Ações</th></tr>
-            </thead>
-            <tbody id="pendingBody"></tbody>
-          </table>
-        </div>
+      <section id="tab-cadastro" class="tab cadastro-tab">
+        <article class="cadastro-section-panel cadastro-section-panel--pending" data-cadastro-section="pendencias">
+          <div class="section-header">
+            <h2>Cadastro de Pendências</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="responsive-table cadastro-table cadastro-pending-table">
+              <thead>
+                <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projeto</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="pendingBody"></tbody>
+            </table>
+          </div>
+        </article>
 
-        <div class="section-header">
-          <h2>Localizações</h2>
-        </div>
-        <p class="section-header-copy location-section-copy">Cada localização forma um polígono fechado. Cadastre os vértices em ordem; o sistema conecta automaticamente o último vértice de volta ao V1.</p>
-        <div class="table-wrap cadastro-grid-wrap">
-          <table class="responsive-table cadastro-table cadastro-locations-table">
-            <thead>
-              <tr><th>Projetos</th><th>Local</th><th>Vértices do Polígono</th><th>Tolerância</th><th>Ações</th></tr>
-            </thead>
-            <tbody id="locationsBody"></tbody>
-          </table>
-        </div>
-        <div class="locations-actions-bar">
-          <button id="addLocationButton" type="button">Adicionar Localização</button>
-        </div>
-        <div class="locations-settings-panel">
-          <div class="locations-settings-row">
-            <label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:</label>
-            <div class="locations-settings-input-group">
-              <input id="locationAccuracyThresholdMeters" type="number" min="1" max="9999" inputmode="numeric" value="30" />
-              <span>metros</span>
+        <article class="cadastro-section-panel cadastro-section-panel--locations" data-cadastro-section="localizacoes">
+          <div class="section-header">
+            <h2>Localizações</h2>
+          </div>
+          <p class="section-header-copy location-section-copy">Cada localização forma um polígono fechado. Cadastre os vértices em ordem; o sistema conecta automaticamente o último vértice de volta ao V1.</p>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-locations-table">
+              <thead>
+                <tr><th>Projetos</th><th>Local</th><th>Vértices do Polígono</th><th>Tolerância</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="locationsBody"></tbody>
+            </table>
+          </div>
+          <div class="locations-actions-bar">
+            <button id="addLocationButton" type="button">Adicionar Localização</button>
+          </div>
+          <div class="locations-settings-panel">
+            <div class="locations-settings-row">
+              <label for="mixedZoneIntervalMinutes">Intervalo de Tempo para Zona Mista:</label>
+              <div class="locations-settings-input-group">
+                <input id="mixedZoneIntervalMinutes" type="number" min="1" inputmode="numeric" value="20" />
+                <span>minutos</span>
+              </div>
             </div>
+            <div class="locations-settings-row">
+              <label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:</label>
+              <div class="locations-settings-input-group">
+                <input id="locationAccuracyThresholdMeters" type="number" min="1" max="9999" inputmode="numeric" value="30" />
+                <span>metros</span>
+              </div>
+            </div>
+            <div class="locations-settings-actions">
+              <button id="saveLocationSettingsButton" type="button" disabled>Salvar</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="cadastro-section-panel cadastro-section-panel--distances" data-cadastro-section="checkout-distance">
+          <div class="section-header">
+            <h2>Distância mínima para check-out automático</h2>
+          </div>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-project-checkout-distance-table">
+              <thead>
+                <tr><th>Projeto</th><th>Distância mínima em metros</th></tr>
+              </thead>
+              <tbody id="projectMinimumCheckoutDistancesBody"></tbody>
+            </table>
           </div>
           <div class="locations-settings-actions">
-            <button id="saveLocationSettingsButton" type="button" disabled>Salvar</button>
+            <button id="saveProjectMinimumCheckoutDistancesButton" type="button" disabled>Salvar</button>
           </div>
-        </div>
+        </article>
 
-        <div class="section-header">
-          <h2>Distância mínima para check-out automático</h2>
-        </div>
-        <div class="table-wrap cadastro-grid-wrap">
-          <table class="responsive-table cadastro-table cadastro-project-checkout-distance-table">
-            <thead>
-              <tr><th>Projeto</th><th>Distância mínima em metros</th></tr>
-            </thead>
-            <tbody id="projectMinimumCheckoutDistancesBody"></tbody>
-          </table>
-        </div>
-        <div class="locations-settings-actions">
-          <button id="saveProjectMinimumCheckoutDistancesButton" type="button" disabled>Salvar</button>
-        </div>
-
-        <div class="section-header">
-          <h2>Administradores</h2>
-          <button id="refreshAdministratorsButton" type="button" class="secondary-button">Atualizar</button>
-        </div>
-        <div class="table-wrap cadastro-grid-wrap">
-          <table class="responsive-table cadastro-table cadastro-admin-table">
-            <thead>
-              <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Projetos</th><th>Acessos</th><th>Ações</th></tr>
-            </thead>
-            <tbody id="administratorsBody"></tbody>
-          </table>
-        </div>
-
-        <div class="section-header">
-          <h2>Projetos</h2>
-        </div>
-        <div class="project-editor-panel">
+        <article class="cadastro-section-panel cadastro-section-panel--administrators" data-cadastro-section="administradores">
           <div class="section-header">
-            <div>
-              <h3 id="projectEditorTitle">Novo Projeto</h3>
-              <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome do projeto, endereço, ZIP Code, país e fuso horário. Use Editar para alterar qualquer informação de um projeto já cadastrado.</p>
+            <h2>Administradores</h2>
+            <button id="refreshAdministratorsButton" type="button" class="secondary-button">Atualizar</button>
+          </div>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-admin-table">
+              <thead>
+                <tr><th>Chave</th><th>Nome</th><th>Perfil</th><th>Projetos</th><th>Acessos</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="administratorsBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="cadastro-section-panel cadastro-section-panel--projects" data-cadastro-section="projetos">
+          <div class="section-header">
+            <h2>Projetos</h2>
+          </div>
+          <div class="project-editor-panel">
+            <div class="section-header">
+              <div>
+                <h3 id="projectEditorTitle">Novo Projeto</h3>
+                <p id="projectEditorHelp" class="section-header-copy project-editor-copy">Informe o nome do projeto, endereço, ZIP Code, país e fuso horário. Use Editar para alterar qualquer informação de um projeto já cadastrado.</p>
+              </div>
+            </div>
+            <div class="project-editor-grid">
+              <label class="presence-control-field" for="projectNameInput">
+                <span>Nome do projeto</span>
+                <input id="projectNameInput" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: P84" />
+              </label>
+              <label class="presence-control-field" for="projectAddressInput">
+                <span>Endereço</span>
+                <input id="projectAddressInput" type="text" maxlength="255" autocomplete="off" placeholder="Ex.: 10 Bayfront Avenue" />
+              </label>
+              <label class="presence-control-field" for="projectZipCodeInput">
+                <span>ZIP Code</span>
+                <input id="projectZipCodeInput" type="text" maxlength="32" autocomplete="off" placeholder="Ex.: 018956" />
+              </label>
+              <label class="presence-control-field" for="projectCountrySelect">
+                <span>País</span>
+                <select id="projectCountrySelect"></select>
+              </label>
+              <label class="presence-control-field" for="projectTimezoneInput">
+                <span>Fuso horário</span>
+                <input id="projectTimezoneInput" type="text" list="projectTimezoneOptions" maxlength="64" autocomplete="off" placeholder="Ex.: Asia/Singapore" />
+              </label>
+              <label class="presence-control-field" for="projectCustomCountryInput">
+                <span>Novo país</span>
+                <input id="projectCustomCountryInput" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Chile" />
+              </label>
+            </div>
+            <datalist id="projectTimezoneOptions"></datalist>
+            <div class="locations-actions-bar cadastro-projects-actions project-editor-actions">
+              <button id="saveProjectButton" type="button">Salvar Projeto</button>
+              <button id="cancelProjectEditButton" type="button" class="secondary-button">Cancelar</button>
+              <button id="addProjectButton" type="button" class="secondary-button">Limpar Formulário</button>
             </div>
           </div>
-          <div class="project-editor-grid">
-            <label class="presence-control-field" for="projectNameInput">
-              <span>Nome do projeto</span>
-              <input id="projectNameInput" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: P84" />
-            </label>
-            <label class="presence-control-field" for="projectAddressInput">
-              <span>Endereço</span>
-              <input id="projectAddressInput" type="text" maxlength="255" autocomplete="off" placeholder="Ex.: 10 Bayfront Avenue" />
-            </label>
-            <label class="presence-control-field" for="projectZipCodeInput">
-              <span>ZIP Code</span>
-              <input id="projectZipCodeInput" type="text" maxlength="32" autocomplete="off" placeholder="Ex.: 018956" />
-            </label>
-            <label class="presence-control-field" for="projectCountrySelect">
-              <span>País</span>
-              <select id="projectCountrySelect"></select>
-            </label>
-            <label class="presence-control-field" for="projectTimezoneInput">
-              <span>Fuso horário</span>
-              <input id="projectTimezoneInput" type="text" list="projectTimezoneOptions" maxlength="64" autocomplete="off" placeholder="Ex.: Asia/Singapore" />
-            </label>
-            <label class="presence-control-field" for="projectCustomCountryInput">
-              <span>Novo país</span>
-              <input id="projectCustomCountryInput" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Chile" />
-            </label>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-projects-table">
+              <thead>
+                <tr><th>Nome do Projeto</th><th>País</th><th>Endereço</th><th>ZIP Code</th><th>Fuso horário</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="projectsBody"></tbody>
+            </table>
           </div>
-          <datalist id="projectTimezoneOptions"></datalist>
-          <div class="locations-actions-bar cadastro-projects-actions project-editor-actions">
-            <button id="saveProjectButton" type="button">Salvar Projeto</button>
-            <button id="cancelProjectEditButton" type="button" class="secondary-button">Cancelar</button>
-            <button id="addProjectButton" type="button" class="secondary-button">Limpar Formulário</button>
-          </div>
-        </div>
-        <div class="table-wrap cadastro-grid-wrap">
-          <table class="responsive-table cadastro-table cadastro-projects-table">
-            <thead>
-              <tr><th>Nome do Projeto</th><th>País</th><th>Endereço</th><th>ZIP Code</th><th>Fuso horário</th><th>Ações</th></tr>
-            </thead>
-            <tbody id="projectsBody"></tbody>
-          </table>
-        </div>
+        </article>
 
-        <div class="section-header">
-          <h2>Usuários Cadastrados</h2>
-          <button id="refreshUsersButton" type="button" class="secondary-button">Atualizar</button>
-        </div>
-        <div class="table-wrap cadastro-grid-wrap">
-          <table class="responsive-table cadastro-table cadastro-users-table">
-            <thead>
-              <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Perfil</th><th>Projeto</th><th>Endereço</th><th>ZIP Code</th><th>Cargo</th><th>Email</th><th>Ações</th></tr>
-            </thead>
-            <tbody id="usersBody"></tbody>
-          </table>
-        </div>
+        <article class="cadastro-section-panel cadastro-section-panel--users" data-cadastro-section="usuarios">
+          <div class="section-header">
+            <h2>Usuários Cadastrados</h2>
+            <button id="refreshUsersButton" type="button" class="secondary-button">Atualizar</button>
+          </div>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-users-table">
+              <thead>
+                <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Perfil</th><th>Projeto</th><th>Endereço</th><th>ZIP Code</th><th>Cargo</th><th>Email</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="usersBody"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
       <section id="tab-relatorios" class="tab reports-tab">
         <div class="section-header">
-          <div>
+          <div class="section-title-block">
             <h2>Relatórios</h2>
             <p class="section-header-copy">Busque uma pessoa por chave ou nome para visualizar o histórico consolidado em ordem decrescente.</p>
           </div>
+          <div class="section-header-actions section-header-actions--mobile-tools">
+            <button
+              type="button"
+              class="secondary-button filter-toggle-button hidden"
+              data-filter-toggle="relatorios"
+              data-filter-open-label="Mostrar filtros"
+              data-filter-close-label="Ocultar filtros"
+              aria-controls="reportsSearchPanel"
+              aria-expanded="true"
+            >Ocultar filtros</button>
+          </div>
         </div>
-        <div class="project-editor-panel reports-search-panel">
+        <div id="reportsSearchPanel" class="project-editor-panel reports-search-panel" data-filter-panel="relatorios">
           <div class="presence-controls-grid reports-search-grid">
             <label class="presence-control-field" for="reportsSearchChave">
               <span>Busca por Chave</span>
