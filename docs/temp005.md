@@ -945,3 +945,220 @@ After all five prompts are implemented, verify the following scenarios:
 6. **Known limitation**: a stale "running" run blocks the concurrency limit until manually
    resolved. Future improvement: add a stale-run detection job that marks runs older than
    `transport_ai_max_runtime_seconds * 2` as "failed" if still in "running" status.
+
+---
+
+---
+
+# Session Handoff — Context for the Next Agent
+
+This section documents everything that happened in the session that produced this file, so the
+next agent can pick up without re-reading the entire conversation history. Read this BEFORE
+starting any work on the Transport AI feature or the CI/CD pipeline.
+
+---
+
+## What This Project Is
+
+**checkcheck** is a transport management system for coordinating passenger pickup routes.
+The backend is a FastAPI application (`sistema/app/`) backed by PostgreSQL, served by
+Gunicorn + UvicornWorker inside Docker Compose. The frontend for transport operators lives in
+`sistema/app/static/transport/` (vanilla JS + HTML, no build step). The production server is a
+DigitalOcean droplet. Deployments are triggered by pushing to `main` via GitHub Actions
+(`deploy-oceandrive.yml`): rsync files, pull Docker image, run migrations, start app, apply nginx.
+
+---
+
+## What Was Fixed in This Session
+
+### Fix 1 — `transport_ai_agent_execution_failed` (Pydantic ValidationError)
+
+**Symptom:** Transport AI run 35 failed with error code `transport_ai_agent_execution_failed`
+instead of the expected `transport_ai_deterministic_plan_invalid`. The `failed_phase` was
+`"deterministic"` instead of `"validation"`, which proved the exception happened in the outer
+handler before `_mark_transport_ai_observability_failure` could set the correct phase.
+
+**Root cause:** `_build_transport_ai_runtime_issue()` and two other functions were calling
+`_truncate_transport_ai_error_message()`, which clips at 1000 chars (the DB column size).
+But `TransportAIPreflightIssue.message` and `TransportAILangChainToolIssue.message` both have
+`max_length=500` in their Pydantic schema (`sistema/app/schemas.py`). Passing a 1000-char
+string to a 500-char field raised a `ValidationError` that was caught by the outer
+`except Exception` handler — which set `failure_code="transport_ai_agent_execution_failed"`.
+
+**Fix:** Added `_truncate_transport_ai_issue_message()` (clips at 497 chars + `"..."`) in
+`sistema/app/services/transport_ai_agent.py` and replaced the three call sites that build
+Pydantic issue models.
+
+**Commits:** `c18d47c` (fix), `49a09d4` (diagnostic logging added in previous session).
+
+---
+
+### Fix 2 — HTTP 504 on `POST /api/transport/ai/route-calculations`
+
+**Symptom:** Clicking "Calcular Rotas" returned HTTP 504 after ~60 seconds.
+
+**Root cause:** The request fell through to the generic `location /api/` nginx block
+(`proxy_read_timeout 60s`). Transport AI calculations take 2–30+ minutes. There was no
+dedicated nginx location for the route-calculations endpoint.
+
+**Fix:** Added `location = /api/transport/ai/route-calculations` with
+`proxy_read_timeout 1860s` / `proxy_send_timeout 1860s` to
+`deploy/nginx/checking-edge-routes.conf` (before the generic `/api/` block).
+
+**Additional context:** The `OCEAN_NGINX_SERVER_CONFIG` GitHub secret was also added
+(`/etc/nginx/sites-enabled/checkcheck`) so future deploys automatically re-apply and reload
+nginx via `manage_checking_edge_cutover.sh apply` inside `deploy-oceandrive.yml`.
+
+**Commits:** `dc087fd` (nginx routes), plus several follow-up fixes described below.
+
+---
+
+### Fix 3 — CI Pipeline broken by YAML error (silent, 0-second failures)
+
+**Symptom:** Every push to `main` after commit `dc087fd` failed `deploy-oceandrive.yml` with
+"This run likely failed because of a workflow file issue" in 0 seconds (no jobs ran).
+The nginx fix was never deployed for several hours.
+
+**Root cause:** The new "Apply nginx edge routes" step used `secrets` directly in an `if:`
+condition:
+```yaml
+if: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG != '' }}   # WRONG — secrets not allowed in if:
+```
+GitHub Actions evaluates `if:` conditions before secrets are available. The workflow failed
+to parse.
+
+**Fix:** Follow the pattern used elsewhere in the file — expose the secret as an env var first,
+then check the env var:
+```yaml
+env:
+  OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
+if: env.OCEAN_NGINX_SERVER_CONFIG != ''
+```
+Also changed `${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}` inside the `script:` block to
+`${{ env.OCEAN_NGINX_SERVER_CONFIG }}`.
+
+**RULE FOR FUTURE AGENTS:** Never use `secrets.*` directly in `if:` conditions in this
+repository's GitHub Actions workflows. Always use the env-var pattern shown above.
+
+**Commit:** `efe007b`.
+
+---
+
+### Fix 4 — nginx backup files polluting `sites-enabled/`
+
+**Symptom:** The one-time `apply-nginx-once.yml` workflow (created to apply the nginx fix
+immediately, before a full deploy) failed with:
+```
+[emerg] a duplicate default server for 0.0.0.0:80 in
+/etc/nginx/sites-enabled/checkcheck.bak.20260511082439:2
+nginx: configuration file /etc/nginx/nginx.conf test failed
+```
+
+**Root cause:** `manage_checking_edge_cutover.sh` creates backups in the same directory as
+the server config file:
+```bash
+backup_file="${server_config}.bak.$(date +%Y%m%d%H%M%S)"
+# → /etc/nginx/sites-enabled/checkcheck.bak.20260511082439
+```
+nginx loads ALL files in `sites-enabled/` (including `.bak.*` files), finds a duplicate
+`default_server` directive, and refuses to start.
+
+**Fix:** Changed the default backup path in `manage_checking_edge_cutover.sh` to use `/tmp/`:
+```bash
+backup_file="${backup_file:-/tmp/nginx-$(basename "$server_config").bak.$(date +%Y%m%d%H%M%S)}"
+```
+
+**RULE FOR FUTURE AGENTS:** nginx backup files must NEVER be placed inside
+`/etc/nginx/sites-enabled/` or any directory that nginx scans for configs.
+
+**Commit:** `9a979ef`.
+
+---
+
+### Fix 5 — Vehicle passenger table now sorted by boarding time
+
+**Symptom:** When clicking the car icon in the transport UI, the passenger table was shown in
+database insertion order.
+
+**Fix:** Added `.sort()` by `timeSortValue` (a 4-digit padded minutes-of-day string, already
+computed on every row) in `buildVehicleDetailsRowViewModels()` in
+`sistema/app/static/transport/app.js` (~line 10447).
+
+Passengers with no boarding time sort last (`timeSortValue = "9999"`).
+
+**Commit:** `97b1785`.
+
+---
+
+## Current Production State (as of end of session)
+
+| Item | State |
+|---|---|
+| Transport AI `transport_ai_agent_execution_failed` bug | **Fixed and deployed** |
+| nginx 504 on route-calculations | **Fixed and deployed** |
+| CI pipeline (`deploy-oceandrive.yml`) | **Working** |
+| Vehicle passenger table sort | **Fixed and deployed** |
+| Fire-and-poll architecture | **Planned, not implemented** (see above) |
+| `OCEAN_NGINX_SERVER_CONFIG` secret | **Set** to `/etc/nginx/sites-enabled/checkcheck` |
+
+---
+
+## Production Environment Details
+
+- **Server:** DigitalOcean droplet
+- **nginx config:** `/etc/nginx/sites-enabled/checkcheck`
+- **App directory secret:** `OCEAN_APP_DIR` (value masked in CI logs)
+- **App stack:** Docker Compose → Gunicorn (`--worker-class uvicorn.workers.UvicornWorker`)
+- **Default workers:** `APP_WORKERS=1` (production `.env` likely overrides this)
+- **Default concurrency:** `TRANSPORT_AI_MAX_CONCURRENT_RUNS=1` (production `.env` likely overrides)
+- **Gunicorn timeout:** `APP_TIMEOUT_SECONDS=90` default — does NOT kill long-running sync
+  endpoints because UvicornWorker runs `def` endpoints in a thread pool (event loop stays
+  responsive for heartbeats)
+- **Postgres:** `max_connections=40`, app pool size 6 + overflow 2 = max 8 connections
+- **GitHub Actions secrets:** `OCEAN_HOST`, `OCEAN_USER`, `OCEAN_SSH_KEY`, `OCEAN_PORT`,
+  `OCEAN_APP_DIR`, `OCEAN_HOST_FINGERPRINT`, `OCEAN_NGINX_SERVER_CONFIG`
+
+---
+
+## Non-Obvious Architectural Facts
+
+1. **`run_transport_ai_agent()` is fully synchronous** (`def`, not `async def`). FastAPI wraps
+   it in the default thread pool executor. It does NOT block the Gunicorn/Uvicorn event loop.
+   This is why `APP_TIMEOUT_SECONDS=90` doesn't kill it.
+
+2. **Single DB commit at the end of the POST endpoint.** The entire setup phase (run creation,
+   baseline capture, passenger reset, planning input) is flushed but not committed until the
+   very end. This means if anything fails mid-setup, a rollback is clean.
+
+3. **The cancel endpoint (`POST /suggestions/{key}/cancel`) only works for runs in `proposed`
+   or `saved` status.** There is no UI or API way to cancel a `running` Transport AI calculation.
+   The thread runs to completion (or failure) regardless of what the client does.
+
+4. **`manage_checking_edge_cutover.sh` is idempotent.** It replaces the managed block between
+   `# BEGIN CHECKCHECK EDGE ROUTES` and `# END CHECKCHECK EDGE ROUTES` markers each time it
+   runs. Running it twice is safe.
+
+5. **The polling infrastructure already exists in both backend and frontend.** The GET status
+   endpoint (`/route-calculations/{run_key}`) and the frontend `pollAiRouteRun()` function were
+   already in place before this session. The fire-and-poll plan (above) wires them together.
+
+6. **The frontend has NO build step.** `app.js` and `index.html` in
+   `sistema/app/static/transport/` are served directly. Edits take effect on the next deploy
+   (rsync copies them to the server).
+
+---
+
+## Pending Work for the Next Agent
+
+1. **Implement fire-and-poll** — The full plan and 5 agent prompts are in the sections above
+   this handoff. Start with PROMPT 1.
+
+2. **Stale "running" run cleanup** — After implementing fire-and-poll, daemon threads can be
+   killed by Gunicorn worker recycling, leaving runs stuck in `"running"` forever. A periodic
+   task should detect runs where `status = "running"` AND
+   `updated_at < now() - transport_ai_max_runtime_seconds * 2` and mark them as `"failed"`.
+
+3. **100-user concurrency test** — The user validated 25 simultaneous users successfully.
+   The 100-user test with all projects was pending at end of session. Its result will determine
+   whether `APP_WORKERS` and `TRANSPORT_AI_MAX_CONCURRENT_RUNS` need to be increased in the
+   production `.env`, or whether the fire-and-poll implementation is needed first.
