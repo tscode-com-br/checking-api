@@ -794,7 +794,7 @@
                 data-ai-settings-api-key-label
                 data-i18n-text="ai.settingsApiKey"
               >
-                API Key:
+                LLM Provider API Key:
               </span>
               <input
                 id="transportAiSettingsApiKey"
@@ -804,11 +804,33 @@
                 data-ai-settings-api-key
                 data-i18n-aria-label="ai.settingsApiKey"
                 data-i18n-placeholder="ai.settingsApiKeyPlaceholder"
-                placeholder="Paste API key"
+                placeholder="Paste LLM API key"
               />
             </label>
 
             <p class="transport-ai-settings-api-key-hint" data-ai-settings-api-key-hint hidden></p>
+
+            <label class="transport-settings-row" for="transportAiSettingsMapsApiKey">
+              <span
+                class="transport-settings-label"
+                data-ai-settings-maps-api-key-label
+                data-i18n-text="ai.settingsMapsApiKey"
+              >
+                Maps Provider API Key:
+              </span>
+              <input
+                id="transportAiSettingsMapsApiKey"
+                class="transport-settings-text-input"
+                type="password"
+                autocomplete="off"
+                data-ai-settings-maps-api-key
+                data-i18n-aria-label="ai.settingsMapsApiKey"
+                data-i18n-placeholder="ai.settingsMapsApiKeyPlaceholder"
+                placeholder="Paste HERE API key"
+              />
+            </label>
+
+            <p class="transport-ai-settings-api-key-hint" data-ai-settings-maps-api-key-hint hidden></p>
           </div>
 
           <div

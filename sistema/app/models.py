@@ -369,6 +369,8 @@ class TransportAILlmSettings(Base):
     reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False)
     api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_key_last4: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    here_api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    here_api_key_last4: Mapped[str | None] = mapped_column(String(8), nullable=True)
     updated_by_admin_id: Mapped[int] = mapped_column(ForeignKey("admin_users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

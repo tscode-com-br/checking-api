@@ -3344,6 +3344,8 @@ class TransportAISettingsResponse(BaseModel):
     reasoning_effort: str = Field(min_length=1, max_length=32)
     has_api_key: bool = False
     api_key_hint: str | None = Field(default=None, max_length=32)
+    has_here_api_key: bool = False
+    here_api_key_hint: str | None = Field(default=None, max_length=32)
 
     @field_validator("project_name", mode="before")
     @classmethod
@@ -3355,7 +3357,7 @@ class TransportAISettingsResponse(BaseModel):
     def validate_transport_ai_settings_response_text(cls, value: object) -> str | None:
         return _normalize_optional_compact_text(value, "O texto", max_length=120)
 
-    @field_validator("api_key_hint", mode="before")
+    @field_validator("api_key_hint", "here_api_key_hint", mode="before")
     @classmethod
     def validate_transport_ai_settings_api_key_hint(cls, value: object) -> str | None:
         return _normalize_optional_compact_text(value, "O texto", max_length=32)
@@ -3365,6 +3367,7 @@ class TransportAISettingsUpdateRequest(BaseModel):
     project_id: int = Field(ge=1)
     provider: TransportAILlmProvider
     api_key: str | None = Field(default=None, max_length=4096)
+    here_api_key: str | None = Field(default=None, max_length=4096)
 
     @model_validator(mode="before")
     @classmethod
@@ -3385,7 +3388,7 @@ class TransportAISettingsUpdateRequest(BaseModel):
 
         return value
 
-    @field_validator("api_key", mode="before")
+    @field_validator("api_key", "here_api_key", mode="before")
     @classmethod
     def validate_transport_ai_settings_api_key(cls, value: object) -> str | None:
         return _normalize_optional_compact_text(value, "A chave API", max_length=4096)

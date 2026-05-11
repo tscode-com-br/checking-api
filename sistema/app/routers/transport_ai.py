@@ -57,6 +57,7 @@ from ..services.transport_ai_llm_settings import (
     TransportAILlmSettingsValidationError,
     get_transport_ai_llm_settings,
     get_transport_ai_llm_settings_payload,
+    save_transport_ai_here_api_key,
     upsert_transport_ai_llm_settings,
 )
 from ..services.transport_ai_sanitization import sanitize_transport_ai_string
@@ -3215,6 +3216,43 @@ def update_transport_ai_settings(
             error_code="transport_ai_settings_encryption_unavailable",
             technical_detail=failure_detail,
         )
+
+    normalized_here_api_key = str(payload.here_api_key or "").strip() or None
+    if normalized_here_api_key is not None:
+        try:
+            save_transport_ai_here_api_key(
+                db,
+                api_key=normalized_here_api_key,
+                actor_admin_user_id=actor_admin_user.id,
+            )
+            settings.here_api_key = normalized_here_api_key
+        except TransportAILlmSettingsValidationError as exc:
+            response_detail = _sanitize_transport_ai_router_message(
+                str(exc),
+                extra_literal_secrets=(normalized_here_api_key,),
+            )
+            _raise_transport_ai_router_structured_http_error(
+                status_code=status.HTTP_409_CONFLICT,
+                message=response_detail,
+                message_key="ai.settingsSaveFailed",
+                error_code="transport_ai_settings_validation_failed",
+                technical_detail=response_detail,
+            )
+        except TransportAILlmSettingsEncryptionError as exc:
+            response_detail = _sanitize_transport_ai_router_message(
+                "Transport AI settings encryption is unavailable.",
+                extra_literal_secrets=(normalized_here_api_key,),
+            )
+            _raise_transport_ai_router_structured_http_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                message=response_detail,
+                message_key="ai.settingsEncryptionUnavailable",
+                error_code="transport_ai_settings_encryption_unavailable",
+                technical_detail=_sanitize_transport_ai_router_message(
+                    str(exc),
+                    extra_literal_secrets=(normalized_here_api_key,),
+                ),
+            )
 
     response_payload = get_transport_ai_llm_settings_payload(db, project_id=payload.project_id)
     record_transport_ai_settings_update(

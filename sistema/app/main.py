@@ -24,6 +24,7 @@ from .services.admin_auth import seed_default_admin
 from .services.admin_updates import start_realtime_brokers, stop_realtime_brokers
 from .services.event_archives import ensure_event_archives_dir
 from .services.project_catalog import seed_default_projects
+from .services.transport_ai_llm_settings import get_transport_ai_here_api_key_decrypted
 from .services.transport_ai_sanitization import sanitize_transport_ai_raw_value
 
 
@@ -210,6 +211,17 @@ def mount_static_site(app: FastAPI, *, site_name: str, route_path: str, director
     app.mount(route_path, StaticFiles(directory=directory), name=site_name)
 
 
+def _load_here_api_key_from_db() -> None:
+    from .database import SessionLocal
+    try:
+        with SessionLocal() as db:
+            here_api_key = get_transport_ai_here_api_key_decrypted(db)
+            if here_api_key:
+                settings.here_api_key = here_api_key
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_event_archives_dir()
@@ -217,6 +229,7 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
     seed_default_projects()
     seed_default_admin()
+    _load_here_api_key_from_db()
     start_realtime_brokers()
     try:
         yield

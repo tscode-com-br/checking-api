@@ -141,6 +141,7 @@ def _apply_transport_ai_llm_settings_values(
 def _build_transport_ai_llm_settings_payload(
     persisted_settings: TransportAILlmSettings | TransportAIProjectLlmSettings | None,
     *,
+    global_settings: TransportAILlmSettings | None = None,
     project: Project | None = None,
     settings_obj: Settings = settings,
 ) -> TransportAISettingsResponse:
@@ -149,6 +150,7 @@ def _build_transport_ai_llm_settings_payload(
         persisted_settings.provider if persisted_settings is not None else TRANSPORT_AI_LLM_DEFAULT_PROVIDER
     )
     has_api_key = bool(persisted_settings and persisted_settings.api_key_ciphertext)
+    has_here_api_key = bool(global_settings and global_settings.here_api_key_ciphertext)
     return TransportAISettingsResponse(
         project_id=project.id if project is not None else None,
         project_name=project.name if project is not None else None,
@@ -159,6 +161,12 @@ def _build_transport_ai_llm_settings_payload(
         api_key_hint=(
             mask_transport_ai_api_key(api_key_last4=persisted_settings.api_key_last4)
             if has_api_key
+            else None
+        ),
+        has_here_api_key=has_here_api_key,
+        here_api_key_hint=(
+            mask_transport_ai_api_key(api_key_last4=global_settings.here_api_key_last4)
+            if has_here_api_key
             else None
         ),
     )
@@ -338,6 +346,7 @@ def get_transport_ai_llm_settings_payload(
     project = _require_transport_ai_project(db, project_id)
     return _build_transport_ai_llm_settings_payload(
         get_transport_ai_llm_settings(db, project_id=project_id),
+        global_settings=get_legacy_transport_ai_llm_settings(db),
         project=project,
         settings_obj=settings_obj,
     )
@@ -512,5 +521,49 @@ def resolve_transport_ai_project_llm_runtime_settings(
     return resolve_transport_ai_llm_runtime_settings(
         db,
         project_id=project_id,
+        settings_obj=settings_obj,
+    )
+
+
+def save_transport_ai_here_api_key(
+    db: Session,
+    *,
+    api_key: str,
+    actor_admin_user_id: int,
+    settings_obj: Settings = settings,
+) -> TransportAILlmSettings:
+    _validate_transport_ai_actor_admin_user_id(actor_admin_user_id)
+    normalized_api_key = _normalize_transport_ai_api_key(api_key)
+    if normalized_api_key is None:
+        raise TransportAILlmSettingsValidationError("HERE API key is required.")
+
+    timestamp = now_sgt()
+    global_row = get_legacy_transport_ai_llm_settings(db)
+    if global_row is None:
+        raise TransportAILlmSettingsValidationError(
+            "Transport AI LLM settings must be configured before saving the HERE API key."
+        )
+
+    global_row.here_api_key_ciphertext = encrypt_transport_ai_api_key(
+        normalized_api_key,
+        settings_obj=settings_obj,
+    )
+    global_row.here_api_key_last4 = normalized_api_key[-4:]
+    global_row.updated_by_admin_id = actor_admin_user_id
+    global_row.updated_at = timestamp
+    db.flush()
+    return global_row
+
+
+def get_transport_ai_here_api_key_decrypted(
+    db: Session,
+    *,
+    settings_obj: Settings = settings,
+) -> str | None:
+    global_row = get_legacy_transport_ai_llm_settings(db)
+    if global_row is None or not global_row.here_api_key_ciphertext:
+        return None
+    return decrypt_transport_ai_api_key(
+        global_row.here_api_key_ciphertext,
         settings_obj=settings_obj,
     )

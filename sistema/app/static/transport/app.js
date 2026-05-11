@@ -2515,6 +2515,7 @@
       projectId: null,
       provider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
       apiKey: "",
+      mapsApiKey: "",
     };
   }
 
@@ -2725,6 +2726,7 @@
         defaults.provider
       ),
       apiKey: readAiAgentSettingsFieldValue(source, "apiKey", "apiKeyInput", defaults.apiKey),
+      mapsApiKey: readAiAgentSettingsFieldValue(source, "mapsApiKey", "mapsApiKeyInput", defaults.mapsApiKey),
     };
   }
 
@@ -2740,10 +2742,12 @@
   function buildTransportAiSettingsUpdatePayload(draft) {
     const normalizedDraft = readTransportAiSettingsDraft(draft, getDefaultTransportAiSettingsDraft());
     const normalizedApiKey = String(normalizedDraft.apiKey || "").trim();
+    const normalizedMapsApiKey = String(normalizedDraft.mapsApiKey || "").trim();
     return {
       project_id: normalizedDraft.projectId,
       provider: normalizedDraft.provider,
       api_key: normalizedApiKey || null,
+      here_api_key: normalizedMapsApiKey || null,
     };
   }
 
@@ -5972,6 +5976,8 @@
       aiSettingsLoadedProvider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
       aiSettingsHasApiKey: false,
       aiSettingsApiKeyHint: "",
+      aiSettingsHasMapsApiKey: false,
+      aiSettingsMapsApiKeyHint: "",
       aiSettingsFeedbackMessage: "",
       aiSettingsFeedbackKey: "",
       aiSettingsFeedbackValues: null,
@@ -6004,6 +6010,8 @@
     const aiSettingsProviderNote = document.querySelector("[data-ai-settings-provider-note]");
     const aiSettingsApiKeyInput = document.querySelector("[data-ai-settings-api-key]");
     const aiSettingsApiKeyHint = document.querySelector("[data-ai-settings-api-key-hint]");
+    const aiSettingsMapsApiKeyInput = document.querySelector("[data-ai-settings-maps-api-key]");
+    const aiSettingsMapsApiKeyHint = document.querySelector("[data-ai-settings-maps-api-key-hint]");
     const aiSettingsFeedback = document.querySelector("[data-ai-settings-feedback]");
     const aiAgentModal = document.querySelector("[data-ai-agent-modal]");
     const aiAgentModalNote = document.querySelector("[data-ai-agent-modal-note]");
@@ -6770,6 +6778,8 @@
       state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
       state.aiSettingsHasApiKey = false;
       state.aiSettingsApiKeyHint = "";
+      state.aiSettingsHasMapsApiKey = false;
+      state.aiSettingsMapsApiKeyHint = "";
     }
 
     function getTransportAiSettingsProjectRows() {
@@ -6956,6 +6966,12 @@
       if (aiSettingsApiKeyInput) {
         aiSettingsApiKeyInput.disabled = fieldControlsDisabled;
       }
+      if (aiSettingsMapsApiKeyInput) {
+        if (!syncOptions.preserveInputs) {
+          aiSettingsMapsApiKeyInput.value = activeDraft.mapsApiKey;
+        }
+        aiSettingsMapsApiKeyInput.disabled = controlsDisabled;
+      }
       if (aiSettingsProviderNote) {
         if (projectCatalogLoading) {
           aiSettingsProviderNote.textContent = t("ai.settingsLoading");
@@ -6993,6 +7009,22 @@
         aiSettingsApiKeyHint.hidden = !hintMessage;
         aiSettingsApiKeyHint.textContent = hintMessage;
         aiSettingsApiKeyHint.dataset.tone = hintTone;
+      }
+
+      if (aiSettingsMapsApiKeyHint) {
+        const mapsApiKeyValue = String(activeDraft.mapsApiKey || "").trim();
+        let mapsHintMessage = "";
+        let mapsHintTone = "info";
+        if (!mapsApiKeyValue) {
+          if (state.aiSettingsHasMapsApiKey && state.aiSettingsMapsApiKeyHint) {
+            mapsHintMessage = t("ai.settingsMapsApiKeyHint", { hint: state.aiSettingsMapsApiKeyHint });
+          } else if (!state.aiSettingsHasMapsApiKey) {
+            mapsHintMessage = t("ai.settingsMapsApiKeyMissing");
+          }
+        }
+        aiSettingsMapsApiKeyHint.hidden = !mapsHintMessage;
+        aiSettingsMapsApiKeyHint.textContent = mapsHintMessage;
+        aiSettingsMapsApiKeyHint.dataset.tone = mapsHintTone;
       }
 
       document.querySelectorAll("[data-close-ai-settings-modal]").forEach(function (buttonElement) {
@@ -9167,12 +9199,15 @@
               projectId: selectedProject.id,
               provider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
               apiKey: "",
+              mapsApiKey: "",
             },
             getDefaultTransportAiSettingsDraft()
           );
           state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
           state.aiSettingsHasApiKey = false;
           state.aiSettingsApiKeyHint = "";
+          state.aiSettingsHasMapsApiKey = false;
+          state.aiSettingsMapsApiKeyHint = "";
           syncAiSettingsControls();
           return requestJson(buildTransportAiSettingsUrl(selectedProject.id));
         })
@@ -9195,12 +9230,15 @@
               projectId: selectedProject.id,
               provider: normalizedProvider,
               apiKey: "",
+              mapsApiKey: "",
             },
             getDefaultTransportAiSettingsDraft()
           );
           state.aiSettingsLoadedProvider = normalizedProvider;
           state.aiSettingsHasApiKey = Boolean(response && response.has_api_key);
           state.aiSettingsApiKeyHint = String(response && response.api_key_hint || "").trim();
+          state.aiSettingsHasMapsApiKey = Boolean(response && response.has_here_api_key);
+          state.aiSettingsMapsApiKeyHint = String(response && response.here_api_key_hint || "").trim();
           clearAiSettingsFeedback();
           return response || null;
         })
@@ -9254,6 +9292,7 @@
           projectInput: aiSettingsProjectInput,
           providerInput: aiSettingsProviderInput,
           apiKeyInput: aiSettingsApiKeyInput,
+          mapsApiKeyInput: aiSettingsMapsApiKeyInput,
         },
         state.aiSettingsDraft || getDefaultTransportAiSettingsDraft()
       );
@@ -9273,6 +9312,7 @@
             projectId: null,
             provider: draft.provider,
             apiKey: draft.apiKey,
+            mapsApiKey: draft.mapsApiKey,
           },
           getDefaultTransportAiSettingsDraft()
         );
@@ -9302,6 +9342,8 @@
           );
           state.aiSettingsHasApiKey = Boolean(response && response.has_api_key);
           state.aiSettingsApiKeyHint = String(response && response.api_key_hint || "").trim();
+          state.aiSettingsHasMapsApiKey = Boolean(response && response.has_here_api_key);
+          state.aiSettingsMapsApiKeyHint = String(response && response.here_api_key_hint || "").trim();
           clearAiSettingsFeedback();
           const structuredAiSettingsSavedMessage = resolveTransportApiStructuredMessage(response)
             || String(response && response.message || "").trim();
@@ -9355,12 +9397,15 @@
           projectId: selectedProject ? selectedProject.id : null,
           provider: DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER,
           apiKey: "",
+          mapsApiKey: "",
         },
         getDefaultTransportAiSettingsDraft()
       );
       state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
       state.aiSettingsHasApiKey = false;
       state.aiSettingsApiKeyHint = "";
+      state.aiSettingsHasMapsApiKey = false;
+      state.aiSettingsMapsApiKeyHint = "";
       clearAiSettingsFeedback();
       applyStaticTranslations();
       syncAiSettingsControls();
@@ -9386,6 +9431,8 @@
       state.aiSettingsLoadedProvider = DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER;
       state.aiSettingsHasApiKey = false;
       state.aiSettingsApiKeyHint = "";
+      state.aiSettingsHasMapsApiKey = false;
+      state.aiSettingsMapsApiKeyHint = "";
       clearAiSettingsFeedback();
       aiSettingsModal.hidden = true;
       if (
