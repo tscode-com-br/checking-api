@@ -2846,6 +2846,21 @@
     );
   }
 
+  function getAiRoutePollingStatusLabel(status) {
+    const normalizedStatus = String(status || "").trim().toLowerCase();
+    switch (normalizedStatus) {
+      case "requested":
+      case "baseline_saved":
+        return "Preparando dados...";
+      case "passengers_reset":
+        return "Inicializando c\u00e1lculo...";
+      case "running":
+        return "Calculando rotas com IA...";
+      default:
+        return "Aguardando resultado...";
+    }
+  }
+
   function hasRenderableTransportAiReview(runStatusResponse) {
     const normalizedResponse = runStatusResponse && typeof runStatusResponse === "object"
       ? runStatusResponse
@@ -9634,12 +9649,16 @@
             return response || null;
           }
 
+          const isPolling = shouldContinuePollingAiRouteRun(response);
+          const pollingDisplayMessage = isPolling
+            ? getAiRoutePollingStatusLabel(response && response.status)
+            : responseMessage;
           setAiAgentFeedback(
-            responseMessage,
-            shouldContinuePollingAiRouteRun(response) ? "warning" : "success",
-            responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" })
+            pollingDisplayMessage,
+            isPolling ? "warning" : "success",
+            isPolling ? undefined : (responseMessageOptions || (responseMessage ? undefined : { key: "ai.agentSettingsSubmitting" }))
           );
-          if (shouldContinuePollingAiRouteRun(response)) {
+          if (isPolling) {
             queueAiRouteRunPoll(state.aiRouteRunKey, getNextAiRoutePollDelay());
           } else {
             resetAiRoutePollingBackoff();
@@ -9739,6 +9758,11 @@
           );
 
           if (state.aiRouteRunKey) {
+            // After the fire-and-poll backend change, the POST returns HTTP 202 quickly
+            // with suggestion_ready=false. Polling is now the primary success path.
+            // The loading state persists during polling because syncAiAgentSettingsControls
+            // checks aiRoutePollingTimer and shouldContinuePollingAiRouteRun in addition
+            // to aiRouteRequestPending.
             return pollAiRouteRun(state.aiRouteRunKey);
           }
           return response || null;

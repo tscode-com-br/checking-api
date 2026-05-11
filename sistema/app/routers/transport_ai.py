@@ -1,5 +1,7 @@
 import json
-from datetime import date
+import logging
+import threading
+from datetime import date, datetime, timezone
 from time import perf_counter
 from uuid import uuid4
 
@@ -10,7 +12,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..core.config import normalize_transport_ai_agent_mode, settings
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models import (
     Project,
     TransportAIRun,
@@ -3867,6 +3869,120 @@ def apply_transport_ai_suggestion(
     return _build_transport_ai_run_status_response(run=run, suggestion=suggestion)
 
 
+_logger = logging.getLogger(__name__)
+
+
+def _execute_transport_ai_run_in_background(run_key: str, settings_obj) -> None:
+    """
+    Executes the Transport AI agent for an already-set-up run.
+    Must be called in a background thread. Creates its own DB session.
+    The request session is closed before this function runs — never reuse it.
+    """
+    db = SessionLocal()
+    try:
+        run = db.execute(
+            select(TransportAIRun).where(TransportAIRun.run_key == run_key).limit(1)
+        ).scalar_one_or_none()
+        if run is None:
+            _logger.error(
+                "transport_ai_background: run not found for run_key=%s", run_key
+            )
+            return
+
+        agent_result = run_transport_ai_agent(
+            db=db,
+            run=run,
+            settings_obj=settings_obj,
+        )
+
+        if agent_result.plan is None:
+            _restore_transport_ai_baseline_after_failure(
+                db=db,
+                run=run,
+                actor_user_id=run.actor_user_id,
+                timestamp=now_sgt(),
+                base_error_code=agent_result.error_code or "transport_ai_route_calculation_failed",
+                base_error_message=agent_result.error_message or "Transport AI route calculation failed.",
+                issues=agent_result.issues,
+                planning_input=_load_transport_ai_run_planning_input_model(run),
+                observability=agent_result.observability,
+            )
+            db.commit()
+            notify_admin_data_changed("event")
+            return
+
+        suggestion = create_transport_ai_suggestion_from_plan(
+            db,
+            run=run,
+            plan=agent_result.plan,
+            prompt_version=agent_result.prompt_version,
+            raw_model_response_json=agent_result.raw_model_response_json,
+            suggestion_key=f"transport-ai-suggestion:{uuid4().hex}",
+            proposal_key=f"transport-ai-proposal:{run.run_key}",
+            status="shown",
+            created_at=now_sgt(),
+        )
+        record_transport_ai_lifecycle_transition(
+            db,
+            stage="suggestion_generated",
+            run=run,
+            suggestion=suggestion,
+            request_path="/api/transport/ai/route-calculations",
+            extra_details={
+                "prompt_version": agent_result.prompt_version,
+                "llm_provider": run.llm_provider,
+                "llm_model": run.llm_model,
+                "llm_reasoning_effort": run.llm_reasoning_effort,
+                "openai_model": run.openai_model,
+                "observability": _build_transport_ai_observability_event_summary(
+                    agent_result.observability or _extract_transport_ai_run_observability(run)
+                ),
+            },
+        )
+        emit_transport_reevaluation_event(
+            event_type="transport_operational_review_changed",
+            reason="event",
+            source="transport_admin",
+            message="Transport AI suggestion is ready for review.",
+            service_date=run.service_date,
+            route_kind=run.route_kind,
+            proposal_key=suggestion.proposal_key,
+        )
+        db.commit()
+        notify_admin_data_changed("event")
+
+    except Exception:
+        _logger.error(
+            "transport_ai_background: unhandled exception for run_key=%s",
+            run_key,
+            exc_info=True,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            run_to_fail = db.execute(
+                select(TransportAIRun).where(TransportAIRun.run_key == run_key).limit(1)
+            ).scalar_one_or_none()
+            if run_to_fail is not None and run_to_fail.status not in (
+                "proposed", "saved", "applied", "cancelled", "failed"
+            ):
+                run_to_fail.status = "failed"
+                run_to_fail.error_code = "transport_ai_agent_execution_failed"
+                run_to_fail.error_message = "Unexpected error in background executor."
+                run_to_fail.completed_at = datetime.now(timezone.utc)
+                db.commit()
+        except Exception:
+            _logger.error(
+                "transport_ai_background: could not mark run as failed: %s",
+                run_key,
+                exc_info=True,
+            )
+    finally:
+        db.close()
+
+
 @router.post(
     "/route-calculations",
     response_model=TransportAgentRunStartResponse,
@@ -4183,88 +4299,36 @@ def start_transport_ai_route_calculation(
                 ),
             )
 
-        agent_result = run_transport_ai_agent(
-            db=db,
-            run=run,
-            settings_obj=settings,
-        )
-        if agent_result.plan is None:
-            restore_issues, can_cancel_restore, final_message = _restore_transport_ai_baseline_after_failure(
-                db=db,
-                run=run,
-                actor_user_id=actor_admin_user.id,
-                timestamp=now_sgt(),
-                base_error_code=agent_result.error_code or "transport_ai_route_calculation_failed",
-                base_error_message=agent_result.error_message or "Transport AI route calculation failed.",
-                issues=agent_result.issues,
-                planning_input=_load_transport_ai_run_planning_input_model(run),
-                observability=agent_result.observability,
-            )
-            db.commit()
-            notify_admin_data_changed("event")
-            return _build_transport_ai_error_response(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                response=_build_transport_ai_start_response(
-                    ok=False,
-                    run_key=run.run_key,
-                    status_value=run.status,
-                    error_code=agent_result.error_code or "transport_ai_route_calculation_failed",
-                    message=final_message,
-                    issues=[*agent_result.issues, *restore_issues],
-                    llm_provider=run.llm_provider,
-                    llm_model=run.llm_model,
-                    route_provider=run.route_provider,
-                    can_cancel_restore=can_cancel_restore,
-                ),
-            )
-
-        suggestion = create_transport_ai_suggestion_from_plan(
-            db,
-            run=run,
-            plan=agent_result.plan,
-            prompt_version=agent_result.prompt_version,
-            raw_model_response_json=agent_result.raw_model_response_json,
-            suggestion_key=f"transport-ai-suggestion:{uuid4().hex}",
-            proposal_key=f"transport-ai-proposal:{run.run_key}",
-            status="shown",
-            created_at=now_sgt(),
-        )
-        record_transport_ai_lifecycle_transition(
-            db,
-            stage="suggestion_generated",
-            run=run,
-            suggestion=suggestion,
-            request_path="/api/transport/ai/route-calculations",
-            extra_details={
-                "prompt_version": agent_result.prompt_version,
-                "llm_provider": run.llm_provider,
-                "llm_model": run.llm_model,
-                "llm_reasoning_effort": run.llm_reasoning_effort,
-                "openai_model": run.openai_model,
-                "observability": _build_transport_ai_observability_event_summary(
-                    agent_result.observability or _extract_transport_ai_run_observability(run)
-                ),
-            },
-        )
-        emit_transport_reevaluation_event(
-            event_type="transport_operational_review_changed",
-            reason="event",
-            source="transport_admin",
-            message="Transport AI suggestion is ready for review.",
-            service_date=run.service_date,
-            route_kind=run.route_kind,
-            proposal_key=suggestion.proposal_key,
-        )
+        # --- FIRE-AND-POLL: commit setup, spawn background executor, return 202 ---
+        # Commit all setup work so the background thread can see it in its own session.
+        # This is mandatory: the background thread opens a new SessionLocal() and will
+        # not see rows that have not been committed.
         db.commit()
-        notify_admin_data_changed("event")
-        return _build_transport_ai_start_response(
-            ok=True,
-            run_key=run.run_key,
-            suggestion_key=suggestion.suggestion_key,
-            status_value=run.status,
-            message="Transport AI route calculation completed successfully.",
-            can_cancel_restore=True,
-            suggestion_ready=True,
+
+        # Spawn the background thread. daemon=True so it doesn't block server shutdown.
+        thread = threading.Thread(
+            target=_execute_transport_ai_run_in_background,
+            args=(run.run_key, settings),
+            daemon=True,
+            name=f"transport-ai-{run.run_key}",
+        )
+        thread.start()
+
+        # Return 202 Accepted immediately. The agent is now running in the background.
+        # The client will poll GET /api/transport/ai/route-calculations/{run_key} for status.
+        # suggestion_ready=False because the TransportAISuggestion has not been created yet.
+        return JSONResponse(
+            status_code=202,
+            content=_build_transport_ai_start_response(
+                ok=True,
+                run_key=run.run_key,
+                suggestion_key=None,
+                suggestion_ready=False,
+                status_value=run.status,
+                message="Cálculo iniciado. Os resultados estarão disponíveis em alguns minutos.",
+                issues=list(planning_input.preflight_issues),
+                can_cancel_restore=True,
+            ).model_dump(),
         )
     except Exception as exc:
         restore_issues, can_cancel_restore, final_message = _restore_transport_ai_baseline_after_failure(
