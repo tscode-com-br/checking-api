@@ -320,6 +320,27 @@ jobs:
               --phase start \
               --deploy-dir '${{ steps.deploy_dir.outputs.path }}'
 
+      - name: Apply nginx edge routes
+        if: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG != '' }}
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -euo pipefail
+            cd ${{ steps.deploy_dir.outputs.path }}
+            bash deploy/nginx/manage_checking_edge_cutover.sh apply \
+              --server-config '${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}' \
+              --routes-file deploy/nginx/checking-edge-routes.conf \
+              --http-config-target /etc/nginx/conf.d/checkcheck-edge-http.conf \
+              --http-rules-file deploy/nginx/checking-edge-http.conf \
+              --reload
+
       - name: Snapshot disk usage after restart
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
