@@ -3532,6 +3532,40 @@ class TransportWorkToHomeTimePolicyResponse(BaseModel):
     date_override_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
     workplace_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
     transport_group: str | None = None
+    boarding_point: str | None = None
+    transport_window_start: str | None = Field(default=None, min_length=5, max_length=5)
+    transport_window_end: str | None = Field(default=None, min_length=5, max_length=5)
+    service_restrictions: str | None = None
+
+    @field_validator("resolved_work_to_home_time")
+    @classmethod
+    def validate_resolved_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("global_work_to_home_time")
+    @classmethod
+    def validate_global_work_to_home_time(cls, value: str) -> str:
+        return _normalize_transport_time(value)
+
+    @field_validator("date_override_work_to_home_time", mode="before")
+    @classmethod
+    def validate_date_override_work_to_home_time(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("workplace_work_to_home_time", mode="before")
+    @classmethod
+    def validate_workplace_work_to_home_time(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("transport_window_start", mode="before")
+    @classmethod
+    def validate_policy_transport_window_start(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
+
+    @field_validator("transport_window_end", mode="before")
+    @classmethod
+    def validate_policy_transport_window_end(cls, value: str | None) -> str | None:
+        return _normalize_optional_transport_time(value)
 
 
 # ---------------------------------------------------------------------------
@@ -3567,40 +3601,6 @@ class CheckingInfoResponse(BaseModel):
     ok: bool
     total: int
     entries: list[CheckingInfoEntry]
-    boarding_point: str | None = None
-    transport_window_start: str | None = Field(default=None, min_length=5, max_length=5)
-    transport_window_end: str | None = Field(default=None, min_length=5, max_length=5)
-    service_restrictions: str | None = None
-
-    @field_validator("resolved_work_to_home_time")
-    @classmethod
-    def validate_resolved_work_to_home_time(cls, value: str) -> str:
-        return _normalize_transport_time(value)
-
-    @field_validator("global_work_to_home_time")
-    @classmethod
-    def validate_global_work_to_home_time(cls, value: str) -> str:
-        return _normalize_transport_time(value)
-
-    @field_validator("date_override_work_to_home_time", mode="before")
-    @classmethod
-    def validate_date_override_work_to_home_time(cls, value: str | None) -> str | None:
-        return _normalize_optional_transport_time(value)
-
-    @field_validator("workplace_work_to_home_time", mode="before")
-    @classmethod
-    def validate_workplace_work_to_home_time(cls, value: str | None) -> str | None:
-        return _normalize_optional_transport_time(value)
-
-    @field_validator("transport_window_start", mode="before")
-    @classmethod
-    def validate_policy_transport_window_start(cls, value: str | None) -> str | None:
-        return _normalize_optional_transport_time(value)
-
-    @field_validator("transport_window_end", mode="before")
-    @classmethod
-    def validate_policy_transport_window_end(cls, value: str | None) -> str | None:
-        return _normalize_optional_transport_time(value)
 
 
 class PendingRow(BaseModel):
