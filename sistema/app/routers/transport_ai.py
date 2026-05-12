@@ -4072,6 +4072,11 @@ def start_transport_ai_route_calculation(
                     else None
                 ),
                 "dashboard_scope_project_names": dashboard_scope_project_names,
+                "min_occupancy": (
+                    payload.min_occupancy
+                    if payload.min_occupancy is not None
+                    else None
+                ),
             }
         ),
         planning_input_hash="0" * 64,
@@ -4189,6 +4194,7 @@ def start_transport_ai_route_calculation(
             request_route_kinds=payload.request_route_kinds,
             dashboard_scope=payload.dashboard_scope,
             settings_obj=settings,
+            min_occupancy=payload.min_occupancy,
         )
         planning_issues = list(planning_input.preflight_issues)
         if normalize_transport_ai_agent_mode(settings.transport_ai_agent_mode) == "agent":

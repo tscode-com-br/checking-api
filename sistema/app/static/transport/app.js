@@ -55,6 +55,7 @@
   const DEFAULT_AI_AGENT_SETTINGS = {
     earliestBoardingTime: "06:50",
     arrivalAtWorkTime: "07:45",
+    minOccupancy: { carro: 1, minivan: 3, van: 6, onibus: 30 },
   };
   const DEFAULT_TRANSPORT_AI_SETTINGS_PROVIDER = "openai";
   const AI_SETTINGS_PROJECT_CATALOG_STATUS = Object.freeze({
@@ -2483,10 +2484,12 @@
   }
 
   function getDefaultAiAgentSettings() {
+    const def = DEFAULT_AI_AGENT_SETTINGS;
     return {
-      earliestBoardingTime: DEFAULT_AI_AGENT_SETTINGS.earliestBoardingTime,
-      arrivalAtWorkTime: DEFAULT_AI_AGENT_SETTINGS.arrivalAtWorkTime,
+      earliestBoardingTime: def.earliestBoardingTime,
+      arrivalAtWorkTime: def.arrivalAtWorkTime,
       requestKinds: Array.from(DEFAULT_AI_AGENT_REQUEST_KINDS),
+      minOccupancy: { ...def.minOccupancy },
     };
   }
 
@@ -2658,6 +2661,25 @@
 
   function readAiAgentSettingsDraft(source, fallbackValues) {
     const defaults = Object.assign({}, getDefaultAiAgentSettings(), fallbackValues || {});
+    const defaultMinOcc = defaults.minOccupancy || DEFAULT_AI_AGENT_SETTINGS.minOccupancy;
+
+    // Read minOccupancy: from source.minOccupancy dict, or from source.minOccInputs DOM map, or fallback
+    const minOccupancy = {};
+    const vehicleTypes = ["carro", "minivan", "van", "onibus"];
+    for (const vt of vehicleTypes) {
+      let rawValue = defaultMinOcc[vt];
+      if (source && typeof source === "object") {
+        if (source.minOccupancy && typeof source.minOccupancy === "object") {
+          rawValue = source.minOccupancy[vt] != null ? source.minOccupancy[vt] : rawValue;
+        } else if (source.minOccInputs && source.minOccInputs[vt] && typeof source.minOccInputs[vt] === "object") {
+          const parsed = parseInt(source.minOccInputs[vt].value, 10);
+          rawValue = Number.isFinite(parsed) && parsed >= 1 ? parsed : rawValue;
+        }
+      }
+      const parsed = parseInt(rawValue, 10);
+      minOccupancy[vt] = Number.isFinite(parsed) && parsed >= 1 ? parsed : defaultMinOcc[vt];
+    }
+
     return {
       earliestBoardingTime: readAiAgentSettingsFieldValue(
         source,
@@ -2672,6 +2694,7 @@
         defaults.arrivalAtWorkTime
       ),
       requestKinds: readAiAgentRequestKinds(source, defaults.requestKinds),
+      minOccupancy,
     };
   }
 
@@ -2830,6 +2853,15 @@
       } else {
         payload.dashboard_scope = dashboardScope;
       }
+    }
+
+    if (normalizedDraft.minOccupancy && typeof normalizedDraft.minOccupancy === "object") {
+      payload.min_occupancy = {
+        carro: normalizedDraft.minOccupancy.carro || 1,
+        minivan: normalizedDraft.minOccupancy.minivan || 3,
+        van: normalizedDraft.minOccupancy.van || 6,
+        onibus: normalizedDraft.minOccupancy.onibus || 30,
+      };
     }
 
     return payload;
@@ -6034,6 +6066,18 @@
     const aiAgentRequestKindInputs = Array.from(document.querySelectorAll("[data-ai-agent-request-kind]"));
     const aiAgentEarliestBoardingInput = document.querySelector("[data-ai-agent-earliest-boarding]");
     const aiAgentArrivalAtWorkInput = document.querySelector("[data-ai-agent-arrival-at-work]");
+    const aiAgentMinOccInputs = {
+      carro: document.querySelector('[data-ai-agent-min-occ="carro"]'),
+      minivan: document.querySelector('[data-ai-agent-min-occ="minivan"]'),
+      van: document.querySelector('[data-ai-agent-min-occ="van"]'),
+      onibus: document.querySelector('[data-ai-agent-min-occ="onibus"]'),
+    };
+    const aiAgentMaxSeatsLabels = {
+      carro: document.querySelector('[data-ai-agent-max-seats="carro"]'),
+      minivan: document.querySelector('[data-ai-agent-max-seats="minivan"]'),
+      van: document.querySelector('[data-ai-agent-max-seats="van"]'),
+      onibus: document.querySelector('[data-ai-agent-max-seats="onibus"]'),
+    };
     const aiAgentFeedback = document.querySelector("[data-ai-agent-feedback]");
     const aiChangesModal = document.querySelector("[data-ai-changes-modal]");
     const aiChangesSummary = document.querySelector("[data-ai-changes-status]")
@@ -6723,7 +6767,24 @@
           ).trim().toLowerCase();
           inputElement.checked = activeDraft.requestKinds.includes(requestKind);
         });
+        ["carro", "minivan", "van", "onibus"].forEach(function (vt) {
+          if (aiAgentMinOccInputs[vt]) {
+            const draftOcc = activeDraft.minOccupancy && activeDraft.minOccupancy[vt];
+            aiAgentMinOccInputs[vt].value = draftOcc != null ? draftOcc : DEFAULT_AI_AGENT_SETTINGS.minOccupancy[vt];
+          }
+        });
       }
+
+      // Update max-seats labels from current vehicle seat defaults
+      ["carro", "minivan", "van", "onibus"].forEach(function (vt) {
+        if (aiAgentMaxSeatsLabels[vt]) {
+          const maxSeats = state.vehicleSeatDefaults && state.vehicleSeatDefaults[vt] != null
+            ? state.vehicleSeatDefaults[vt]
+            : DEFAULT_VEHICLE_SEAT_COUNT[vt];
+          const labelText = t("ai.agentSettingsMinOccMaxSeats", { count: maxSeats });
+          aiAgentMaxSeatsLabels[vt].textContent = labelText || "(" + maxSeats + ")";
+        }
+      });
 
       if (aiAgentEarliestBoardingInput) {
         aiAgentEarliestBoardingInput.disabled = hasActiveRun;
@@ -6733,6 +6794,11 @@
       }
       aiAgentRequestKindInputs.forEach(function (inputElement) {
         inputElement.disabled = hasActiveRun;
+      });
+      ["carro", "minivan", "van", "onibus"].forEach(function (vt) {
+        if (aiAgentMinOccInputs[vt]) {
+          aiAgentMinOccInputs[vt].disabled = hasActiveRun;
+        }
       });
 
       document.querySelectorAll("[data-ai-agent-cancel]").forEach(function (buttonElement) {
@@ -8595,6 +8661,7 @@
             earliestBoardingInput: aiAgentEarliestBoardingInput,
             arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
             requestKindInputs: aiAgentRequestKindInputs,
+            minOccInputs: aiAgentMinOccInputs,
           },
           state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
         );
@@ -8616,6 +8683,7 @@
             earliestBoardingInput: aiAgentEarliestBoardingInput,
             arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
             requestKindInputs: aiAgentRequestKindInputs,
+            minOccInputs: aiAgentMinOccInputs,
           },
           state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
         );
@@ -8623,6 +8691,25 @@
           clearAiAgentFeedback();
           return;
         }
+        syncAiAgentSettingsControls({ preserveInputs: true });
+      });
+    });
+
+    ["carro", "minivan", "van", "onibus"].forEach(function (vt) {
+      const inputElement = aiAgentMinOccInputs[vt];
+      if (!inputElement) {
+        return;
+      }
+      inputElement.addEventListener("input", function () {
+        state.aiAgentSettingsDraft = readAiAgentSettingsDraft(
+          {
+            earliestBoardingInput: aiAgentEarliestBoardingInput,
+            arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
+            requestKindInputs: aiAgentRequestKindInputs,
+            minOccInputs: aiAgentMinOccInputs,
+          },
+          state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
+        );
         syncAiAgentSettingsControls({ preserveInputs: true });
       });
     });
@@ -9719,6 +9806,7 @@
           earliestBoardingInput: aiAgentEarliestBoardingInput,
           arrivalAtWorkInput: aiAgentArrivalAtWorkInput,
           requestKindInputs: aiAgentRequestKindInputs,
+          minOccInputs: aiAgentMinOccInputs,
         },
         state.aiAgentSettingsDraft || getDefaultAiAgentSettings()
       );

@@ -1276,6 +1276,7 @@ def _resolve_transport_ai_route_point_lookup(
 
 def _build_transport_agent_vehicle_type_configs(
     transport_settings: dict[str, object],
+    min_occupancy_by_type: dict[str, int] | None = None,
 ) -> list[TransportAgentPlanningVehicleTypeConfig]:
     return [
         TransportAgentPlanningVehicleTypeConfig(
@@ -1284,6 +1285,11 @@ def _build_transport_agent_vehicle_type_configs(
             default_price=transport_settings.get(_PRICE_SETTING_BY_VEHICLE_TYPE[vehicle_type]),
             capacity_setting_name=_SEAT_SETTING_BY_VEHICLE_TYPE[vehicle_type],
             price_setting_name=_PRICE_SETTING_BY_VEHICLE_TYPE[vehicle_type],
+            min_occupancy=(
+                max(1, int(min_occupancy_by_type[vehicle_type]))
+                if min_occupancy_by_type and vehicle_type in min_occupancy_by_type
+                else 1
+            ),
         )
         for vehicle_type in _SUPPORTED_VEHICLE_TYPES
     ]
@@ -1384,6 +1390,8 @@ def _build_transport_ai_virtual_vehicle_candidate(
     if not _has_positive_number(type_config.default_capacity):
         return None
     if not _has_non_negative_number(type_config.default_price):
+        return None
+    if type_config.min_occupancy > 1 and len(partition.requests) < type_config.min_occupancy:
         return None
 
     partition_route_kind = _resolve_transport_ai_partition_route_kind(
@@ -1646,6 +1654,7 @@ def build_transport_agent_planning_input(
     snapshot: TransportOperationalSnapshot | None = None,
     transport_settings: dict[str, object] | None = None,
     preflight_issues: list[TransportAIPreflightIssue] | None = None,
+    min_occupancy: dict[str, int] | None = None,
 ) -> TransportAgentPlanningInput:
     if route_kind not in _SUPPORTED_ROUTE_KINDS:
         raise ValueError(f"Unsupported route kind for planning input: {route_kind}")
@@ -1775,7 +1784,7 @@ def build_transport_agent_planning_input(
             default_tolerance_minutes=int(effective_transport_settings["default_tolerance_minutes"]),
             price_currency_code=effective_transport_settings.get("price_currency_code"),
             price_rate_unit=str(effective_transport_settings["price_rate_unit"]),
-            vehicle_type_configs=_build_transport_agent_vehicle_type_configs(effective_transport_settings),
+            vehicle_type_configs=_build_transport_agent_vehicle_type_configs(effective_transport_settings, min_occupancy),
         ),
         projects_by_name={
             project_name: referenced_project_rows[project_name]

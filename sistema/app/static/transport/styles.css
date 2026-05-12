@@ -2203,6 +2203,39 @@ button {
   gap: 10px;
 }
 
+.transport-ai-agent-min-occ-group {
+  gap: 8px;
+}
+
+.transport-ai-agent-min-occ-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.transport-ai-agent-min-occ-row {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 10px;
+}
+
+.transport-ai-agent-min-occ-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.transport-ai-agent-min-occ-field .transport-settings-number-input {
+  width: 72px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.transport-ai-agent-min-occ-max {
+  color: var(--transport-text-soft);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
 .transport-ai-agent-actions {
   justify-content: flex-end;
 }

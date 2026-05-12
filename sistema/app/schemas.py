@@ -1921,6 +1921,7 @@ class TransportAgentRouteRequest(BaseModel):
     arrival_at_work_time: str = Field(min_length=5, max_length=5)
     request_route_kinds: "TransportAgentRequestRouteKinds | None" = None
     dashboard_scope: TransportAgentDashboardScope | None = None
+    min_occupancy: "dict[Literal['carro', 'minivan', 'van', 'onibus'], int] | None" = None
 
     @field_validator("earliest_boarding_time", "arrival_at_work_time", mode="before")
     @classmethod
@@ -2043,6 +2044,7 @@ class TransportAgentPlanningVehicleTypeConfig(BaseModel):
     default_price: float | None = Field(default=None, ge=0)
     capacity_setting_name: str = Field(min_length=1, max_length=80)
     price_setting_name: str = Field(min_length=1, max_length=80)
+    min_occupancy: int = Field(default=1, ge=1)
 
     @field_validator("capacity_setting_name", "price_setting_name", mode="before")
     @classmethod

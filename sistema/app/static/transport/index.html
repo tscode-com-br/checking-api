@@ -662,6 +662,68 @@
             </label>
           </div>
 
+          <div class="transport-settings-section transport-ai-agent-min-occ-group">
+            <h3 class="transport-settings-section-title" data-i18n-text="ai.agentSettingsMinOccupancyLegend">Minimum Occupancy</h3>
+            <div class="transport-ai-agent-min-occ-rows">
+              <div class="transport-settings-row transport-ai-agent-min-occ-row">
+                <span class="transport-settings-label" data-i18n-text="ai.agentSettingsMinOccCarro">Car</span>
+                <span class="transport-ai-agent-min-occ-field">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="transport-settings-number-input"
+                    data-ai-agent-min-occ="carro"
+                    value="1"
+                  />
+                  <span class="transport-ai-agent-min-occ-max" data-ai-agent-max-seats="carro"></span>
+                </span>
+              </div>
+              <div class="transport-settings-row transport-ai-agent-min-occ-row">
+                <span class="transport-settings-label" data-i18n-text="ai.agentSettingsMinOccMinivan">Minivan</span>
+                <span class="transport-ai-agent-min-occ-field">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="transport-settings-number-input"
+                    data-ai-agent-min-occ="minivan"
+                    value="3"
+                  />
+                  <span class="transport-ai-agent-min-occ-max" data-ai-agent-max-seats="minivan"></span>
+                </span>
+              </div>
+              <div class="transport-settings-row transport-ai-agent-min-occ-row">
+                <span class="transport-settings-label" data-i18n-text="ai.agentSettingsMinOccVan">Van</span>
+                <span class="transport-ai-agent-min-occ-field">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="transport-settings-number-input"
+                    data-ai-agent-min-occ="van"
+                    value="6"
+                  />
+                  <span class="transport-ai-agent-min-occ-max" data-ai-agent-max-seats="van"></span>
+                </span>
+              </div>
+              <div class="transport-settings-row transport-ai-agent-min-occ-row">
+                <span class="transport-settings-label" data-i18n-text="ai.agentSettingsMinOccOnibus">Bus</span>
+                <span class="transport-ai-agent-min-occ-field">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="transport-settings-number-input"
+                    data-ai-agent-min-occ="onibus"
+                    value="30"
+                  />
+                  <span class="transport-ai-agent-min-occ-max" data-ai-agent-max-seats="onibus"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+
           <fieldset class="transport-ai-agent-request-kinds">
             <legend class="transport-ai-agent-request-kinds-legend" data-ai-agent-request-kinds-legend data-i18n-text="ai.agentSettingsRequestKindsLegend">Lists to Calculate</legend>
             <div class="transport-ai-agent-request-kinds-grid">
