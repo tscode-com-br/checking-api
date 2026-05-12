@@ -721,3 +721,14 @@ class AdminAccessRequest(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     requested_profile: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EndpointApiKey(Base):
+    __tablename__ = "endpoint_api_keys"
+    __table_args__ = (UniqueConstraint("endpoint_name", name="uq_endpoint_api_keys_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    endpoint_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    secret_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

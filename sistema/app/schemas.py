@@ -3532,6 +3532,41 @@ class TransportWorkToHomeTimePolicyResponse(BaseModel):
     date_override_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
     workplace_work_to_home_time: str | None = Field(default=None, min_length=5, max_length=5)
     transport_group: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Endpoint API Keys (partner-facing API)
+# ---------------------------------------------------------------------------
+
+class EndpointApiKeyRow(BaseModel):
+    id: int
+    endpoint_name: str
+    secret_key: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class EndpointApiKeyRotateResponse(BaseModel):
+    ok: bool
+    message: str
+    endpoint_name: str
+    secret_key: str
+
+
+class CheckingInfoEntry(BaseModel):
+    nome: str
+    chave: str
+    projeto: str
+    atividade: Literal["check-in", "check-out"]
+    horario: datetime | None = None
+    local: str | None = None
+    assiduidade: Literal["Normal", "Retroativo"]
+
+
+class CheckingInfoResponse(BaseModel):
+    ok: bool
+    total: int
+    entries: list[CheckingInfoEntry]
     boarding_point: str | None = None
     transport_window_start: str | None = Field(default=None, min_length=5, max_length=5)
     transport_window_end: str | None = Field(default=None, min_length=5, max_length=5)

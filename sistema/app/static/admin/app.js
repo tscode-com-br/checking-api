@@ -4750,6 +4750,34 @@ async function loadRegisteredUsers() {
   scheduleUserFieldTextareaRefresh();
 }
 
+function setEndpointsStatus(message, ok) {
+  const el = document.getElementById("endpointsStatus");
+  if (!el) return;
+  el.textContent = message;
+  el.className = "auth-status " + (ok ? "auth-status--success" : ok === false ? "auth-status--error" : "");
+}
+
+function makeEndpointRow(row) {
+  const tr = document.createElement("tr");
+  tr.dataset.endpointName = row.endpoint_name;
+  const maskedKey = row.secret_key.slice(0, 6) + "••••••••••••••••••••••" + row.secret_key.slice(-4);
+  tr.innerHTML = `<td data-label="Nome do Endpoint">${escapeHtml(row.endpoint_name)}</td><td data-label="Chave Secreta"><code class="endpoint-secret-key">${escapeHtml(maskedKey)}</code></td><td data-label="Ações"><button type="button" class="secondary-button" data-endpoint-rotate="${escapeHtml(row.endpoint_name)}">Alterar</button></td>`;
+  return tr;
+}
+
+async function loadEndpoints() {
+  const body = document.getElementById("endpointsBody");
+  if (!body) return;
+  const rows = await fetchJson("/api/partner/admin/endpoint-keys");
+  body.innerHTML = "";
+  if (!Array.isArray(rows) || rows.length === 0) {
+    renderEmptyStateRow("endpointsBody", 3, "Nenhum endpoint cadastrado.");
+    return;
+  }
+  rows.forEach((row) => body.appendChild(makeEndpointRow(row)));
+  applyResponsiveLabels("endpointsBody");
+}
+
 async function saveProject() {
   if (hasPendingEditInProgress()) {
     setStatus("Salve ou cancele as edições pendentes antes de alterar os projetos.", false);
@@ -5313,7 +5341,7 @@ async function refreshActiveTab() {
   if (activeTab === "cadastro") {
     if (!hasPendingEditInProgress()) {
       await loadProjects();
-      await Promise.all([loadAdministrators(), loadPending(), loadLocations()]);
+      await Promise.all([loadAdministrators(), loadPending(), loadLocations(), loadEndpoints()]);
       markDashboardRefreshed();
     }
     return;
@@ -5354,6 +5382,7 @@ async function refreshAllTables() {
     jobs.push(loadPending());
     jobs.push(loadRegisteredUsers());
     jobs.push(loadLocations());
+    jobs.push(loadEndpoints());
   }
   await Promise.all(jobs);
   markDashboardRefreshed();
@@ -6047,6 +6076,7 @@ function bindActions() {
   const clearFormsButton = document.getElementById("clearFormsButton");
   const refreshInactiveButton = document.getElementById("refreshInactiveButton");
   const refreshAdministratorsButton = document.getElementById("refreshAdministratorsButton");
+  const refreshEndpointsButton = document.getElementById("refreshEndpointsButton");
   const refreshUsersButton = document.getElementById("refreshUsersButton");
   const refreshEventsButton = document.getElementById("refreshEventsButton");
   if (changePasswordButton) {
@@ -6063,6 +6093,7 @@ function bindActions() {
   bindManualRefreshButton(refreshInactiveButton, loadInactive);
   bindManualRefreshButton(refreshAdministratorsButton, loadAdministratorsWithProjectCatalog);
   bindManualRefreshButton(refreshUsersButton, loadRegisteredUsers);
+  bindManualRefreshButton(refreshEndpointsButton, loadEndpoints);
   bindManualRefreshButton(refreshEventsButton, loadEvents);
   if (reportsSearchButton) {
     reportsSearchButton.dataset.idleLabel = String(reportsSearchButton.textContent || "Buscar").trim() || "Buscar";
@@ -6456,6 +6487,30 @@ function bindActions() {
   }
 
   syncProjectEditorState();
+
+  const endpointsBody = document.getElementById("endpointsBody");
+  if (endpointsBody) {
+    endpointsBody.addEventListener("click", (event) => {
+      const target = event.target;
+      const button = target instanceof Element ? target.closest("button") : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      if (button.dataset.endpointRotate) {
+        const endpointName = button.dataset.endpointRotate;
+        button.disabled = true;
+        button.textContent = "Alterando...";
+        postJson(`/api/partner/admin/endpoint-keys/${encodeURIComponent(endpointName)}/rotate`, {})
+          .then((result) => {
+            setEndpointsStatus(result.message || "Chave alterada com sucesso.", true);
+            loadEndpoints().catch(() => {});
+          })
+          .catch((error) => {
+            setEndpointsStatus(error.message || "Erro ao alterar a chave.", false);
+            button.disabled = false;
+            button.textContent = "Alterar";
+          });
+      }
+    });
+  }
 
   document.getElementById("inactiveBody").addEventListener("click", (event) => {
     const target = event.target;

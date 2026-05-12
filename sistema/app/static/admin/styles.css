@@ -2347,6 +2347,7 @@ input.inline, select.inline, textarea.inline {
   .presence-users-table[data-presence-render-variant="mobile-limited"] tr.presence-mobile-row {
     border: 0;
     background: transparent;
+
     margin-top: 8px;
     overflow: visible;
   }
@@ -2654,4 +2655,27 @@ input.inline, select.inline, textarea.inline {
   .cadastro-users-table .user-actions {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Endpoints table ───────────────────────────────────────── */
+.cadastro-section-panel--endpoints .endpoint-secret-key {
+  font-family: monospace;
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary, #555);
+  word-break: break-all;
+}
+
+.cadastro-endpoints-table th:nth-child(1),
+.cadastro-endpoints-table td:nth-child(1) {
+  width: 22%;
+}
+.cadastro-endpoints-table th:nth-child(2),
+.cadastro-endpoints-table td:nth-child(2) {
+  width: auto;
+}
+.cadastro-endpoints-table th:nth-child(3),
+.cadastro-endpoints-table td:nth-child(3) {
+  width: 100px;
+  text-align: right;
 }

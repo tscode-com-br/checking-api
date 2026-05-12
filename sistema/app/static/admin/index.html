@@ -524,6 +524,22 @@
             </table>
           </div>
         </article>
+
+        <article class="cadastro-section-panel cadastro-section-panel--endpoints" data-cadastro-section="endpoints">
+          <div class="section-header">
+            <h2>Endpoints</h2>
+            <button id="refreshEndpointsButton" type="button" class="secondary-button">Atualizar</button>
+          </div>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-endpoints-table">
+              <thead>
+                <tr><th>Nome do Endpoint</th><th>Chave Secreta</th><th>Ações</th></tr>
+              </thead>
+              <tbody id="endpointsBody"></tbody>
+            </table>
+          </div>
+          <p id="endpointsStatus" class="auth-status"></p>
+        </article>
       </section>
 
       <section id="tab-relatorios" class="tab reports-tab">
