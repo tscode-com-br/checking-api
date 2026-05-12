@@ -1119,6 +1119,23 @@ button {
   background: linear-gradient(135deg, rgba(72, 212, 206, 0.34), rgba(26, 162, 157, 0.26));
 }
 
+.transport-danger-button {
+  border-color: rgba(220, 80, 80, 0.36);
+  background: linear-gradient(135deg, rgba(220, 80, 80, 0.18), rgba(160, 40, 40, 0.14));
+  color: rgba(255, 140, 140, 0.9);
+}
+
+.transport-danger-button:hover {
+  border-color: rgba(220, 80, 80, 0.62);
+  background: linear-gradient(135deg, rgba(220, 80, 80, 0.28), rgba(160, 40, 40, 0.22));
+  color: rgba(255, 160, 160, 1);
+}
+
+.transport-danger-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .transport-secondary-button:hover,
 .transport-selection-reject:hover,
 .transport-selection-clear:hover,

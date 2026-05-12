@@ -1709,11 +1709,11 @@
       "Transport request rejected successfully.": "status.requestRejected",
       "Transport boarding time saved successfully.": "status.boardingTimeSaved",
       "Transport AI suggestion is ready for review.": "ai.agentSettingsReadyForReview",
-      "Transport AI suggestion was saved and is ready to be applied.": "ai.changesSaved",
+      "Transport AI suggestion was saved and is ready to be applied.": "ai.changesCancelled",
       "Transport AI suggestion was cancelled and the baseline was restored.": "ai.changesCancelled",
       "Transport AI suggestion was applied.": "ai.changesApplied",
-      "The transport AI suggestion can no longer be saved.": "ai.changesSaveFailed",
-      "The transport AI suggestion cannot be saved because its payload is invalid.": "ai.changesSaveFailed",
+      "The transport AI suggestion can no longer be saved.": "ai.changesCancelFailed",
+      "The transport AI suggestion cannot be saved because its payload is invalid.": "ai.changesCancelFailed",
       "The transport AI suggestion was already applied and cannot be cancelled.": "ai.changesCancelFailed",
       "The transport AI suggestion can no longer be cancelled.": "ai.changesCancelFailed",
       "Transport AI baseline restore requires manual review.": "ai.changesCancelFailed",
@@ -3028,18 +3028,10 @@
     const normalizedAction = String(actionName || "").trim().toLowerCase();
     if (normalizedAction === "cancel") {
       return {
-        idleKey: "ai.changesCancel",
-        busyKey: "ai.changesCancelling",
+        idleKey: "ai.changesDiscard",
+        busyKey: "ai.changesDiscarding",
         successKey: "ai.changesCancelled",
         errorKey: "ai.changesCancelFailed",
-      };
-    }
-    if (normalizedAction === "save") {
-      return {
-        idleKey: "ai.changesSave",
-        busyKey: "ai.changesSaving",
-        successKey: "ai.changesSaved",
-        errorKey: "ai.changesSaveFailed",
       };
     }
     if (normalizedAction === "apply") {
@@ -6089,7 +6081,7 @@
     const aiChangesRoutesPanel = document.querySelector("[data-ai-changes-routes]");
     const aiChangesAuditPanel = document.querySelector("[data-ai-changes-audit]");
     const aiChangesCancelButton = document.querySelector("[data-ai-changes-cancel]");
-    const aiChangesSaveButton = document.querySelector("[data-ai-changes-save]");
+    const aiChangesDiscardButton = document.querySelector("[data-ai-changes-discard]");
     const aiChangesApplyButton = document.querySelector("[data-ai-changes-apply]");
     const settingsLanguageSelect = document.querySelector("[data-settings-language-select]");
     const settingsArriveAtWorkInput = document.querySelector("[data-settings-arrive-at-work-time]");
@@ -7160,19 +7152,15 @@
       );
 
       if (aiChangesCancelButton) {
-        aiChangesCancelButton.disabled = !commandState.canCancel;
-        aiChangesCancelButton.textContent = t(
-          commandState.isPending && commandState.pendingAction === "cancel"
-            ? "ai.changesCancelling"
-            : "ai.changesCancel"
-        );
+        aiChangesCancelButton.disabled = commandState.isPending;
+        aiChangesCancelButton.textContent = t("ai.changesCancel");
       }
-      if (aiChangesSaveButton) {
-        aiChangesSaveButton.disabled = !commandState.canSave;
-        aiChangesSaveButton.textContent = t(
-          commandState.isPending && commandState.pendingAction === "save"
-            ? "ai.changesSaving"
-            : "ai.changesSave"
+      if (aiChangesDiscardButton) {
+        aiChangesDiscardButton.disabled = !commandState.canCancel;
+        aiChangesDiscardButton.textContent = t(
+          commandState.isPending && commandState.pendingAction === "cancel"
+            ? "ai.changesDiscarding"
+            : "ai.changesDiscard"
         );
       }
       if (aiChangesApplyButton) {
@@ -8631,6 +8619,11 @@
       buttonElement.addEventListener("click", closeAiChangesModal);
     });
     document.querySelectorAll("[data-ai-changes-cancel]").forEach(function (buttonElement) {
+      buttonElement.addEventListener("click", function () {
+        closeAiChangesModal({ restoreFocus: true });
+      });
+    });
+    document.querySelectorAll("[data-ai-changes-discard]").forEach(function (buttonElement) {
       buttonElement.addEventListener("click", function () {
         void cancelAiSuggestion();
       });
