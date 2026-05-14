@@ -655,3 +655,71 @@ Arquivo: `tests/services/test_accident_lifecycle.py` (8 novos testes, total pass
 - `sistema/app/services/accident_lifecycle.py` (editado — 3 novas funções + imports)
 - `tests/services/test_accident_lifecycle.py` (editado — 8 novos testes C3 adicionados ao final)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task C4 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco C / Task C4** criou o service `accident_situation_table.py` que constrói as linhas da aba "Situação de Pessoal" do admin.
+
+## 1) Arquivo criado: `sistema/app/services/accident_situation_table.py`
+
+### Funções implementadas
+
+| Função | Descrição |
+|---|---|
+| `_derive_display(report, opened_at)` | Privada; mapeia zone/status para (zone_display, status_display, row_color, priority) |
+| `build_situation_rows(db, *, accident)` | Pública; carrega reports + vídeos, monta lista de `SituacaoPessoalRow` ordenada |
+
+### Lógica de prioridade (`_derive_display`)
+
+| Prioridade | Condição | Cor |
+|---|---|---|
+| 1 | `zone=accident` + `status=help` | `blinking-red` |
+| 2 | `zone=accident` + `status=ok` | `yellow` |
+| 3 | `zone=waiting` | `turquoise` |
+| 4 | `zone=safety` + `status=ok` | `light-green` |
+| 5 | `last_checkin_action=check-out` e `last_action_at >= opened_at` | `light-gray` |
+| 3 | fallback | `white` |
+
+A prioridade 5 (check-out durante o acidente) é verificada antes das demais por ser uma regra de override.
+
+### Detalhes de `build_situation_rows`
+
+1. SELECT em `AccidentUserReport` filtrando `accident_id`.
+2. Para cada report: query `AccidentVideoUpload` filtrado por `(accident_id, user_id)` ordenado por `captured_at ASC`.
+3. Monta `AccidentVideoLink` para cada vídeo.
+4. `event_time = report.reported_at or report.last_action_at or report.created_at`.
+5. Chama `_derive_display(report, accident.opened_at)`.
+6. Cria `SituacaoPessoalRow` com todos os campos.
+7. Ordena lista por `(priority ASC, event_time DESC)` — `event_time.timestamp()` negado para descending.
+
+### Compatibilidade SQLite/Postgres
+
+A comparação de `last_action_at >= opened_at` usa `opened_at.replace(tzinfo=None)` quando `opened_at` tem timezone, neutralizando a diferença de aware vs naive que SQLite gera.
+
+## 2) Testes criados
+
+Arquivo criado: `tests/services/test_accident_situation_table.py`
+
+8 testes (todos obrigatórios):
+
+1. `test_priority_1_help_blinking_red`
+2. `test_priority_2_accident_ok_yellow`
+3. `test_priority_3_waiting_turquoise`
+4. `test_priority_4_safety_ok_light_green`
+5. `test_priority_5_checked_out_after_open_light_gray`
+6. `test_within_same_priority_more_recent_first`
+7. `test_videos_included_per_user`
+8. `test_videos_ordered_by_captured_at_asc`
+
+## 3) Verificações executadas
+
+- `python -m pytest -v tests/services/test_accident_situation_table.py` → **8 passed**
+- `python -m pytest tests/models tests/schemas tests/services -q` → **56 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/accident_situation_table.py` (novo)
+- `tests/services/test_accident_situation_table.py` (novo)
+- `docs/temp000A.md` (atualizado com este resumo)
