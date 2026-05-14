@@ -582,3 +582,76 @@ Arquivo criado: `tests/services/test_accident_lifecycle.py`
 - `sistema/app/services/accident_lifecycle.py` (novo)
 - `tests/services/test_accident_lifecycle.py` (novo)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task C3 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco C / Task C3** estendeu o service `accident_lifecycle.py` com três novas funções de suporte ao ciclo de vida de acidentes.
+
+## 1) Arquivo alterado: `sistema/app/services/accident_lifecycle.py`
+
+### Novos imports
+
+- `from datetime import datetime` (para tipagem do parâmetro `event_time`)
+- `AccidentVideoUpload` adicionado ao import de `..models`
+
+### Funções implementadas
+
+| Função | Descrição |
+|---|---|
+| `upsert_user_safety_report(db, *, accident, user, zone, status)` | Cria ou atualiza `AccidentUserReport`, detecta transição para `help`, publica em ambos os brokers |
+| `attach_video_upload(db, *, accident, user, object_key, public_url, content_type, size_bytes, duration_seconds, idempotency_key, captured_at=None)` | Idempotente por `idempotency_key`; cria `AccidentVideoUpload`, publica em ambos os brokers |
+| `update_accident_membership_for_check_event(db, *, accident, user, action, event_time)` | Cria ou carrega `AccidentUserReport`, atualiza `last_checkin_action`/`last_action_at`, publica em ambos os brokers |
+
+## 2) Detalhe de `upsert_user_safety_report`
+
+1. SELECT por `(accident_id, user_id)`. Se não existe, cria com snapshots + `zone/status="waiting"` + flush.
+2. Captura `previous_status = report.status` antes de atualizar.
+3. Atualiza `zone`, `status`, `reported_at`, `updated_at`.
+4. `db.commit()`.
+5. `fired_help_now = (status == "help" and previous_status != "help")`.
+6. Publica `"accident_user_report"` em `notify_admin_data_changed` e `notify_web_check_data_changed`.
+7. Retorna `(report, fired_help_now)`.
+
+## 3) Detalhe de `attach_video_upload`
+
+1. SELECT por `idempotency_key`. Se já existe → retorna linha existente (idempotência pura).
+2. Cria `AccidentVideoUpload` com `captured_at = captured_at or now_sgt()`, `created_at = now_sgt()`.
+3. `db.add(upload); db.commit()`.
+4. Publica `"accident_video_uploaded"` em ambos os brokers com `metadata={"accident_id": ..., "user_id": ...}`.
+5. Retorna `upload`.
+
+## 4) Detalhe de `update_accident_membership_for_check_event`
+
+1. SELECT por `(accident_id, user_id)`. Se não existe, cria com snapshots + `zone="waiting"` + `status="waiting"` + flush.
+2. Atualiza `last_checkin_action=action`, `last_action_at=event_time`, `updated_at=now_sgt()`.
+3. `db.commit()`.
+4. Publica `"accident_user_report"` em ambos os brokers.
+5. Retorna `report`.
+
+## 5) Testes adicionados
+
+Arquivo: `tests/services/test_accident_lifecycle.py` (8 novos testes, total passa de 12 para 20)
+
+1. `test_upsert_creates_when_missing`
+2. `test_upsert_updates_when_existing_and_preserves_created_at`
+3. `test_upsert_fires_help_only_on_transition`
+4. `test_upsert_does_not_fire_help_on_consecutive_help`
+5. `test_attach_video_inserts_first_time`
+6. `test_attach_video_idempotent_by_key`
+7. `test_check_event_hook_creates_waiting_row_for_new_user`
+8. `test_check_event_hook_preserves_zone_status_when_user_already_reported`
+
+**Nota sobre SQLite:** a comparação de `last_action_at` no teste usa `.replace(tzinfo=None)` para neutralizar o descarte de timezone que SQLite faz ao persistir datetimes.
+
+## 6) Verificações executadas
+
+- `python -m pytest -v tests/services/test_accident_lifecycle.py` → **20 passed**
+- `python -m pytest tests/models tests/schemas tests/services -q` → **48 passed**
+
+## 7) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/accident_lifecycle.py` (editado — 3 novas funções + imports)
+- `tests/services/test_accident_lifecycle.py` (editado — 8 novos testes C3 adicionados ao final)
+- `docs/temp000A.md` (atualizado com este resumo)
