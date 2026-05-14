@@ -6,9 +6,12 @@ from typing import Literal
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
 from ..models import (
     Accident,
     AccidentUserReport,
+    AccidentVideoUpload,
     ManagedLocation,
     Project,
     User,
@@ -159,6 +162,142 @@ def open_accident(
     notify_web_check_data_changed("accident_opened", metadata=metadata)
 
     return accident
+
+
+def upsert_user_safety_report(
+    db: Session,
+    *,
+    accident: Accident,
+    user: User,
+    zone: str,
+    status: str,
+) -> tuple[AccidentUserReport, bool]:
+    now = now_sgt()
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == accident.id,
+            AccidentUserReport.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+
+    if report is None:
+        projects = list_user_project_names(db, user)
+        report = AccidentUserReport(
+            accident_id=accident.id,
+            user_id=user.id,
+            user_chave_snapshot=user.chave,
+            user_name_snapshot=user.nome,
+            user_phone_snapshot=None,
+            user_projects_snapshot=json.dumps(projects),
+            user_local_snapshot=user.local or "",
+            zone="waiting",
+            status="waiting",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(report)
+        db.flush()
+
+    previous_status = report.status
+
+    report.zone = zone
+    report.status = status
+    report.reported_at = now
+    report.updated_at = now
+    db.commit()
+
+    fired_help_now = (status == "help" and previous_status != "help")
+
+    notify_admin_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
+    notify_web_check_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
+
+    return report, fired_help_now
+
+
+def attach_video_upload(
+    db: Session,
+    *,
+    accident: Accident,
+    user: User,
+    object_key: str,
+    public_url: str,
+    content_type: str,
+    size_bytes: int,
+    duration_seconds: int | None,
+    idempotency_key: str,
+    captured_at: datetime | None = None,
+) -> AccidentVideoUpload:
+    existing = db.execute(
+        select(AccidentVideoUpload).where(AccidentVideoUpload.idempotency_key == idempotency_key)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    now = now_sgt()
+    upload = AccidentVideoUpload(
+        idempotency_key=idempotency_key,
+        accident_id=accident.id,
+        user_id=user.id,
+        object_key=object_key,
+        public_url=public_url,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        duration_seconds=duration_seconds,
+        captured_at=captured_at or now,
+        created_at=now,
+    )
+    db.add(upload)
+    db.commit()
+
+    notify_admin_data_changed("accident_video_uploaded", metadata={"accident_id": accident.id, "user_id": user.id})
+    notify_web_check_data_changed("accident_video_uploaded", metadata={"accident_id": accident.id, "user_id": user.id})
+
+    return upload
+
+
+def update_accident_membership_for_check_event(
+    db: Session,
+    *,
+    accident: Accident,
+    user: User,
+    action: Literal["check-in", "check-out"],
+    event_time: datetime,
+) -> AccidentUserReport:
+    now = now_sgt()
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == accident.id,
+            AccidentUserReport.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+
+    if report is None:
+        projects = list_user_project_names(db, user)
+        report = AccidentUserReport(
+            accident_id=accident.id,
+            user_id=user.id,
+            user_chave_snapshot=user.chave,
+            user_name_snapshot=user.nome,
+            user_phone_snapshot=None,
+            user_projects_snapshot=json.dumps(projects),
+            user_local_snapshot=user.local or "",
+            zone="waiting",
+            status="waiting",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(report)
+        db.flush()
+
+    report.last_checkin_action = action
+    report.last_action_at = event_time
+    report.updated_at = now
+    db.commit()
+
+    notify_admin_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
+    notify_web_check_data_changed("accident_user_report", metadata={"accident_id": accident.id, "user_id": user.id})
+
+    return report
 
 
 def list_active_accident(db: Session) -> Accident | None:

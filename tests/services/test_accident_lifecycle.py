@@ -15,6 +15,7 @@ from sistema.app.database import Base
 from sistema.app.models import (
     Accident,
     AccidentUserReport,
+    AccidentVideoUpload,
     AdminUser,
     ManagedLocation,
     Project,
@@ -24,9 +25,12 @@ from sistema.app.services.accident_lifecycle import (
     AccidentAlreadyActiveError,
     InvalidAccidentLocationError,
     NoActiveAccidentError,
+    attach_video_upload,
     close_accident,
     list_active_accident,
     open_accident,
+    update_accident_membership_for_check_event,
+    upsert_user_safety_report,
 )
 
 
@@ -347,3 +351,193 @@ def test_close_publishes_to_both_brokers(tmp_path: Path):
 
     mock_admin.assert_called_once_with("accident_closed", metadata=mock_admin.call_args.kwargs["metadata"])
     mock_web.assert_called_once_with("accident_closed", metadata=mock_web.call_args.kwargs["metadata"])
+
+
+# ---------------------------------------------------------------------------
+# Task C3 — upsert_user_safety_report / attach_video_upload / check event
+# ---------------------------------------------------------------------------
+
+def test_upsert_creates_when_missing(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U001", checkin=False)
+
+    report, fired = upsert_user_safety_report(
+        db, accident=accident, user=user, zone="safety", status="ok"
+    )
+
+    assert report.accident_id == accident.id
+    assert report.user_id == user.id
+    assert report.zone == "safety"
+    assert report.status == "ok"
+    assert report.created_at is not None
+    assert fired is False
+
+
+def test_upsert_updates_when_existing_and_preserves_created_at(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U002", checkin=False)
+
+    report1, _ = upsert_user_safety_report(
+        db, accident=accident, user=user, zone="waiting", status="waiting"
+    )
+    original_created_at = report1.created_at
+
+    report2, _ = upsert_user_safety_report(
+        db, accident=accident, user=user, zone="accident", status="ok"
+    )
+
+    assert report2.id == report1.id
+    assert report2.zone == "accident"
+    assert report2.status == "ok"
+    assert report2.created_at == original_created_at
+
+
+def test_upsert_fires_help_only_on_transition(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U003", checkin=False)
+
+    _, fired1 = upsert_user_safety_report(
+        db, accident=accident, user=user, zone="accident", status="ok"
+    )
+    assert fired1 is False
+
+    _, fired2 = upsert_user_safety_report(
+        db, accident=accident, user=user, zone="accident", status="help"
+    )
+    assert fired2 is True
+
+
+def test_upsert_does_not_fire_help_on_consecutive_help(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U004", checkin=False)
+
+    upsert_user_safety_report(db, accident=accident, user=user, zone="accident", status="help")
+    _, fired = upsert_user_safety_report(
+        db, accident=accident, user=user, zone="accident", status="help"
+    )
+    assert fired is False
+
+
+def test_attach_video_inserts_first_time(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U005", checkin=False)
+
+    upload = attach_video_upload(
+        db,
+        accident=accident,
+        user=user,
+        object_key="videos/test.mp4",
+        public_url="https://example.com/videos/test.mp4",
+        content_type="video/mp4",
+        size_bytes=1024 * 1024,
+        duration_seconds=30,
+        idempotency_key="idem-001",
+    )
+
+    assert upload.id is not None
+    assert upload.accident_id == accident.id
+    assert upload.idempotency_key == "idem-001"
+
+
+def test_attach_video_idempotent_by_key(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U006", checkin=False)
+
+    upload1 = attach_video_upload(
+        db,
+        accident=accident,
+        user=user,
+        object_key="videos/test.mp4",
+        public_url="https://example.com/videos/test.mp4",
+        content_type="video/mp4",
+        size_bytes=1024,
+        duration_seconds=None,
+        idempotency_key="idem-002",
+    )
+    upload2 = attach_video_upload(
+        db,
+        accident=accident,
+        user=user,
+        object_key="videos/different.mp4",
+        public_url="https://example.com/different.mp4",
+        content_type="video/mp4",
+        size_bytes=2048,
+        duration_seconds=None,
+        idempotency_key="idem-002",
+    )
+
+    assert upload1.id == upload2.id
+    assert upload2.object_key == "videos/test.mp4"
+
+
+def test_check_event_hook_creates_waiting_row_for_new_user(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U007", checkin=False)
+
+    from datetime import datetime, timezone as tz
+    event_time = datetime.now(tz.utc)
+
+    update_accident_membership_for_check_event(
+        db, accident=accident, user=user, action="check-in", event_time=event_time
+    )
+
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == accident.id,
+            AccidentUserReport.user_id == user.id,
+        )
+    ).scalar_one()
+
+    assert report.zone == "waiting"
+    assert report.status == "waiting"
+    assert report.last_checkin_action == "check-in"
+    assert report.last_action_at == event_time.replace(tzinfo=None)
+
+
+def test_check_event_hook_preserves_zone_status_when_user_already_reported(tmp_path: Path):
+    db = _make_session(tmp_path)
+    proj = _create_project(db)
+    admin = _create_admin(db)
+    accident = _open_simple(db, proj, admin)
+    user = _create_user(db, "U008", checkin=False)
+
+    upsert_user_safety_report(db, accident=accident, user=user, zone="accident", status="ok")
+
+    from datetime import datetime, timezone as tz
+    event_time = datetime.now(tz.utc)
+
+    update_accident_membership_for_check_event(
+        db, accident=accident, user=user, action="check-out", event_time=event_time
+    )
+
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == accident.id,
+            AccidentUserReport.user_id == user.id,
+        )
+    ).scalar_one()
+
+    assert report.zone == "accident"
+    assert report.status == "ok"
+    assert report.last_checkin_action == "check-out"
