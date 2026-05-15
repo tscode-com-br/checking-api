@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLo
 from ..schemas import (
     ProjectRow,
     WebAccidentOpenRequest,
+    WebAccidentReportRequest,
     WebAccidentStateResponse,
     WebAccidentUserReport,
     WebCheckHistoryResponse,
@@ -48,6 +49,7 @@ from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
     list_active_accident,
     open_accident,
+    upsert_user_safety_report,
 )
 from ..services.accident_numbering import format_accident_number
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
@@ -919,4 +921,26 @@ def open_web_accident(
         )
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
+    return get_web_accident_state(request=request, chave=payload.chave, db=db)
+
+
+def queue_help_request_emails(accident_id: int, requester_user_id: int) -> None:
+    # TODO Task G3: send help-request notification emails to admins.
+    pass
+
+
+@router.post("/check/accident/report", response_model=WebAccidentStateResponse)
+def report_web_accident_status(
+    payload: WebAccidentReportRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> WebAccidentStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    active = list_active_accident(db)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+    _, fired_help = upsert_user_safety_report(db, accident=active, user=user, zone=payload.zone, status=payload.status)
+    if fired_help:
+        background_tasks.add_task(queue_help_request_emails, accident_id=active.id, requester_user_id=user.id)
     return get_web_accident_state(request=request, chave=payload.chave, db=db)

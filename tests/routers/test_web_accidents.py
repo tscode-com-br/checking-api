@@ -324,3 +324,167 @@ def test_open_publishes_brokers():
     assert resp.status_code == 200, resp.text
     mock_admin.assert_called_once()
     mock_web.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# E2 — report endpoint
+# ---------------------------------------------------------------------------
+
+REPORT_URL = "/api/web/check/accident/report"
+
+
+def _open_accident_via_api(client: TestClient, proj_id: int) -> None:
+    """Open an accident via the web API (mocking brokers)."""
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        r = client.post(
+            OPEN_URL,
+            json={
+                "chave": _WEB_CHAVE,
+                "project_id": proj_id,
+                "location_id": None,
+                "custom_location_name": "Report Test Site",
+                "zone": "safety",
+                "status": "ok",
+            },
+        )
+    assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------------------
+# test_report_409_when_no_active
+# ---------------------------------------------------------------------------
+
+
+def test_report_409_when_no_active():
+    """POST /check/accident/report when no accident is active → 409."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        _ensure_project(db)
+        _ensure_web_user(db)
+
+    client = _logged_in_web_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "safety", "status": "ok"})
+
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_report_upserts
+# ---------------------------------------------------------------------------
+
+
+def test_report_upserts():
+    """POST /check/accident/report updates zone/status and returns updated state."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        _ensure_web_user(db)
+        proj_id = proj.id
+
+    client = _logged_in_web_client()
+    _open_accident_via_api(client, proj_id)
+
+    # First report: zone=safety, status=ok
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        r1 = client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "safety", "status": "ok"})
+    assert r1.status_code == 200, r1.text
+    d1 = r1.json()
+    assert d1["is_active"] is True
+    assert d1["current_user_report"]["zone"] == "safety"
+    assert d1["current_user_report"]["status"] == "ok"
+
+    # Second report: zone=accident, status=help (upsert)
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        patch("sistema.app.routers.web_check.queue_help_request_emails"),
+    ):
+        r2 = client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "accident", "status": "help"})
+    assert r2.status_code == 200, r2.text
+    d2 = r2.json()
+    assert d2["current_user_report"]["zone"] == "accident"
+    assert d2["current_user_report"]["status"] == "help"
+
+
+# ---------------------------------------------------------------------------
+# test_report_schedules_email_on_help_transition
+# ---------------------------------------------------------------------------
+
+
+def test_report_schedules_email_on_help_transition():
+    """Transitioning to status=help must schedule queue_help_request_emails."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        _ensure_web_user(db)
+        proj_id = proj.id
+
+    client = _logged_in_web_client()
+    _open_accident_via_api(client, proj_id)
+
+    # Report status=ok first (no help transition)
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "safety", "status": "ok"})
+
+    # Now transition to help → email should be scheduled
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        patch("sistema.app.routers.web_check.queue_help_request_emails") as mock_queue,
+    ):
+        resp = client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "accident", "status": "help"})
+
+    assert resp.status_code == 200, resp.text
+    mock_queue.assert_called_once()
+    call_kwargs = mock_queue.call_args
+    assert call_kwargs is not None
+
+
+# ---------------------------------------------------------------------------
+# test_report_does_not_schedule_email_on_repeat_help
+# ---------------------------------------------------------------------------
+
+
+def test_report_does_not_schedule_email_on_repeat_help():
+    """Sending help again when already in help status must NOT re-schedule emails."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        _ensure_web_user(db)
+        proj_id = proj.id
+
+    client = _logged_in_web_client()
+    _open_accident_via_api(client, proj_id)
+
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        patch("sistema.app.routers.web_check.queue_help_request_emails"),
+    ):
+        # First help → should schedule
+        client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "accident", "status": "help"})
+
+    # Second help (already in help) → must NOT schedule
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+        patch("sistema.app.routers.web_check.queue_help_request_emails") as mock_no_queue,
+    ):
+        resp = client.post(REPORT_URL, json={"chave": _WEB_CHAVE, "zone": "accident", "status": "help"})
+
+    assert resp.status_code == 200, resp.text
+    mock_no_queue.assert_not_called()
+
