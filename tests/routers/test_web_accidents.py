@@ -34,6 +34,7 @@ from sistema.app.models import (  # noqa: E402
     AccidentArchive,
     AccidentUserReport,
     AccidentVideoUpload,
+    ManagedLocation,
     Project,
     User,
 )
@@ -637,3 +638,99 @@ def test_video_upload_idempotent():
     assert r1.json()["video_id"] == r2.json()["video_id"]
     assert r1.json()["public_url"] == r2.json()["public_url"]
 
+
+
+# ---------------------------------------------------------------------------
+# E4 — wizard endpoints tests
+# ---------------------------------------------------------------------------
+
+WEB_WIZARD_PROJECTS_URL = "/api/web/check/accident/wizard/projects"
+WEB_WIZARD_LOCATIONS_URL = "/api/web/check/accident/wizard/locations"
+
+_E4_PROJ = "E4PROJ"
+_E4_LOC_LINKED = "E4 Location Linked"
+_E4_LOC_OTHER = "E4 Location Other"
+
+
+def _ensure_e4_project(db: Session) -> Project:
+    proj = db.execute(sa.select(Project).where(Project.name == _E4_PROJ)).scalar_one_or_none()
+    if proj is None:
+        proj = Project(
+            name=_E4_PROJ,
+            country_code="SG",
+            country_name="Singapore",
+            timezone_name="Asia/Singapore",
+            address="E4 Addr",
+            zip_code="654321",
+        )
+        db.add(proj)
+        db.commit()
+        db.refresh(proj)
+    return proj
+
+
+def _ensure_e4_managed_location(db: Session, name: str, linked_project: str | None) -> ManagedLocation:
+    import json as _json
+    from datetime import datetime, timezone
+    loc = db.execute(sa.select(ManagedLocation).where(ManagedLocation.local == name)).scalar_one_or_none()
+    projects_json = _json.dumps([linked_project]) if linked_project else "[]"
+    now = datetime.now(tz=timezone.utc)
+    if loc is None:
+        loc = ManagedLocation(
+            local=name,
+            latitude=1.0,
+            longitude=103.0,
+            tolerance_meters=50,
+            projects_json=projects_json,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(loc)
+        db.commit()
+        db.refresh(loc)
+    else:
+        loc.projects_json = projects_json
+        db.commit()
+        db.refresh(loc)
+    return loc
+
+
+def test_web_wizard_projects_requires_session():
+    """GET /check/accident/wizard/projects without session → 401."""
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get(WEB_WIZARD_PROJECTS_URL, params={"chave": _WEB_CHAVE})
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
+
+
+def test_web_wizard_projects_returns_all():
+    """Authenticated user → all projects returned including newly created one."""
+    with SessionLocal() as db:
+        proj = _ensure_e4_project(db)
+        proj_id = proj.id
+
+    client = _logged_in_web_client()
+    resp = client.get(WEB_WIZARD_PROJECTS_URL, params={"chave": _WEB_CHAVE})
+    assert resp.status_code == 200, resp.text
+    ids = [p["id"] for p in resp.json()]
+    assert proj_id in ids, f"E4 project {proj_id} not in response: {resp.json()}"
+
+
+def test_web_wizard_locations_filtered_by_project():
+    """Locations filtered by project: linked returned, unlinked excluded."""
+    with SessionLocal() as db:
+        proj = _ensure_e4_project(db)
+        proj_id = proj.id
+        loc_linked = _ensure_e4_managed_location(db, _E4_LOC_LINKED, linked_project=_E4_PROJ)
+        loc_other = _ensure_e4_managed_location(db, _E4_LOC_OTHER, linked_project=None)
+        linked_id = loc_linked.id
+        other_id = loc_other.id
+
+    client = _logged_in_web_client()
+    resp = client.get(WEB_WIZARD_LOCATIONS_URL, params={"chave": _WEB_CHAVE, "project_id": proj_id})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    loc_ids = [loc["id"] for loc in data]
+    assert linked_id in loc_ids, f"Linked location not returned: {data}"
+    assert other_id not in loc_ids, f"Unlinked location incorrectly returned: {data}"
+    linked_item = next(loc for loc in data if loc["id"] == linked_id)
+    assert linked_item["registered"] is True

@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
 from ..schemas import (
+    AccidentLocationOption,
+    AccidentProjectOption,
     ProjectRow,
     WebAccidentOpenRequest,
     WebAccidentReportRequest,
@@ -1016,3 +1018,35 @@ async def upload_accident_video(
         public_url=upload.public_url,
         captured_at=upload.captured_at,
     )
+
+
+@router.get("/check/accident/wizard/projects", response_model=list[AccidentProjectOption])
+def list_web_accident_projects(
+    request: Request,
+    chave: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentProjectOption]:
+    _require_matching_authenticated_web_user(request, db, chave)
+    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+
+
+@router.get("/check/accident/wizard/locations", response_model=list[AccidentLocationOption])
+def list_web_accident_locations(
+    request: Request,
+    chave: str = Query(...),
+    project_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentLocationOption]:
+    _require_matching_authenticated_web_user(request, db, chave)
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    options = []
+    for loc in db.execute(select(ManagedLocation)).scalars().all():
+        try:
+            projects = json.loads(loc.projects_json or "[]")
+        except Exception:
+            projects = []
+        if project.name in projects:
+            options.append(AccidentLocationOption(id=loc.id, name=loc.local, registered=True))
+    return options
