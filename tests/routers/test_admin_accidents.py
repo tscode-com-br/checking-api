@@ -1,8 +1,9 @@
-"""Tests for Task D1 — GET /api/admin/accidents/active endpoint."""
+"""Tests for Task D1/D2 — GET /api/admin/accidents/active and POST /api/admin/accidents/open."""
 from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
@@ -35,6 +36,7 @@ from sistema.app.services.passwords import hash_password  # noqa: E402
 Base.metadata.create_all(bind=engine)
 
 ACTIVE_URL = "/api/admin/accidents/active"
+OPEN_URL = "/api/admin/accidents/open"
 ADMIN_LOGIN_URL = "/api/admin/auth/login"
 
 # Admin credentials used in tests
@@ -222,6 +224,209 @@ def test_active_returns_accident_and_rows():
 
     # situation_rows is a list (may be empty if no reports yet)
     assert isinstance(data["situation_rows"], list)
+
+    # Clean up
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+
+
+# ---------------------------------------------------------------------------
+# D2 helpers
+# ---------------------------------------------------------------------------
+
+# Credentials for a "limited" admin (panel access only, no full admin)
+_LIMITED_CHAVE = "D2LM"
+_LIMITED_SENHA = "LimitedD2Test!"
+
+
+def _ensure_limited_admin_user(db: Session) -> User:
+    """Create (or reuse) a User with perfil=0 — admin panel only, no full admin."""
+    user = db.execute(
+        sa.select(User).where(User.chave == _LIMITED_CHAVE)
+    ).scalar_one_or_none()
+    if user is None:
+        user = User(
+            chave=_LIMITED_CHAVE,
+            nome="D2 Limited Admin",
+            projeto="D1PROJ",
+            checkin=False,
+            local="Sala 1",
+            last_active_at=datetime.now(tz=timezone.utc),
+            inactivity_days=0,
+            senha=hash_password(_LIMITED_SENHA),
+            # perfil=0 → user_can_access_admin_panel=True but user_has_admin_access=False
+            perfil=0,
+        )
+        db.add(user)
+    else:
+        user.senha = hash_password(_LIMITED_SENHA)
+        user.perfil = 0
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _logged_in_limited_client() -> TestClient:
+    """Return a TestClient logged in as a limited admin (perfil=0, no full-admin access)."""
+    with SessionLocal() as db:
+        _ensure_project(db)
+        _ensure_limited_admin_user(db)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        ADMIN_LOGIN_URL,
+        json={"chave": _LIMITED_CHAVE, "senha": _LIMITED_SENHA},
+    )
+    assert resp.status_code == 200, f"Limited admin login failed: {resp.status_code} {resp.text}"
+    return client
+
+
+# ---------------------------------------------------------------------------
+# test_open_requires_full_admin
+# ---------------------------------------------------------------------------
+
+
+def test_open_requires_full_admin():
+    """User with panel-only access (perfil=0) must receive 403 on POST /accidents/open."""
+    with SessionLocal() as db:
+        _ensure_project(db)
+
+    client = _logged_in_limited_client()
+    resp = client.post(
+        OPEN_URL,
+        json={"project_id": 1, "custom_location_name": "Test Site"},
+    )
+    assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_open_creates_when_none
+# ---------------------------------------------------------------------------
+
+
+def test_open_creates_when_none():
+    """POST /accidents/open with no active accident → 200, is_active=True."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        proj_id = proj.id
+
+    client = _logged_in_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(
+            OPEN_URL,
+            json={"project_id": proj_id, "custom_location_name": "Test Site"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["is_active"] is True
+    assert data["accident"] is not None
+    assert data["accident"]["origin"] == "admin"
+    assert data["accident"]["location_name"] == "Test Site"
+    assert isinstance(data["situation_rows"], list)
+
+    # Clean up
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+
+
+# ---------------------------------------------------------------------------
+# test_open_returns_conflict_when_active
+# ---------------------------------------------------------------------------
+
+
+def test_open_returns_conflict_when_active():
+    """POST /accidents/open when an accident is already open → 409."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        _open_accident(db, proj, admin_user)
+        proj_id = proj.id
+
+    client = _logged_in_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.post(
+            OPEN_URL,
+            json={"project_id": proj_id, "custom_location_name": "Another Site"},
+        )
+
+    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+
+    # Clean up
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+
+
+# ---------------------------------------------------------------------------
+# test_open_validates_payload
+# ---------------------------------------------------------------------------
+
+
+def test_open_validates_payload():
+    """POST /accidents/open with invalid body → 422 (FastAPI schema validation)."""
+    client = _logged_in_client()
+
+    # Missing project_id entirely
+    resp = client.post(OPEN_URL, json={})
+    assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
+
+    # Both location_id and custom_location_name provided (XOR violation)
+    with SessionLocal() as db:
+        proj = _ensure_project(db)
+        proj_id = proj.id
+
+    resp = client.post(
+        OPEN_URL,
+        json={
+            "project_id": proj_id,
+            "location_id": 1,
+            "custom_location_name": "Custom",
+        },
+    )
+    assert resp.status_code == 422, f"Expected 422 for XOR violation, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# test_open_publishes_brokers
+# ---------------------------------------------------------------------------
+
+
+def test_open_publishes_brokers():
+    """POST /accidents/open must publish 'accident_opened' to both SSE brokers."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        proj_id = proj.id
+
+    client = _logged_in_client()
+    with (
+        patch(
+            "sistema.app.services.accident_lifecycle.notify_admin_data_changed"
+        ) as mock_admin,
+        patch(
+            "sistema.app.services.accident_lifecycle.notify_web_check_data_changed"
+        ) as mock_web,
+    ):
+        resp = client.post(
+            OPEN_URL,
+            json={"project_id": proj_id, "custom_location_name": "Broker Test Site"},
+        )
+
+    assert resp.status_code == 200, resp.text
+
+    # Both brokers must have been called with "accident_opened"
+    mock_admin.assert_called_once()
+    assert mock_admin.call_args[0][0] == "accident_opened"
+    mock_web.assert_called_once()
+    assert mock_web.call_args[0][0] == "accident_opened"
 
     # Clean up
     with SessionLocal() as db:

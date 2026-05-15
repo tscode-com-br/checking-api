@@ -32,6 +32,7 @@ from ..models import (
 )
 from ..schemas import (
     AccidentSummary,
+    AdminAccidentOpenRequest,
     AdminAccidentStateResponse,
     AdminAccessRequestCreate,
     AdminActionResponse,
@@ -163,7 +164,12 @@ from ..services.user_projects import (
     resolve_user_active_project,
 )
 from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activities, resolve_latest_user_activity
-from ..services.accident_lifecycle import list_active_accident
+from ..services.accident_lifecycle import (
+    AccidentAlreadyActiveError,
+    InvalidAccidentLocationError,
+    list_active_accident,
+    open_accident,
+)
 from ..services.accident_numbering import format_accident_number
 from ..services.accident_situation_table import build_situation_rows
 
@@ -2001,6 +2007,48 @@ def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentSta
         accident=_accident_summary(db, active),
         situation_rows=build_situation_rows(db, accident=active),
     )
+
+
+@router.post("/accidents/open", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+def open_admin_accident(
+    payload: AdminAccidentOpenRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+    try:
+        accident = open_accident(
+            db,
+            origin="admin",
+            project_id=payload.project_id,
+            location_id=payload.location_id,
+            custom_location_name=payload.custom_location_name,
+            opened_by_admin_id=current_admin.id,
+            opened_by_user_id=None,
+        )
+    except AccidentAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="Ja existe um acidente em curso.")
+    except InvalidAccidentLocationError:
+        raise HTTPException(status_code=422, detail="O local selecionado nao pertence ao projeto.")
+
+    log_event(
+        db,
+        source="admin",
+        action="accident_open",
+        status="done",
+        message="Accident opened by admin",
+        request_path="/api/admin/accidents/open",
+        http_status=200,
+        details=f"accident_number={accident.accident_number} project_id={payload.project_id}",
+        commit=True,
+    )
+    return AdminAccidentStateResponse(
+        is_active=True,
+        accident=_accident_summary(db, accident),
+        situation_rows=build_situation_rows(db, accident=accident),
+    )
+
+
+@router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])
 def list_administrators(db: Session = Depends(get_db)) -> list[AdminManagementRow]:
     return list_admin_rows(db)
 
