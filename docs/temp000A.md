@@ -1708,3 +1708,79 @@ Todos os testes usam `unittest.mock.patch` para isolar `settings` por teste via 
 - `requirements.txt` (editado — `boto3>=1.34` adicionado)
 - `tests/services/test_object_storage.py` (novo — 6 testes)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+
+---
+
+# Task F2 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco F / Task F2** criou o serviço `accident_archive_builder.py`, responsável por gerar o arquivo XLSX com a tabela "Situação de Pessoal" e o ZIP com vídeos, fazer upload ao storage, e persistir o `AccidentArchive`.
+
+## 1) Arquivo criado: `sistema/app/services/accident_archive_builder.py`
+
+### Constantes
+- `COLUMN_ORDER` — lista de 9 cabeçalhos do XLSX: Horário, Nome, Chave, Projetos, Local, Zona de, Situação, Contato, Registros.
+
+### Funções internas
+- `_slugify(value)` — sanitiza strings para nomes de arquivo seguros (alfanumérico + `_-`, máx 60 chars).
+- `_build_xlsx(snapshot_rows, video_files_by_user)` — gera BytesIO com workbook openpyxl:
+  - Título da planilha: `"Situacao de Pessoal"`.
+  - Header row com `COLUMN_ORDER`.
+  - Uma linha por `SituacaoPessoalRow`; coluna Registros com caminhos `Registros/<filename>`, `wrap_text=True`, hyperlink para o primeiro vídeo.
+- `_read_video_bytes(object_key)` — lê bytes brutos de um vídeo via storage (boto3 em produção, disco local em dev).
+
+### Função principal
+`build_and_attach_archive_for_accident(accident_id)`:
+1. Abre sessão via `SessionLocal()`.
+2. Carrega `Accident` e todos os `AccidentVideoUpload` do acidente.
+3. Mapeia `user_id → [filenames]` e baixa bytes de cada vídeo via `_read_video_bytes`.
+4. Gera XLSX via `_build_xlsx`.
+5. Constrói ZIP com `zipfile.ZIP_DEFLATED`: `<NNNN>.xlsx` na raiz + `Registros/<filename>` para cada vídeo.
+6. Faz upload do XLSX e do ZIP via `upload_stream`.
+7. Cria registro `AccidentArchive` com `snapshot_json`, chaves de objeto, `size_bytes`, `generated_at`.
+8. Atualiza `accident.archive_object_key = zip_key`.
+9. Publica `notify_admin_data_changed("accident_closed", metadata={"accident_id": ..., "archive_ready": True})`.
+
+Chaves de objeto seguem o padrão `accidents/<NNNN>/archive/<NNNN>.xlsx` / `.zip`.
+
+## 2) Arquivo editado: `sistema/app/routers/admin.py`
+
+Stub `build_and_attach_archive_for_accident` substituído por delegação real:
+```python
+def build_and_attach_archive_for_accident(accident_id: int) -> None:
+    from ..services.accident_archive_builder import (
+        build_and_attach_archive_for_accident as _build,
+    )
+    _build(accident_id)
+```
+
+## 3) Arquivo criado: `tests/services/test_accident_archive_builder.py`
+
+7 testes:
+
+| Teste | Descrição |
+|---|---|
+| `test_archive_zip_contains_xlsx` | ZIP gerado contém `<NNNN>.xlsx` na raiz |
+| `test_archive_zip_contains_videos_subfolder` | ZIP contém `Registros/<user_id>-<slug>.mp4` |
+| `test_xlsx_columns_match_spec` | Header row do XLSX bate exatamente com `COLUMN_ORDER` |
+| `test_xlsx_handles_zero_videos` | XLSX sem vídeos tem célula Registros vazia |
+| `test_xlsx_filename_uses_4_digit_format` | Nome do XLSX usa número zero-padded de 4 dígitos |
+| `test_archive_record_persists` | `AccidentArchive` criado no banco; `accident.archive_object_key` atualizado |
+| `test_archive_publishes_ready_event` | `notify_admin_data_changed` chamado com `archive_ready=True` |
+
+Infraestrutura de mock:
+- `SessionLocal` mockado com `_CommitOnlySession` (commit sem close) nos testes que precisam inspecionar o banco após a função.
+- `_use_remote` mockado para forçar modo local.
+- `object_storage.settings` mockado via `MagicMock` com `tmp_path`.
+
+## 4) Verificações executadas
+
+- `python -m pytest tests/services/test_accident_archive_builder.py -v` → **7 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **122 passed** (era 115 antes do F2)
+
+## 5) Arquivos alterados nesta tarefa
+
+- `sistema/app/services/accident_archive_builder.py` (novo)
+- `sistema/app/routers/admin.py` (editado — stub substituído)
+- `tests/services/test_accident_archive_builder.py` (novo — 7 testes)
+- `docs/temp000A.md` (atualizado)
