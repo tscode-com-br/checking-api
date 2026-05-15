@@ -1202,3 +1202,106 @@ otify_web_check_data_changed + stub delete_prefix + endpoint DELETE)
 - 	ests/routers/test_admin_accidents.py (editado — correções de bugs + 5 testes D5)
 - 	ests/debug_failure.py (deletado)
 - docs/temp000A.md (atualizado com este resumo)
+
+---
+
+# Task D6 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco D / Task D6** adicionou dois endpoints auxiliares para o wizard de abertura do Modo Acidente, retornando a lista de projetos e as localizações filtradas por projeto.
+
+## 1) Arquivo alterado: `sistema/app/routers/admin.py`
+
+### Novos imports de schema
+
+Adicionados à linha de import de schemas:
+- `AccidentProjectOption`
+- `AccidentLocationOption`
+
+### Novo import de modelo
+
+Adicionado `ManagedLocation` ao import de modelos.
+
+### Endpoint GET /accidents/wizard/projects (linha ~2146)
+
+```python
+@router.get("/accidents/wizard/projects", response_model=list[AccidentProjectOption], dependencies=[Depends(require_full_admin_session)])
+def list_accident_wizard_projects(db: Session = Depends(get_db)) -> list[AccidentProjectOption]:
+    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+```
+
+- Requer sessão admin completa (`require_full_admin_session`).
+- Retorna todos os projetos via helper `list_projects(db)` já existente no router.
+- Mapeia cada projeto para `AccidentProjectOption(id, name)`.
+
+### Endpoint GET /accidents/wizard/locations (linha ~2151)
+
+```python
+@router.get("/accidents/wizard/locations", response_model=list[AccidentLocationOption], dependencies=[Depends(require_full_admin_session)])
+def list_accident_wizard_locations(project_id: int = Query(...), db: Session = Depends(get_db)) -> list[AccidentLocationOption]:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    options = []
+    for loc in db.execute(select(ManagedLocation)).scalars().all():
+        try:
+            projects = json.loads(loc.projects_json or "[]")
+        except Exception:
+            projects = []
+        if project.name in projects:
+            options.append(AccidentLocationOption(id=loc.id, name=loc.local, registered=True))
+    return options
+```
+
+- Requer parâmetro de query `project_id`.
+- 404 se projeto não existir.
+- Filtra `ManagedLocation` pelo campo `projects_json` (array JSON de nomes de projetos) comparando `project.name in projects`.
+- Retorna `AccidentLocationOption(id, name, registered=True)` para cada localização correspondente.
+
+### Posicionamento no arquivo
+
+Os dois endpoints foram inseridos **antes** do stub `delete_prefix` e do endpoint `DELETE /accidents/{accident_id}`, garantindo que rotas estáticas (`/wizard/projects`, `/wizard/locations`) precedam a rota parametrizada (`/{accident_id}`) na ordem de declaração do router.
+
+## 2) Arquivo alterado: `tests/routers/test_admin_accidents.py`
+
+### Import adicionado
+
+```python
+from sistema.app.models import Accident, AccidentArchive, AccidentUserReport, AccidentVideoUpload, AdminUser, ManagedLocation, Project, User
+```
+
+`ManagedLocation` adicionado para o helper de criação de localizações gerenciadas.
+
+### Constantes de URL adicionadas
+
+```python
+WIZARD_PROJECTS_URL = "/api/admin/accidents/wizard/projects"
+WIZARD_LOCATIONS_URL = "/api/admin/accidents/wizard/locations"
+```
+
+### Helper adicionado: `_insert_managed_location(db, name, projects)`
+
+Insere um `ManagedLocation` no banco com `projects_json` serializado, para uso nos testes D6.
+
+### 3 testes D6 adicionados
+
+| Teste | Descrição |
+|---|---|
+| `test_wizard_lists_all_projects` | GET /wizard/projects → lista inclui o projeto criado via `_ensure_project` |
+| `test_wizard_locations_filtered_by_project` | GET /wizard/locations?project_id=X → inclui locais vinculados e exclui não-vinculados; `registered=True` |
+| `test_wizard_locations_404_for_unknown_project` | project_id=999999999 → 404 |
+
+## 3) Schemas utilizados (já existentes em `sistema/app/schemas.py`)
+
+- `AccidentProjectOption` (linha ~4298): `id: int`, `name: str`
+- `AccidentLocationOption` (linha ~4303): `id: int`, `name: str`, `registered: bool`
+
+## 4) Verificações executadas
+
+- `python -m pytest tests/routers/test_admin_accidents.py -v -k "wizard"` → **3 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **91 passed**
+
+## 5) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/admin.py` (editado — imports + 2 endpoints wizard)
+- `tests/routers/test_admin_accidents.py` (editado — import ManagedLocation + helper + 3 testes D6)
+- `docs/temp000A.md` (atualizado com este resumo)
