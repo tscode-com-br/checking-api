@@ -800,3 +800,90 @@ A implementação do **Bloco C / Task C5** integrou o hook de check-in/check-out
 - `sistema/app/routers/mobile.py` (editado — 3 hook calls)
 - `tests/services/test_accident_check_event_hook.py` (novo — 6 testes)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task D1 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco D / Task D1** adicionou o endpoint `GET /api/admin/accidents/active` ao router admin, expondo o estado atual do modo acidente (incluindo a tabela Situação de Pessoal) para a UI admin.
+
+## 1) Arquivo alterado: `sistema/app/routers/admin.py`
+
+### Novos imports
+
+Modelos adicionados ao bloco `from ..models import (...)`:
+- `Accident`
+- `AdminUser`
+
+Schemas adicionados ao bloco `from ..schemas import (...)`:
+- `AccidentSummary`
+- `AdminAccidentStateResponse`
+
+Serviços adicionados (após o import existente de `user_sync`):
+```python
+from ..services.accident_lifecycle import list_active_accident
+from ..services.accident_numbering import format_accident_number
+from ..services.accident_situation_table import build_situation_rows
+```
+
+### Helper privado adicionado
+
+`_accident_summary(db: Session, accident: Accident) -> AccidentSummary`
+
+- Inserido logo após o bloco de fechamento do endpoint `/stream` (linha ~1968).
+- Resolve `opened_by_label`:
+  - Se `opened_by_admin_id` → busca `AdminUser` por PK → usa `admin.nome_completo`.
+  - Else se `opened_by_user_id` → busca `User` por PK → usa `user.nome`.
+  - Fallback: `"—"`.
+- Retorna `AccidentSummary` completo com `accident_number_label` formatado via `format_accident_number`.
+
+### Endpoint adicionado
+
+```python
+@router.get("/accidents/active", response_model=AdminAccidentStateResponse,
+            dependencies=[Depends(require_admin_session)])
+def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentStateResponse:
+    active = list_active_accident(db)
+    if active is None:
+        return AdminAccidentStateResponse(is_active=False)
+    return AdminAccidentStateResponse(
+        is_active=True,
+        accident=_accident_summary(db, active),
+        situation_rows=build_situation_rows(db, accident=active),
+    )
+```
+
+- Caminho: `GET /api/admin/accidents/active`
+- Requer sessão admin de qualquer perfil (`require_admin_session`).
+- Sem acidente ativo → `{"is_active": false, "accident": null, "situation_rows": []}`.
+- Com acidente ativo → payload completo com `situation_rows` ordenadas por prioridade (delegado a `build_situation_rows`).
+
+## 2) Arquivo criado: `tests/routers/test_admin_accidents.py`
+
+3 testes obrigatórios:
+
+| Teste | Descrição |
+|---|---|
+| `test_active_requires_session` | Sem cookie de sessão admin → 401 |
+| `test_active_returns_empty_when_none` | Nenhum acidente ativo → `is_active=False`, `accident=null`, `situation_rows=[]` |
+| `test_active_returns_accident_and_rows` | Acidente ativo criado → `is_active=True`, todos os campos de `accident` verificados |
+
+### Detalhes da infraestrutura de teste
+
+- Admin user criado com `perfil=19` (dígitos "1" e "9" → `user_has_admin_access=True`).
+- Login via `POST /api/admin/auth/login` usando `TestClient` com cookies persistentes.
+- Acidentes abertos via inserção direta no banco (criando `AdminUser` row na tabela `admin_users` associada ao `User` admin).
+- Limpeza explícita via `_close_all_accidents(db)` antes de cada teste para evitar conflito do índice parcial único.
+- Valores de objetos SQLAlchemy capturados antes de fechar a sessão para evitar `DetachedInstanceError`.
+
+## 3) Verificações executadas
+
+- `python -c "from sistema.app.routers.admin import get_active_accident_state, _accident_summary; print('imports OK')"` → **imports OK**
+- `python -m pytest tests/routers/test_admin_accidents.py -v` → **3 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **69 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/admin.py` (editado — imports + helper + endpoint)
+- `tests/routers/test_admin_accidents.py` (novo — 3 testes)
+- `docs/temp000A.md` (atualizado com este resumo)
