@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from ..database import get_db
 from ..database import get_database_diagnostics
 from ..models import (
     Accident,
+    AccidentArchive,
     AdminAccessRequest,
     AdminUser,
     CheckEvent,
@@ -31,6 +32,8 @@ from ..models import (
     Vehicle,
 )
 from ..schemas import (
+    AccidentClosedListResponse,
+    AccidentClosedRow,
     AccidentSummary,
     AdminAccidentOpenRequest,
     AdminAccidentStateResponse,
@@ -2081,6 +2084,61 @@ def close_admin_accident(
         commit=True,
     )
     return AdminAccidentStateResponse(is_active=False)
+
+
+def generate_presigned_url(object_key: str, expires_in_seconds: int = 300) -> str:
+    # TODO Task E2: generate a real pre-signed URL from the object storage provider.
+    raise NotImplementedError("generate_presigned_url not yet implemented (Task E2)")
+
+
+@router.get("/accidents", response_model=AccidentClosedListResponse, dependencies=[Depends(require_full_admin_session)])
+def list_closed_accidents_endpoint(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AccidentClosedListResponse:
+    rows = []
+    accidents = db.execute(
+        select(Accident).where(Accident.closed_at.is_not(None)).order_by(Accident.accident_number.desc())
+    ).scalars().all()
+    for accident in accidents:
+        archive = db.execute(
+            select(AccidentArchive).where(AccidentArchive.accident_id == accident.id)
+        ).scalar_one_or_none()
+        opened_by_label = "—"
+        if accident.opened_by_admin_id:
+            admin = db.get(AdminUser, accident.opened_by_admin_id)
+            if admin:
+                opened_by_label = admin.nome_completo
+        elif accident.opened_by_user_id:
+            user = db.get(User, accident.opened_by_user_id)
+            if user:
+                opened_by_label = user.nome
+        rows.append(AccidentClosedRow(
+            id=accident.id,
+            accident_number_label=format_accident_number(accident.accident_number),
+            project_name=accident.project_name_snapshot,
+            author_label=opened_by_label,
+            opened_at=accident.opened_at,
+            closed_at=accident.closed_at,
+            download_url=f"/api/admin/accidents/{accident.id}/archive",
+            download_ready=archive is not None,
+            can_delete=(current_admin.perfil == 9),
+        ))
+    return AccidentClosedListResponse(rows=rows)
+
+
+@router.get("/accidents/{accident_id}/archive", dependencies=[Depends(require_full_admin_session)])
+def download_accident_archive(
+    accident_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    archive = db.execute(
+        select(AccidentArchive).where(AccidentArchive.accident_id == accident_id)
+    ).scalar_one_or_none()
+    if archive is None:
+        raise HTTPException(status_code=404, detail="Arquivo do acidente ainda nao esta pronto.")
+    presigned_url = generate_presigned_url(object_key=archive.zip_object_key, expires_in_seconds=300)
+    return RedirectResponse(url=presigned_url, status_code=307)
 
 
 @router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])

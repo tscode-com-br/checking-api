@@ -535,3 +535,220 @@ def test_close_schedules_archive_build():
     mock_archive.assert_called_once()
     called_accident_id = mock_archive.call_args[0][0]
     assert isinstance(called_accident_id, int), f"Expected int accident_id, got {called_accident_id!r}"
+
+
+LIST_URL = "/api/admin/accidents"
+
+
+def _make_archive_url(accident_id: int) -> str:
+    return f"/api/admin/accidents/{accident_id}/archive"
+
+
+def _insert_closed_accident(db: Session, proj: Project, admin_user: User, number_override: int | None = None) -> Accident:
+    """Open then immediately close an accident for list tests."""
+    now = datetime.now(tz=timezone.utc)
+    if number_override is None:
+        max_row = db.execute(
+            sa.text("SELECT COALESCE(MAX(accident_number), -1) + 1 FROM accidents")
+        ).scalar_one()
+        accident_number = int(max_row)
+    else:
+        accident_number = number_override
+
+    accident = Accident(
+        accident_number=accident_number,
+        project_id=proj.id,
+        project_name_snapshot=proj.name,
+        location_name_snapshot="Closed Location",
+        location_is_registered=False,
+        origin="admin",
+        opened_by_admin_id=admin_user.id,
+        opened_at=now,
+        closed_by_admin_id=admin_user.id,
+        closed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(accident)
+    db.commit()
+    db.refresh(accident)
+    return accident
+
+
+def _insert_archive(db: Session, accident: Accident) -> None:
+    """Insert a fake AccidentArchive row for the given accident."""
+    from sistema.app.models import AccidentArchive
+    now = datetime.now(tz=timezone.utc)
+    archive = AccidentArchive(
+        accident_id=accident.id,
+        snapshot_json="{}",
+        xlsx_object_key=f"archive/{accident.id}.xlsx",
+        zip_object_key=f"archive/{accident.id}.zip",
+        size_bytes=1024,
+        generated_at=now,
+    )
+    db.add(archive)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# test_list_returns_only_closed
+# ---------------------------------------------------------------------------
+
+
+def test_list_returns_only_closed():
+    """GET /accidents must return only closed accidents (not the active one)."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        closed = _insert_closed_accident(db, proj, admin_user)
+        closed_id = closed.id
+        # Open one active accident (should NOT appear in list)
+        active = _open_accident(db, proj, admin_user)
+        active_id = active.id
+
+    client = _logged_in_client()
+    with (
+        patch("sistema.app.services.accident_lifecycle.notify_admin_data_changed"),
+        patch("sistema.app.services.accident_lifecycle.notify_web_check_data_changed"),
+    ):
+        resp = client.get(LIST_URL)
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    ids = [row["id"] for row in data["rows"]]
+    assert closed_id in ids, "Closed accident should be in list"
+    assert active_id not in ids, "Active accident must NOT be in list"
+
+    # Clean up
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+
+
+# ---------------------------------------------------------------------------
+# test_list_ordered_desc
+# ---------------------------------------------------------------------------
+
+
+def test_list_ordered_desc():
+    """GET /accidents must return closed accidents ordered by accident_number DESC."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        # Delete existing accidents to control numbering cleanly
+        db.execute(sa.text("DELETE FROM accidents"))
+        db.commit()
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        a1 = _insert_closed_accident(db, proj, admin_user, number_override=10)
+        a2 = _insert_closed_accident(db, proj, admin_user, number_override=20)
+        a3 = _insert_closed_accident(db, proj, admin_user, number_override=15)
+
+    client = _logged_in_client()
+    resp = client.get(LIST_URL)
+
+    assert resp.status_code == 200, resp.text
+    numbers = [row["accident_number_label"] for row in resp.json()["rows"]]
+    # accident_number DESC → 20, 15, 10
+    first_num = int(resp.json()["rows"][0]["accident_number_label"])
+    last_num = int(resp.json()["rows"][-1]["accident_number_label"])
+    assert first_num > last_num, f"Expected DESC order, got {numbers}"
+
+
+# ---------------------------------------------------------------------------
+# test_can_delete_true_only_for_perfil_9
+# ---------------------------------------------------------------------------
+
+
+def test_can_delete_true_only_for_perfil_9():
+    """can_delete=True only when the logged-in admin has perfil==9."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)  # perfil=19 (has digit 9)
+        _insert_closed_accident(db, proj, admin_user)
+
+    # perfil=19 includes digit 9, so can_delete must be True (19 == 9 is False, but spec checks perfil==9)
+    # Create a perfil=9 user for the True branch
+    with SessionLocal() as db:
+        perfil9_user = db.execute(sa.select(User).where(User.chave == "D4P9")).scalar_one_or_none()
+        if perfil9_user is None:
+            from sistema.app.services.passwords import hash_password as _hp
+            perfil9_user = User(
+                chave="D4P9",
+                nome="D4 Perfil9",
+                projeto="D1PROJ",
+                checkin=False,
+                local="Sala",
+                last_active_at=datetime.now(tz=timezone.utc),
+                inactivity_days=0,
+                senha=_hp("Perfil9D4!"),
+                perfil=9,
+            )
+            db.add(perfil9_user)
+        else:
+            from sistema.app.services.passwords import hash_password as _hp
+            perfil9_user.senha = _hp("Perfil9D4!")
+            perfil9_user.perfil = 9
+        db.commit()
+
+    # Test perfil=9 admin → can_delete=True
+    client_p9 = TestClient(app, raise_server_exceptions=False)
+    resp_login = client_p9.post(ADMIN_LOGIN_URL, json={"chave": "D4P9", "senha": "Perfil9D4!"})
+    assert resp_login.status_code == 200, f"perfil=9 login failed: {resp_login.text}"
+    resp = client_p9.get(LIST_URL)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    assert len(rows) > 0
+    assert all(row["can_delete"] is True for row in rows), "perfil=9 must have can_delete=True"
+
+    # Test perfil=19 admin (has digit "1" and "9" but perfil!=9) → can_delete=False
+    client_p19 = _logged_in_client()
+    resp = client_p19.get(LIST_URL)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    assert len(rows) > 0
+    assert all(row["can_delete"] is False for row in rows), "perfil=19 must have can_delete=False (perfil!=9)"
+
+
+# ---------------------------------------------------------------------------
+# test_download_returns_307_when_ready
+# ---------------------------------------------------------------------------
+
+
+def test_download_returns_307_when_ready():
+    """GET /accidents/{id}/archive returns 307 redirect when archive exists."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _insert_closed_accident(db, proj, admin_user)
+        _insert_archive(db, accident)
+        accident_id = accident.id
+
+    client = _logged_in_client()
+    fake_url = "https://storage.example.com/archive.zip?sig=abc"
+    with patch("sistema.app.routers.admin.generate_presigned_url", return_value=fake_url):
+        resp = client.get(_make_archive_url(accident_id), follow_redirects=False)
+
+    assert resp.status_code == 307, f"Expected 307, got {resp.status_code}: {resp.text}"
+    assert resp.headers["location"] == fake_url
+
+
+# ---------------------------------------------------------------------------
+# test_download_returns_404_when_archive_missing
+# ---------------------------------------------------------------------------
+
+
+def test_download_returns_404_when_archive_missing():
+    """GET /accidents/{id}/archive returns 404 when no AccidentArchive row exists."""
+    with SessionLocal() as db:
+        _close_all_accidents(db)
+        proj = _ensure_project(db)
+        admin_user = _ensure_admin_user(db)
+        accident = _insert_closed_accident(db, proj, admin_user)
+        accident_id = accident.id
+
+    client = _logged_in_client()
+    resp = client.get(_make_archive_url(accident_id))
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
