@@ -887,3 +887,74 @@ def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentSta
 - `sistema/app/routers/admin.py` (editado — imports + helper + endpoint)
 - `tests/routers/test_admin_accidents.py` (novo — 3 testes)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task D2 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco D / Task D2** adicionou o endpoint `POST /api/admin/accidents/open` ao router admin, permitindo ao administrador abrir o modo acidente a partir da UI administrativa.
+
+## 1) Arquivo alterado: `sistema/app/routers/admin.py`
+
+### Novos imports
+
+Modelos e schemas adicionados:
+- Schema: `AdminAccidentOpenRequest`
+- Serviços de lifecycle: `AccidentAlreadyActiveError`, `InvalidAccidentLocationError`, `open_accident`
+
+### Endpoint adicionado
+
+```python
+@router.post("/accidents/open", response_model=AdminAccidentStateResponse,
+             dependencies=[Depends(require_full_admin_session)])
+def open_admin_accident(
+    payload: AdminAccidentOpenRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+```
+
+- Caminho: `POST /api/admin/accidents/open`
+- Requer sessão admin com perfil completo (`require_full_admin_session` — dígito "1" ou "9" no `perfil`).
+- Sem sessão → 401; sem permissão completa → 403.
+- `AccidentAlreadyActiveError` → 409 `"Ja existe um acidente em curso."`.
+- `InvalidAccidentLocationError` → 422 `"O local selecionado nao pertence ao projeto."`.
+- Body inválido (validação Pydantic/FastAPI) → 422.
+- Sucesso → 200 com `AdminAccidentStateResponse` completo.
+- Loga evento via `log_event(db, source="admin", action="accident_open", ...)`.
+- `open_accident()` publica internamente `"accident_opened"` nos dois brokers SSE (`notify_admin_data_changed` e `notify_web_check_data_changed`).
+
+### Bug fix
+
+Durante a edição de D1, o decorator `@router.get("/administrators", ...)` havia sido perdido acidentalmente. Corrigido nesta tarefa.
+
+## 2) Arquivo alterado: `tests/routers/test_admin_accidents.py`
+
+5 testes D2 adicionados ao arquivo criado em D1:
+
+| Teste | Descrição |
+|---|---|
+| `test_open_requires_full_admin` | Usuário com `perfil=0` (painel admin, sem acesso completo) → 403 |
+| `test_open_creates_when_none` | Sem acidente ativo, payload válido → 200 com `is_active=True` |
+| `test_open_returns_conflict_when_active` | Acidente já aberto → 409 |
+| `test_open_validates_payload` | `project_id` ausente ou `location_id + custom_location_name` juntos → 422 |
+| `test_open_publishes_brokers` | Ambos os brokers chamados com `"accident_opened"` após abertura bem-sucedida |
+
+### Detalhes da infraestrutura de teste
+
+- Segundo usuário de teste criado: `_LIMITED_CHAVE = "D2LM"`, `perfil=0` (acesso apenas ao painel admin).
+- Helper `_ensure_limited_admin_user(db)` cria/reutiliza o usuário limitado.
+- Helper `_logged_in_limited_client()` autentica o usuário limitado via `POST /api/admin/auth/login`.
+- Brokers mockados via `unittest.mock.patch` nas funções em `sistema.app.services.accident_lifecycle`.
+- `_close_all_accidents(db)` chamado antes de cada teste que abre acidente para evitar conflito do índice parcial.
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/routers/test_admin_accidents.py -v` → **8 passed** (3 D1 + 5 D2)
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **74 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/admin.py` (editado — novos imports + endpoint POST + bug fix no decorator)
+- `tests/routers/test_admin_accidents.py` (editado — 5 testes D2 adicionados)
+- `docs/temp000A.md` (atualizado com este resumo)
