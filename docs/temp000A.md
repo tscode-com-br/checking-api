@@ -1025,3 +1025,80 @@ def close_admin_accident(
 - `sistema/app/routers/admin.py` (editado — `BackgroundTasks` import + lifecycle imports + stub + endpoint)
 - `tests/routers/test_admin_accidents.py` (editado — 4 testes D3 adicionados)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task D4 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco D / Task D4** adicionou os endpoints `GET /api/admin/accidents` e `GET /api/admin/accidents/{id}/archive` ao router admin, permitindo listar acidentes encerrados e fazer download do arquivo comprimido.
+
+## 1) Arquivo alterado: `sistema/app/routers/admin.py`
+
+### Novos imports
+
+- `AccidentArchive` adicionado ao bloco `from ..models import (...)`
+- `AccidentClosedListResponse`, `AccidentClosedRow` adicionados ao bloco `from ..schemas import (...)`
+- `RedirectResponse` adicionado ao `from fastapi.responses import (...)`
+
+### Stub adicionado
+
+```python
+def generate_presigned_url(object_key: str, expires_in_seconds: int = 300) -> str:
+    # TODO Task E2: generate a real pre-signed URL from the object storage provider.
+    raise NotImplementedError("generate_presigned_url not yet implemented (Task E2)")
+```
+
+Inserido antes do endpoint `GET /accidents`. Será substituído pela implementação real na Task E2.
+
+### Endpoint `GET /accidents` adicionado
+
+```python
+@router.get("/accidents", response_model=AccidentClosedListResponse,
+            dependencies=[Depends(require_full_admin_session)])
+def list_closed_accidents_endpoint(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AccidentClosedListResponse:
+```
+
+- Filtra apenas `closed_at IS NOT NULL`, ordenado por `accident_number DESC`.
+- Para cada acidente: verifica existência de `AccidentArchive` → `download_ready`.
+- `can_delete = (current_admin.perfil == 9)`.
+- `opened_by_label` resolvido inline (mesmo padrão do helper `_accident_summary`).
+- `download_url = f"/api/admin/accidents/{accident.id}/archive"`.
+
+### Endpoint `GET /accidents/{accident_id}/archive` adicionado
+
+- Busca `AccidentArchive` pelo `accident_id`.
+- 404 se não existe: `"Arquivo do acidente ainda nao esta pronto."`.
+- Chama `generate_presigned_url(archive.zip_object_key, expires_in_seconds=300)`.
+- Retorna `RedirectResponse(url=presigned_url, status_code=307)`.
+
+## 2) Arquivo alterado: `tests/routers/test_admin_accidents.py`
+
+5 testes D4 adicionados (total do arquivo: 17 testes):
+
+| Teste | Descrição |
+|---|---|
+| `test_list_returns_only_closed` | Acidente ativo excluído da lista; acidente fechado incluído |
+| `test_list_ordered_desc` | Resultados em ordem decrescente por `accident_number` |
+| `test_can_delete_true_only_for_perfil_9` | `can_delete=True` apenas quando `perfil==9`; `perfil=19` retorna `False` |
+| `test_download_returns_307_when_ready` | Com archive → 307 redirect para URL mockada |
+| `test_download_returns_404_when_archive_missing` | Sem archive → 404 |
+
+### Helpers de suporte adicionados
+
+- `_insert_closed_accident(db, proj, admin_user, number_override)` — insere acidente já fechado com `number_override` opcional para controlar ordenação.
+- `_insert_archive(db, accident)` — insere `AccidentArchive` fake para o acidente.
+- `_make_archive_url(accident_id)` — gera a URL do endpoint de download.
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/routers/test_admin_accidents.py -v` → **17 passed** (3 D1 + 5 D2 + 4 D3 + 5 D4)
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **83 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/admin.py` (editado — novos imports + stub `generate_presigned_url` + 2 novos endpoints)
+- `tests/routers/test_admin_accidents.py` (editado — 5 testes D4 + helpers adicionados)
+- `docs/temp000A.md` (atualizado com este resumo)
