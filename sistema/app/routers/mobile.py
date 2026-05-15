@@ -17,6 +17,7 @@ from ..schemas import (
     MobileSyncStateResponse,
 )
 from ..services.admin_updates import notify_admin_data_changed
+from ..services.accident_lifecycle import fire_accident_hook_for_check_event
 from ..services.event_logger import log_event
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
 from ..services.forms_queue import enqueue_forms_submission
@@ -173,6 +174,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         )
         db.commit()
         notify_admin_data_changed(payload.action)
+        fire_accident_hook_for_check_event(db, user=user, action=payload.action, event_time=event_time)
         state = build_mobile_sync_state(db, chave=user.chave)
         return MobileSubmitResponse(
             ok=True,
@@ -231,6 +233,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
     )
     db.commit()
     notify_admin_data_changed(payload.action)
+    fire_accident_hook_for_check_event(db, user=user, action=payload.action, event_time=event_time)
     state = build_mobile_sync_state(db, chave=user.chave)
     return MobileSubmitResponse(
         ok=True,
@@ -241,7 +244,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
     )
 
 
-@router.post("/events/forms-submit", response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
+@router.post("/events/forms-submit",response_model=MobileSubmitResponse, dependencies=[Depends(require_mobile_shared_key)])
 def submit_mobile_forms_event(payload: MobileFormsSubmitRequest, db: Session = Depends(get_db)) -> MobileSubmitResponse:
     payload.projeto = ensure_known_project(db, payload.projeto)
     return submit_forms_event(
@@ -310,6 +313,7 @@ def sync_mobile_event(payload: MobileSyncRequest, db: Session = Depends(get_db))
     )
     db.commit()
     notify_admin_data_changed(payload.action)
+    fire_accident_hook_for_check_event(db, user=user, action=payload.action, event_time=event_time)
     state = build_mobile_sync_state(db, chave=user.chave)
     return MobileSyncResponse(
         ok=True,

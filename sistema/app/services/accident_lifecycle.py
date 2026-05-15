@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Literal
 
 from sqlalchemy import select, text
@@ -20,6 +21,8 @@ from .accident_numbering import format_accident_number, next_accident_number
 from .admin_updates import notify_admin_data_changed, notify_web_check_data_changed
 from .time_utils import now_sgt
 from .user_projects import list_user_project_names
+
+_logger = logging.getLogger(__name__)
 
 
 class AccidentAlreadyActiveError(RuntimeError):
@@ -330,3 +333,35 @@ def close_accident(
     notify_web_check_data_changed("accident_closed", metadata=metadata)
 
     return accident
+
+def fire_accident_hook_for_check_event(
+    db: "Session",
+    *,
+    user: "User",
+    action: str,
+    event_time: "datetime",
+) -> None:
+    """Call after any successful check-in/check-out to keep AccidentUserReport in sync.
+
+    Normalises 'checkin'/'checkout' to 'check-in'/'check-out'.
+    Never raises — all exceptions are swallowed with a warning log.
+    """
+    if action in ("checkin", "check-in"):
+        normalized: Literal["check-in", "check-out"] = "check-in"
+    elif action in ("checkout", "check-out"):
+        normalized = "check-out"
+    else:
+        return
+
+    try:
+        active = list_active_accident(db)
+        if active is not None:
+            update_accident_membership_for_check_event(
+                db,
+                accident=active,
+                user=user,
+                action=normalized,
+                event_time=event_time,
+            )
+    except Exception:
+        _logger.warning("Accident hook failed for check event", exc_info=True)

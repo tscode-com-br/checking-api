@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..models import User, UserSyncEvent
 from ..schemas import MobileSubmitResponse
 from .admin_updates import notify_admin_data_changed
+from .accident_lifecycle import fire_accident_hook_for_check_event
 from .event_logger import log_event
 from .forms_queue import enqueue_forms_submission
 from .time_utils import resolve_project_timezone_name
@@ -124,6 +125,7 @@ def submit_forms_event(
         )
         db.commit()
         notify_admin_data_changed(action)
+        fire_accident_hook_for_check_event(db, user=user, action=action, event_time=normalized_event_time)
         state = build_mobile_sync_state(db, chave=user.chave)
         return MobileSubmitResponse(
             ok=True,
@@ -189,6 +191,7 @@ def submit_forms_event(
     )
     db.commit()
     notify_admin_data_changed(action)
+    fire_accident_hook_for_check_event(db, user=user, action=action, event_time=normalized_event_time)
     state = build_mobile_sync_state(db, chave=user.chave)
     return MobileSubmitResponse(
         ok=True,
