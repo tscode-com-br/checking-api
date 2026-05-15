@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from sistema.app.database import Base, SessionLocal, engine  # noqa: E402
 from sistema.app.main import app  # noqa: E402
-from sistema.app.models import Accident, AccidentArchive, AccidentUserReport, AccidentVideoUpload, AdminUser, Project, User  # noqa: E402
+from sistema.app.models import Accident, AccidentArchive, AccidentUserReport, AccidentVideoUpload, AdminUser, ManagedLocation, Project, User  # noqa: E402
 from sistema.app.services.passwords import hash_password  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
@@ -935,3 +935,94 @@ def test_delete_calls_delete_prefix():
     call_prefix = mock_delete_prefix.call_args[1].get("prefix") or mock_delete_prefix.call_args[0][0]
     # accident_number=42 → format_accident_number → "0042"
     assert "0042" in call_prefix, f"Expected '0042' in prefix, got: {call_prefix!r}"
+
+
+# ---------------------------------------------------------------------------
+# D6 wizard helpers
+# ---------------------------------------------------------------------------
+
+WIZARD_PROJECTS_URL = "/api/admin/accidents/wizard/projects"
+WIZARD_LOCATIONS_URL = "/api/admin/accidents/wizard/locations"
+
+
+def _insert_managed_location(db: Session, name: str, projects: list[str]) -> ManagedLocation:
+    """Insert a ManagedLocation linked to the given project names."""
+    import json as _json
+    now = datetime.now(tz=timezone.utc)
+    loc = ManagedLocation(
+        local=name,
+        latitude=1.0,
+        longitude=103.0,
+        projects_json=_json.dumps(projects),
+        tolerance_meters=50,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(loc)
+    db.commit()
+    db.refresh(loc)
+    return loc
+
+
+# ---------------------------------------------------------------------------
+# test_wizard_lists_all_projects
+# ---------------------------------------------------------------------------
+
+
+def test_wizard_lists_all_projects():
+    """GET /accidents/wizard/projects returns all registered projects."""
+    with SessionLocal() as db:
+        proj = _ensure_project(db)
+        proj_id = proj.id
+        proj_name = proj.name
+
+    client = _logged_in_client()
+    resp = client.get(WIZARD_PROJECTS_URL)
+
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert isinstance(rows, list)
+    ids = [r["id"] for r in rows]
+    names = [r["name"] for r in rows]
+    assert proj_id in ids
+    assert proj_name in names
+
+
+# ---------------------------------------------------------------------------
+# test_wizard_locations_filtered_by_project
+# ---------------------------------------------------------------------------
+
+
+def test_wizard_locations_filtered_by_project():
+    """GET /accidents/wizard/locations?project_id=X returns only locations linked to that project."""
+    with SessionLocal() as db:
+        proj = _ensure_project(db)
+        proj_id = proj.id
+        proj_name = proj.name
+        loc_linked = _insert_managed_location(db, f"WizLoc_{proj_name}", [proj_name])
+        loc_unlinked = _insert_managed_location(db, "WizLoc_Other", ["SOMEOTHERPROJECT"])
+        linked_id = loc_linked.id
+        unlinked_id = loc_unlinked.id
+
+    client = _logged_in_client()
+    resp = client.get(WIZARD_LOCATIONS_URL, params={"project_id": proj_id})
+
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    ids = [r["id"] for r in rows]
+    assert linked_id in ids, f"Linked location {linked_id} should appear; got ids={ids}"
+    assert unlinked_id not in ids, f"Unlinked location {unlinked_id} must not appear"
+    linked_row = next(r for r in rows if r["id"] == linked_id)
+    assert linked_row["registered"] is True
+
+
+# ---------------------------------------------------------------------------
+# test_wizard_locations_404_for_unknown_project
+# ---------------------------------------------------------------------------
+
+
+def test_wizard_locations_404_for_unknown_project():
+    """GET /accidents/wizard/locations?project_id=999999 returns 404."""
+    client = _logged_in_client()
+    resp = client.get(WIZARD_LOCATIONS_URL, params={"project_id": 999999999})
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"

@@ -34,6 +34,8 @@ from ..models import (
 from ..schemas import (
     AccidentClosedListResponse,
     AccidentClosedRow,
+    AccidentLocationOption,
+    AccidentProjectOption,
     AccidentSummary,
     AdminAccidentOpenRequest,
     AdminAccidentStateResponse,
@@ -2139,6 +2141,30 @@ def download_accident_archive(
         raise HTTPException(status_code=404, detail="Arquivo do acidente ainda nao esta pronto.")
     presigned_url = generate_presigned_url(object_key=archive.zip_object_key, expires_in_seconds=300)
     return RedirectResponse(url=presigned_url, status_code=307)
+
+
+@router.get("/accidents/wizard/projects", response_model=list[AccidentProjectOption], dependencies=[Depends(require_full_admin_session)])
+def list_accident_wizard_projects(db: Session = Depends(get_db)) -> list[AccidentProjectOption]:
+    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+
+
+@router.get("/accidents/wizard/locations", response_model=list[AccidentLocationOption], dependencies=[Depends(require_full_admin_session)])
+def list_accident_wizard_locations(
+    project_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentLocationOption]:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    options = []
+    for loc in db.execute(select(ManagedLocation)).scalars().all():
+        try:
+            projects = json.loads(loc.projects_json or "[]")
+        except Exception:
+            projects = []
+        if project.name in projects:
+            options.append(AccidentLocationOption(id=loc.id, name=loc.local, registered=True))
+    return options
 
 
 def delete_prefix(prefix: str) -> None:
