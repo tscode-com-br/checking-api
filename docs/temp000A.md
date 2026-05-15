@@ -1558,3 +1558,88 @@ Constante adicionada: `VIDEO_URL = "/api/web/check/accident/video"`.
 - `tests/routers/test_web_accidents.py` (editado — helpers + constante + 5 testes E3)
 - `requirements.txt` (editado — `python-multipart` adicionado)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task E4 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco E / Task E4** adicionou dois endpoints auxiliares para o wizard do usuário web: listagem de projetos e localizações filtradas por projeto.
+
+## 1) Arquivo alterado: `sistema/app/routers/web_check.py`
+
+### Novos imports de schema
+
+Adicionados ao bloco `from ..schemas import (...)`:
+- `AccidentLocationOption`
+- `AccidentProjectOption`
+
+(Modelos `ManagedLocation`, `Project`, função `list_projects`, `select` e `json` já estavam importados.)
+
+### Endpoint GET /check/accident/wizard/projects
+
+```python
+@router.get("/check/accident/wizard/projects", response_model=list[AccidentProjectOption])
+def list_web_accident_projects(
+    request: Request,
+    chave: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentProjectOption]:
+```
+
+- Requer sessão web autenticada com chave correspondente (`_require_matching_authenticated_web_user`).
+- Retorna todos os projetos via `list_projects(db)`.
+- Mapeia cada projeto para `AccidentProjectOption(id, name)`.
+
+### Endpoint GET /check/accident/wizard/locations
+
+```python
+@router.get("/check/accident/wizard/locations", response_model=list[AccidentLocationOption])
+def list_web_accident_locations(
+    request: Request,
+    chave: str = Query(...),
+    project_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentLocationOption]:
+```
+
+- Requer parâmetro de query `project_id`.
+- 404 se projeto não existir.
+- Itera todos os `ManagedLocation`, parseia `projects_json`, inclui apenas os que contêm `project.name`.
+- Retorna `AccidentLocationOption(id, name, registered=True)` para cada localização correspondente.
+
+## 2) Arquivo alterado: `tests/routers/test_web_accidents.py`
+
+### Import adicionado
+
+`ManagedLocation` adicionado ao import de modelos.
+
+### Constantes adicionadas
+
+```python
+WEB_WIZARD_PROJECTS_URL = "/api/web/check/accident/wizard/projects"
+WEB_WIZARD_LOCATIONS_URL = "/api/web/check/accident/wizard/locations"
+```
+
+### Helpers adicionados
+
+- `_ensure_e4_project(db)` — cria/reutiliza projeto `E4PROJ`.
+- `_ensure_e4_managed_location(db, name, linked_project)` — cria/atualiza `ManagedLocation` com campos obrigatórios (`latitude=1.0`, `longitude=103.0`, `tolerance_meters=50`, timestamps) e `projects_json` configurado.
+
+### 3 testes E4 adicionados
+
+| Teste | Descrição |
+|---|---|
+| `test_web_wizard_projects_requires_session` | Sem sessão → 401 |
+| `test_web_wizard_projects_returns_all` | Usuário autenticado → lista inclui projeto `E4PROJ` |
+| `test_web_wizard_locations_filtered_by_project` | Localização vinculada ao projeto → incluída; não-vinculada → excluída; `registered=True` verificado |
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/routers/test_web_accidents.py -v -k "wizard"` → **3 passed**
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **109 passed** (era 106 antes do E4)
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/web_check.py` (editado — imports + 2 endpoints wizard)
+- `tests/routers/test_web_accidents.py` (editado — import + helpers + constantes + 3 testes E4)
+- `docs/temp000A.md` (atualizado com este resumo)
