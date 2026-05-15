@@ -7,9 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
+from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
 from ..schemas import (
     ProjectRow,
+    WebAccidentOpenRequest,
+    WebAccidentStateResponse,
+    WebAccidentUserReport,
     WebCheckHistoryResponse,
     WebLocationOptionsResponse,
     WebPasswordActionResponse,
@@ -41,6 +44,12 @@ from ..services.admin_updates import (
     transport_updates_broker,
     web_check_updates_broker,
 )
+from ..services.accident_lifecycle import (
+    AccidentAlreadyActiveError,
+    list_active_accident,
+    open_accident,
+)
+from ..services.accident_numbering import format_accident_number
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
 from ..services.location_matching import (
     resolve_captured_location_label,
@@ -853,3 +862,61 @@ def submit_web_check(
         channel=WEB_CHECK_CHANNEL,
     )
     return WebCheckSubmitResponse(**response.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# E1 — Accident state & open
+# ---------------------------------------------------------------------------
+
+
+@router.get("/check/accident/state", response_model=WebAccidentStateResponse)
+def get_web_accident_state(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> WebAccidentStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    active = list_active_accident(db)
+    if active is None:
+        return WebAccidentStateResponse(is_active=False)
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == active.id,
+            AccidentUserReport.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+    return WebAccidentStateResponse(
+        is_active=True,
+        accident_number_label=format_accident_number(active.accident_number),
+        project_name=active.project_name_snapshot,
+        location_name=active.location_name_snapshot,
+        current_user_report=WebAccidentUserReport(
+            zone=("safety" if report and report.zone == "safety" else "accident" if report and report.zone == "accident" else None),
+            status=("ok" if report and report.status == "ok" else "help" if report and report.status == "help" else None),
+            reported_at=report.reported_at if report else None,
+        ) if report else None,
+    )
+
+
+@router.post("/check/accident/open", response_model=WebAccidentStateResponse)
+def open_web_accident(
+    payload: WebAccidentOpenRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebAccidentStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    try:
+        open_accident(
+            db,
+            origin="web",
+            project_id=payload.project_id,
+            location_id=payload.location_id,
+            custom_location_name=payload.custom_location_name,
+            opened_by_admin_id=None,
+            opened_by_user_id=user.id,
+            reporter_zone=payload.zone,
+            reporter_status=payload.status,
+        )
+    except AccidentAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
+    return get_web_accident_state(request=request, chave=payload.chave, db=db)
