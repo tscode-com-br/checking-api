@@ -1398,3 +1398,65 @@ def open_web_accident(payload, request, db) -> WebAccidentStateResponse
 - `sistema/app/routers/web_check.py` (editado — imports + 2 endpoints E1)
 - `tests/routers/test_web_accidents.py` (novo — 6 testes E1)
 - `docs/temp000A.md` (atualizado com este resumo)
+
+---
+
+# Task E2 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco E / Task E2** adicionou o endpoint `POST /api/web/check/accident/report` ao router `web_check`, permitindo ao usuário web enviar seu status (zona/condição) durante um acidente ativo.
+
+## 1) Arquivo alterado: `sistema/app/routers/web_check.py`
+
+### Imports adicionados
+
+- `BackgroundTasks` adicionado ao import de `fastapi` (linha 4).
+- `WebAccidentReportRequest` adicionado ao bloco `from ..schemas import (...)`.
+- `upsert_user_safety_report` adicionado ao bloco `from ..services.accident_lifecycle import (...)`.
+
+### Stub `queue_help_request_emails` (linha ~927)
+
+```python
+def queue_help_request_emails(accident_id: int, requester_user_id: int) -> None:
+    # TODO Task G3: send help-request notification emails to admins.
+    pass
+```
+
+Stub adicionado antes do endpoint, pois a implementação real virá na Task G3.
+
+### Endpoint POST /check/accident/report (linha ~934)
+
+```python
+@router.post("/check/accident/report", response_model=WebAccidentStateResponse)
+def report_web_accident_status(payload, request, background_tasks, db) -> WebAccidentStateResponse
+```
+
+- Requer sessão web autenticada com chave correspondente.
+- 409 se não há acidente ativo.
+- Chama `upsert_user_safety_report(db, accident=active, user=user, zone=payload.zone, status=payload.status)`.
+- O segundo valor de retorno (`fired_help`) indica se houve transição de non-help → help.
+- Se `fired_help=True`, agenda `queue_help_request_emails` via `background_tasks.add_task(...)`.
+- Retorna estado atualizado via `get_web_accident_state`.
+
+## 2) Arquivo alterado: `tests/routers/test_web_accidents.py`
+
+Helper adicionado: `_open_accident_via_api(client, proj_id)` — abre acidente via `/open` com brokers mockados.
+
+4 testes E2 adicionados:
+
+| Teste | Descrição |
+|---|---|
+| `test_report_409_when_no_active` | Sem acidente ativo → 409 |
+| `test_report_upserts` | Dois reports → segundo atualiza zone/status do `current_user_report` |
+| `test_report_schedules_email_on_help_transition` | Transição ok→help → `queue_help_request_emails` chamada uma vez |
+| `test_report_does_not_schedule_email_on_repeat_help` | help→help → `queue_help_request_emails` NOT called |
+
+## 3) Verificações executadas
+
+- `python -m pytest tests/routers/test_web_accidents.py -v` → **10 passed** (6 E1 + 4 E2)
+- `python -m pytest tests/models tests/schemas tests/services tests/routers -q` → **101 passed**
+
+## 4) Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/web_check.py` (editado — imports + stub + endpoint E2)
+- `tests/routers/test_web_accidents.py` (editado — helper + 4 testes E2)
+- `docs/temp000A.md` (atualizado com este resumo)
