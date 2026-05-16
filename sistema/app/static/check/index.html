@@ -604,6 +604,108 @@
             <p id="transportInlineStatus" class="transport-inline-status" aria-live="polite"></p>
           </div>
         </section>
+
+        <!-- Accident Report Wizard Modals (Task I2) -->
+
+        <div id="accidentReportProjectBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentReportProjectDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentReportProjectTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentReportProjectTitle">Selecione o Projeto</h2>
+            <div id="accidentReportProjectOptions" class="accident-report-options"></div>
+            <p id="accidentReportProjectError" class="check-error"></p>
+            <div class="password-dialog-actions">
+              <button id="accidentReportProjectCancel" type="button" class="secondary-button">Cancelar</button>
+              <button id="accidentReportProjectAdvance" type="button" class="submit-button" disabled>Avançar</button>
+            </div>
+          </div>
+        </section>
+
+        <div id="accidentReportLocationBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentReportLocationDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentReportLocationTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentReportLocationTitle">Local do Acidente</h2>
+            <div id="accidentReportLocationOptions" class="accident-report-options"></div>
+            <label class="accident-report-custom">
+              <input type="radio" name="accidentLocationChoice" value="__custom__" />
+              <span>Outro local:</span>
+              <input id="accidentReportCustomLocation" type="text" maxlength="120" placeholder="Descreva o local" disabled />
+            </label>
+            <p id="accidentReportLocationError" class="check-error"></p>
+            <div class="password-dialog-actions">
+              <button id="accidentReportLocationCancel" type="button" class="secondary-button">Cancelar</button>
+              <button id="accidentReportLocationAdvance" type="button" class="submit-button" disabled>Avançar</button>
+            </div>
+          </div>
+        </section>
+
+        <div id="accidentReportSituationBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentReportSituationDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentReportSituationTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentReportSituationTitle">Sua Situação</h2>
+            <div class="accident-report-options">
+              <label>
+                <input type="radio" name="accidentSituationChoice" value="safety-ok" />
+                <span>Estou em área segura</span>
+              </label>
+              <label>
+                <input type="radio" name="accidentSituationChoice" value="accident-ok" />
+                <span>Estou na área do acidente</span>
+              </label>
+              <label>
+                <input type="radio" name="accidentSituationChoice" value="accident-help" />
+                <span>Preciso de ajuda</span>
+              </label>
+            </div>
+            <p id="accidentReportSituationError" class="check-error"></p>
+            <div class="password-dialog-actions">
+              <button id="accidentReportSituationCancel" type="button" class="secondary-button">Cancelar</button>
+              <button id="accidentReportSituationAdvance" type="button" class="submit-button" disabled>Avançar</button>
+            </div>
+          </div>
+        </section>
+
+        <div id="accidentReportConfirmBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentReportConfirmDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentReportConfirmTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentReportConfirmTitle">Confirmação de Acidente</h2>
+            <p id="accidentReportConfirmText" class="accident-report-confirm-text"></p>
+            <p>Você confirma esta ação?</p>
+            <p id="accidentReportConfirmError" class="check-error"></p>
+            <div class="password-dialog-actions">
+              <button id="accidentReportConfirmCancel" type="button" class="secondary-button">Cancelar</button>
+              <button id="accidentReportConfirmSubmit" type="button" class="submit-button">Confirmar</button>
+            </div>
+          </div>
+        </section>
+
       </section>
     </main>
 

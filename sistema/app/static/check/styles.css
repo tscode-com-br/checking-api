@@ -931,6 +931,22 @@ header {
   transform: scale(0.98);
 }
 
+.accident-report-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.accident-report-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+}
+
 .password-dialog-backdrop {
   position: fixed;
   inset: 0;
