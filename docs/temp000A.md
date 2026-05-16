@@ -2511,3 +2511,56 @@ Adicionados apos o bloco `.accident-report-button[aria-pressed="true"]`:
 - sistema/app/static/check/index.html (editado -- 4 modais inseridos, +118 linhas)
 - sistema/app/static/check/styles.css (editado -- 2 blocos CSS adicionados)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I3 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar o tema CSS "Modo Acidente" ao frontend checking web, com overrides de cor vermelha e preservacao das bordas dos campos chave/senha.
+
+### 1) Arquivo editado: sistema/app/static/check/styles.css
+
+Adicionado imediatamente apos o bloco `:root { ... }` (linha 22), antes de `html { ... }`:
+
+**`:root.accident-mode` (variaveis CSS):**
+- `--primary: #c8222a` -- vermelho de acidente, substitui o verde padrao.
+- `--primary-hover: #8c1a20` -- vermelho escuro para hover.
+- `--accent-bg-soft: #fde7e9` -- fundo suave rosado para elementos de destaque.
+
+**`:root.accident-mode header`:**
+- `background: #c8222a` -- header fica vermelho quando modo acidente ativo.
+
+**`:root.accident-mode .submit-button`:**
+- `background: #c8222a` -- botao Registrar fica vermelho (sem gradiente).
+
+**`:root.accident-mode .submit-button:hover`:**
+- `background: #8c1a20` -- hover mais escuro para feedback visual.
+
+**`:root.accident-mode #chaveInput, :root.accident-mode #passwordInput`:**
+- Bloco CSS vazio com comentario explicativo.
+- Intencional: garante que nenhum override futuro afete as bordas destes campos.
+- As bordas sao controladas pelas regras de auth-status (verde/vermelho/amarelo) e nao devem ser modificadas pelo tema de acidente.
+
+### 2) Como ativar o tema
+
+JS (Task I4/I5) ativara via:
+```js
+document.documentElement.classList.add('accident-mode');
+```
+E desativara via:
+```js
+document.documentElement.classList.remove('accident-mode');
+```
+
+### 3) Verificacoes executadas
+
+- Todas as verificacoes programaticas passaram: presenca de todas as regras CSS, variaveis, seletores.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/styles.css (editado -- 24 linhas adicionadas no inicio do arquivo, apos :root)
+- docs/temp000A.md (atualizado)
