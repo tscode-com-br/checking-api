@@ -1915,6 +1915,8 @@ function showAuthShell(message = "", kind = "info") {
   authShell.classList.remove("hidden");
   adminShell.classList.add("hidden");
   sessionBar.classList.add("hidden");
+  const accidentToggleButtonLogout = document.getElementById("accidentToggleButton");
+  if (accidentToggleButtonLogout) accidentToggleButtonLogout.classList.add("hidden");
   stopRealtimeUpdates();
   stopAutoRefresh();
   setAuthStatus(message, kind);
@@ -1935,6 +1937,8 @@ function showAdminShell(admin) {
   authShell.classList.add("hidden");
   adminShell.classList.remove("hidden");
   sessionBar.classList.remove("hidden");
+  const accidentToggleButtonLogin = document.getElementById("accidentToggleButton");
+  if (accidentToggleButtonLogin) accidentToggleButtonLogin.classList.remove("hidden");
   sessionUserLabel.textContent = `${admin.nome_completo} (${admin.chave})`;
   setAuthStatus("");
   syncAdminResponsiveState({ force: true });

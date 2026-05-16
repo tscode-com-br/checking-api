@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
+    <header class="app-header">
       <div class="header-brand" role="img" aria-label="Checking">
         <svg class="header-logo-icon" viewBox="0 0 220 170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
@@ -28,6 +28,15 @@
         </svg>
         <span class="header-logo-text">Checking</span>
       </div>
+      <button
+        id="accidentToggleButton"
+        type="button"
+        class="accident-button accident-button-off hidden"
+        aria-pressed="false"
+        aria-label="Reportar Acidente"
+      >
+        <span class="accident-button-label">Reportar Acidente</span>
+      </button>
       <div id="sessionBar" class="session-bar hidden">
         <span id="sessionUserLabel" class="session-user-label"></span>
         <button id="logoutButton" type="button" class="secondary-button">Sair</button>
