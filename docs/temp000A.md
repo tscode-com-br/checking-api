@@ -1936,3 +1936,67 @@ def render_help_request_email(
 ## 4) Commit
 
 `feat: Add email_templates service with render_help_request_email (Task G2)`
+
+
+---
+
+# Task G3 — Resumo detalhado da implementação concluída
+
+A implementação do **Bloco G / Task G3** criou o serviço de fila e entrega de e-mails SMTP.
+
+## 1) Arquivo criado: `sistema/app/services/email_sender.py`
+
+Três funções exportadas:
+
+### `queue_help_request_emails(*, accident_id, requester_user_id)`
+- Abre `SessionLocal` e carrega `Accident` + `User` (requester).
+- Busca todos os `User` que possuem `UserProjectMembership` no projeto cujo `name` bate com `accident.project_name_snapshot`.
+- Para cada destinatário:
+  - Chama `render_help_request_email(...)` para gerar subject + body.
+  - Sem e-mail: persiste `EmailDeliveryLog` com `delivery_status="failed"`, `error_message="Missing recipient email"`.
+  - Com e-mail: persiste `EmailDeliveryLog` com `delivery_status="queued"`, coleta `log.id`.
+- Chama `deliver_pending_emails(log_ids)` para entrega imediata.
+
+### `deliver_pending_emails(log_ids)`
+- Se `settings.smtp_host is None`: retorna sem fazer nada (SMTP desabilitado).
+- Para cada log_id: carrega `EmailDeliveryLog`, tenta `_send_via_smtp` até `smtp_max_retries` vezes.
+- Sucesso: `delivery_status="sent"`, `sent_at=now_sgt()`.
+- Falha após todas tentativas: `delivery_status="failed"`, `retry_count=N`, `error_message=str(exc)[:1000]`.
+
+### `_send_via_smtp(log)`
+- Monta `EmailMessage` com subject, from (via `smtp_from_name` + `smtp_from_email`), to, body.
+- `smtp_use_tls=True`: usa `smtplib.SMTP_SSL` (porta 465, SSL wrapping).
+- `smtp_use_tls=False, smtp_use_starttls=True`: usa `smtplib.SMTP` + `server.starttls()`.
+- Login opcional via `smtp_user` + `smtp_password`.
+
+**Nota:** Os nomes de campo usados (`smtp_from_name`, `smtp_from_email`, `smtp_user`, `smtp_use_tls`, `smtp_use_starttls`, `smtp_timeout_seconds`) correspondem ao que foi implementado na Task G1, não ao stub do spec (que usava `smtp_sender_name`, `smtp_username`, etc.).
+
+## 2) Arquivo editado: `sistema/app/routers/web_check.py`
+
+- Adicionado import top-level: `from ..services.email_sender import queue_help_request_emails`
+- Removida a função stub local de 3 linhas (`def queue_help_request_emails(...): pass`).
+- O endpoint `/check/accident/report` continua chamando `background_tasks.add_task(queue_help_request_emails, ...)` sem alteração.
+
+## 3) Arquivo criado: `tests/services/test_email_help_request.py`
+
+8 testes, todos usando SQLite `tmp_path` + `_CommitOnlySession` para injetar sessão no service:
+
+| Teste | Descrição |
+|---|---|
+| `test_queue_creates_log_per_recipient` | 3 membros com email → 3 logs `queued` |
+| `test_queue_logs_missing_email_as_failed` | User sem email → log `failed` + `"Missing recipient email"` |
+| `test_queue_idempotent_by_status_transition` | 2 chamadas → 2 conjuntos de logs; sem erro |
+| `test_send_smtp_disabled_keeps_queued` | `smtp_host=None` → row permanece `queued` |
+| `test_send_smtp_success_marks_sent` | Mock SMTP sem erro → `delivery_status="sent"`, `sent_at` preenchido |
+| `test_send_smtp_failure_retries_and_fails` | `send_message` raises → `retry_count=3`, `delivery_status="failed"` |
+| `test_send_uses_ssl_when_configured` | `smtp_use_tls=True` → `smtplib.SMTP_SSL` chamado; `smtplib.SMTP` não |
+| `test_send_uses_starttls_when_configured` | `smtp_use_starttls=True` → `server.starttls()` chamado; `SMTP_SSL` não |
+
+## 4) Verificações executadas
+
+- `python -m pytest tests/services/test_email_help_request.py -v` → **8 passed**
+- `python -m pytest tests/services/test_email_help_request.py tests/routers/test_web_accidents.py -q` → **26 passed**
+
+## 5) Commit
+
+`feat: Add email_sender service with queue+retry delivery (Task G3)`
