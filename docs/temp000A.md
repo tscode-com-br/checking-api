@@ -2044,3 +2044,42 @@ Três funções exportadas:
 - `sistema/app/static/admin/styles.css` (editado)
 - `sistema/app/static/admin/app.js` (editado)
 - `docs/temp000A.md` (atualizado)
+
+
+---
+
+## Task H2 -- Concluido
+
+### Resumo detalhado
+
+Objetivo: Adicionar os 3 modais sequenciais do wizard de abertura de acidente ao painel admin, sem logica JS.
+
+### 1) Arquivo editado: sistema/app/static/admin/index.html
+
+Inseridos apos o fechamento de #eventArchivesModal (linha ~677):
+- #accidentWizardProjectModal: lista de opcoes de projeto (.accident-wizard-options), erro, Cancelar/Avancar (disabled).
+- #accidentWizardLocationModal: lista de locais, label accident-wizard-custom com radio __custom__ + input texto (disabled), erro, Cancelar/Avancar (disabled).
+- #accidentWizardConfirmModal: paragrafo resumo (.accident-wizard-confirm-text), "Voce confirma esta acao?", erro, Cancelar/Confirmar.
+
+Todos iniciam com class="modal-backdrop hidden" e aria-hidden="true".
+
+### 2) Arquivo editado: sistema/app/static/admin/styles.css
+
+Adicionado apos .accident-button.hidden:
+- .accident-wizard-options: flex column, gap 6px, max-height 320px, overflow-y auto.
+- .accident-wizard-options label: flex, gap 8px, padding 8px, border-radius 8px.
+- .accident-wizard-options label:hover: background rgba(0,0,0,0.04).
+- .accident-wizard-custom: flex, gap 8px, padding-top 12px.
+- .accident-wizard-custom input[type="text"]: flex 1.
+- .accident-wizard-confirm-text: font-weight 600.
+
+### 3) Verificacoes executadas
+
+- IDs verificados programaticamente: todos presentes no DOM.
+- pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> 137 passed.
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/admin/index.html (editado -- 3 modais inseridos)
+- sistema/app/static/admin/styles.css (editado -- 6 regras CSS adicionadas)
+- docs/temp000A.md (atualizado)
