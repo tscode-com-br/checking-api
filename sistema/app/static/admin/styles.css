@@ -145,6 +145,10 @@ header,
   50% { background: rgba(255,80,90,0.45); }
 }
 
+/* ── Accidents table in Cadastro ─────────────────────────────────── */
+.cadastro-accidents-table .download-pending { color: #888; font-style: italic; }
+.cadastro-accidents-table .delete-button { background: #c8222a; color: #fff; }
+
 .session-user-label {
   font-weight: 700;
   max-width: min(44vw, 420px);

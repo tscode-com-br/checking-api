@@ -426,6 +426,29 @@
           </div>
         </article>
 
+        <article class="cadastro-section-panel cadastro-section-panel--accidents" data-cadastro-section="acidentes">
+          <div class="section-header">
+            <h2>Acidentes</h2>
+            <button id="refreshAccidentsButton" type="button" class="secondary-button">Atualizar</button>
+          </div>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-accidents-table">
+              <thead>
+                <tr>
+                  <th>Número</th>
+                  <th>Projeto</th>
+                  <th>Autor</th>
+                  <th>Aberto em</th>
+                  <th>Encerrado em</th>
+                  <th>Download</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="accidentsBody"></tbody>
+            </table>
+          </div>
+        </article>
+
         <article class="cadastro-section-panel cadastro-section-panel--locations" data-cadastro-section="localizacoes">
           <div class="section-header">
             <h2>Localizações</h2>
@@ -744,6 +767,18 @@
           <div class="modal-footer">
             <button id="accidentWizardConfirmCancel" type="button" class="secondary-button">Cancelar</button>
             <button id="accidentWizardConfirmSubmit" type="button">Confirmar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentEndModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentEndTitle">
+          <div class="section-header modal-header"><h2 id="accidentEndTitle">Encerramento do Modo Acidente</h2></div>
+          <p>Tem certeza que deseja finalizar o 'Modo Acidente'?</p>
+          <p id="accidentEndError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentEndBack" type="button" class="secondary-button">Voltar</button>
+            <button id="accidentEndConfirm" type="button">Confirmar</button>
           </div>
         </div>
       </div>
