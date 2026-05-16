@@ -2439,3 +2439,75 @@ Adicionado apos o bloco `.submit-button:disabled`:
 - sistema/app/static/check/index.html (editado -- botao inserido)
 - sistema/app/static/check/styles.css (editado -- 2 blocos CSS adicionados)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I2 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar os 4 modais do wizard de abertura de acidente ao frontend checking web (Projeto -> Local -> Sua Situacao -> Confirmacao).
+
+### 1) Arquivo editado: sistema/app/static/check/index.html
+
+Adicionados imediatamente antes do `</section>` que fecha `.check-card` (linha ~607), os 4 conjuntos backdrop + dialog:
+
+**Modal 1 -- Selecione o Projeto (`accidentReportProjectDialog`):**
+- `accidentReportProjectBackdrop` (backdrop)
+- `accidentReportProjectOptions` (div para radios gerados por JS)
+- `accidentReportProjectError` (mensagem de erro)
+- Botoes: `accidentReportProjectCancel` / `accidentReportProjectAdvance` (disabled inicialmente)
+
+**Modal 2 -- Local do Acidente (`accidentReportLocationDialog`):**
+- `accidentReportLocationBackdrop` (backdrop)
+- `accidentReportLocationOptions` (div para radios de locais registrados)
+- `accidentReportCustomLocation` (input de texto para local livre, radio value="__custom__")
+- `accidentReportLocationError` (mensagem de erro)
+- Botoes: `accidentReportLocationCancel` / `accidentReportLocationAdvance` (disabled inicialmente)
+
+**Modal 3 -- Sua Situacao (`accidentReportSituationDialog`):**
+- `accidentReportSituationBackdrop` (backdrop)
+- 3 radios fixos com name="accidentSituationChoice":
+  - value="safety-ok" -- "Estou em area segura" (zone=safety, status=ok)
+  - value="accident-ok" -- "Estou na area do acidente" (zone=accident, status=ok)
+  - value="accident-help" -- "Preciso de ajuda" (zone=accident, status=help)
+- `accidentReportSituationError` (mensagem de erro)
+- Botoes: `accidentReportSituationCancel` / `accidentReportSituationAdvance` (disabled inicialmente)
+
+**Modal 4 -- Confirmacao (`accidentReportConfirmDialog`):**
+- `accidentReportConfirmBackdrop` (backdrop)
+- `accidentReportConfirmText` (paragrafo de resumo preenchido por JS)
+- Texto fixo "Voce confirma esta acao?"
+- `accidentReportConfirmError` (mensagem de erro)
+- Botoes: `accidentReportConfirmCancel` / `accidentReportConfirmSubmit` (Confirmar)
+
+Todos os dialogos possuem:
+- `class="password-dialog is-hidden"` + `hidden` (invisiveis por padrao)
+- `role="dialog" aria-modal="true" aria-labelledby="..."` (acessibilidade)
+- estrutura `password-dialog-card` > h2 + conteudo + `password-dialog-actions`
+
+### 2) Arquivo editado: sistema/app/static/check/styles.css
+
+Adicionados apos o bloco `.accident-report-button[aria-pressed="true"]`:
+
+**`.accident-report-options`:**
+- `display: flex; flex-direction: column` -- lista vertical de opcoes.
+- `gap: 6px` -- espacamento entre opcoes.
+- `max-height: 320px; overflow-y: auto` -- rolagem quando ha muitos projetos/locais.
+
+**`.accident-report-options label`:**
+- `display: flex; align-items: center` -- radio + texto alinhados horizontalmente.
+- `gap: 8px` -- espacamento radio/texto.
+- `padding: 8px; border-radius: 8px` -- area de toque confortavel com bordas arredondadas.
+
+### 3) Verificacoes executadas
+
+- Todas as verificacoes programaticas passaram: 4 backdrops, 4 dialogs, todos os IDs, 3 valores de radio, botoes Cancelar/Avancar/Confirmar.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed** (sem regressoes).
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/index.html (editado -- 4 modais inseridos, +118 linhas)
+- sistema/app/static/check/styles.css (editado -- 2 blocos CSS adicionados)
+- docs/temp000A.md (atualizado)
