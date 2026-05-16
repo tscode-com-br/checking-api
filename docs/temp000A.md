@@ -2207,3 +2207,45 @@ Adicionado apos .accident-wizard-confirm-text:
 - sistema/app/static/admin/index.html (editado -- aba + section inseridas)
 - sistema/app/static/admin/styles.css (editado -- 23 regras CSS adicionadas)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task H5 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar modal de encerramento do Modo Acidente e tabela de Acidentes na aba Cadastro.
+
+### 1) Arquivo editado: sistema/app/static/admin/index.html
+
+**Modal #accidentEndModal** -- inserido apos #accidentWizardConfirmModal:
+- Titulo "Encerramento do Modo Acidente" (#accidentEndTitle).
+- Texto de confirmacao: "Tem certeza que deseja finalizar o 'Modo Acidente'?".
+- Paragrafo de erro #accidentEndError.
+- Botoes: #accidentEndBack (Voltar / secondary-button) e #accidentEndConfirm (Confirmar).
+- Inicia com class="modal-backdrop hidden" e ria-hidden="true".
+
+**Tabela Acidentes** -- inserida em 	ab-cadastro imediatamente apos cadastro-section-panel--pending:
+- <article class="cadastro-section-panel cadastro-section-panel--accidents" data-cadastro-section="acidentes">.
+- Cabecalho com <h2>Acidentes</h2> e botao #refreshAccidentsButton.
+- Tabela 
+esponsive-table cadastro-table cadastro-accidents-table com 7 colunas: Numero, Projeto, Autor, Aberto em, Encerrado em, Download, Acoes.
+- <tbody id="accidentsBody"> vazio -- populado via JS (Task H6).
+
+### 2) Arquivo editado: sistema/app/static/admin/styles.css
+
+Adicionado apos @keyframes situacao-blink:
+- .cadastro-accidents-table .download-pending -- cor cinza #888, italico.
+- .cadastro-accidents-table .delete-button -- fundo vermelho #c8222a, texto branco.
+
+### 3) Verificacoes executadas
+
+- IDs verificados programaticamente: todos presentes.
+- python -m pytest tests/models tests/schemas tests/services tests/routers tests/core -q -> **137 passed**.
+
+### 4) Arquivos alterados nesta tarefa
+
+- sistema/app/static/admin/index.html (editado -- modal + tabela inseridos)
+- sistema/app/static/admin/styles.css (editado -- 2 regras CSS adicionadas)
+- docs/temp000A.md (atualizado)
