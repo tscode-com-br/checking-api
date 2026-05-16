@@ -122,6 +122,29 @@ header,
 .accident-wizard-custom input[type="text"] { flex: 1; }
 .accident-wizard-confirm-text { font-weight: 600; }
 
+/* ── Accident tab button ─────────────────────────────────────────── */
+.tab-accident { color: #fff; background: #c8222a; border-color: #ff4d57; box-shadow: 0 0 6px #ff4d57; }
+.tab-accident.active { background: #b7141c; }
+
+/* ── Situação de Pessoal table ───────────────────────────────────── */
+.situacao-pessoal-table td { vertical-align: top; }
+.situacao-pessoal-table .registros-cell { max-height: 140px; overflow-y: auto; }
+.situacao-pessoal-table .registros-cell a { display: block; }
+
+.situacao-row-white { background: #fff; }
+.situacao-row-light-green { background: rgba(160,230,160,0.4); }
+.situacao-row-turquoise { background: rgba(120,220,220,0.4); }
+.situacao-row-yellow { background: rgba(255,234,120,0.45); }
+.situacao-row-blinking-red {
+  background: rgba(255,80,90,0.18);
+  animation: situacao-blink 1s steps(2, end) infinite;
+}
+.situacao-row-light-gray { background: rgba(0,0,0,0.06); color: #555; }
+@keyframes situacao-blink {
+  0%, 100% { background: rgba(255,80,90,0.18); }
+  50% { background: rgba(255,80,90,0.45); }
+}
+
 .session-user-label {
   font-weight: 700;
   max-width: min(44vw, 420px);

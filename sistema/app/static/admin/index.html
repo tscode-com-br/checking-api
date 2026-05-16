@@ -124,6 +124,7 @@
 
     <div id="adminShell" class="hidden">
       <nav class="tabs" aria-label="Seções do painel administrativo">
+        <button data-tab="acidente" id="accidentTabButton" class="tab-accident hidden">Acidente</button>
         <button data-tab="checkin" class="active">Check-In</button>
         <button data-tab="checkout">Check-Out</button>
         <button data-tab="forms">Forms</button>
@@ -134,6 +135,35 @@
       </nav>
 
       <main>
+      <section id="tab-acidente" class="tab">
+        <div class="section-header">
+          <div class="section-title-block">
+            <h2 id="accidentSectionTitle">Acidente em curso</h2>
+            <p id="accidentSectionMeta" class="section-header-copy"></p>
+          </div>
+          <div class="section-header-actions">
+            <span id="accidentSectionCount" class="auth-status">0 registros</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="responsive-table situacao-pessoal-table">
+            <thead>
+              <tr>
+                <th>Horário</th>
+                <th>Nome</th>
+                <th>Chave</th>
+                <th>Projetos</th>
+                <th>Local</th>
+                <th>Zona de</th>
+                <th>Situação</th>
+                <th>Contato</th>
+                <th>Registros</th>
+              </tr>
+            </thead>
+            <tbody id="situacaoPessoalBody"></tbody>
+          </table>
+        </div>
+      </section>
       <section id="tab-checkin" class="tab active">
         <div class="section-header">
           <div class="section-title-block">
