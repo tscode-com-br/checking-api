@@ -3744,3 +3744,87 @@ DROP TABLE IF EXISTS accident_archives, accident_video_uploads,
 
 - `sistema/scripts/migrate_accidents_v1.sql` (existente — verificado e validado contra modelos)
 - `docs/descritivos/migration_m3_runbook.md` (criado — runbook completo de producao com backup, apply, verify, rollback)
+
+---
+
+## Task M4 — Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Documentar e aplicar as variaveis de ambiente novas (SMTP + DO Spaces) necessarias para o Modo Acidente em producao; atualizar os arquivos de template `.env.example` e `deploy/.env.production.example`.
+
+### Variaveis adicionadas
+
+**DO Spaces (`object_storage.py` / `config.py`):**
+
+| Variavel env | Campo Settings | Descricao |
+|---|---|---|
+| `DO_SPACES_ENDPOINT_URL` | `do_spaces_endpoint_url` | URL do endpoint Spaces (ex.: `https://sfo3.digitaloceanspaces.com`) |
+| `DO_SPACES_REGION` | `do_spaces_region` | Regiao (ex.: `sfo3`) |
+| `DO_SPACES_BUCKET` | `do_spaces_bucket` | Nome do bucket — ativa modo remoto quando presente |
+| `DO_SPACES_ACCESS_KEY` | `do_spaces_access_key` | Access Key ID |
+| `DO_SPACES_SECRET_KEY` | `do_spaces_secret_key` | Secret Key |
+| `DO_SPACES_PUBLIC_BASE_URL` | `do_spaces_public_base_url` | URL CDN publica para links de download |
+
+Sem essas vars: `_use_remote()` retorna `False` e arquivos sao salvos em disco local (fallback de desenvolvimento). Nao funciona em producao multi-instancia.
+
+**SMTP (`email_sender.py` / `config.py`):**
+
+| Variavel env | Campo Settings | Descricao |
+|---|---|---|
+| `SMTP_HOST` | `smtp_host` | Host SMTP — se ausente, e-mails sao descartados silenciosamente |
+| `SMTP_PORT` | `smtp_port` | Porta (padrao 587) |
+| `SMTP_USER` | `smtp_user` | Usuario de autenticacao |
+| `SMTP_PASSWORD` | `smtp_password` | Senha |
+| `SMTP_FROM_EMAIL` | `smtp_from_email` | Endereco remetente |
+| `SMTP_FROM_NAME` | `smtp_from_name` | Nome exibido (padrao: CheckCheck) |
+| `SMTP_USE_TLS` | `smtp_use_tls` | SSL direto porta 465 (padrao: false) |
+| `SMTP_USE_STARTTLS` | `smtp_use_starttls` | STARTTLS porta 587 (padrao: true) |
+| `SMTP_TIMEOUT_SECONDS` | `smtp_timeout_seconds` | Timeout de conexao (padrao: 30) |
+| `SMTP_MAX_RETRIES` | `smtp_max_retries` | Tentativas antes de marcar `failed` (padrao: 3) |
+| `SMTP_ACCIDENT_NOTIFY_EMAIL` | `smtp_accident_notify_email` | Destinatario de todos os alertas `status=help` |
+
+### Arquivos de template atualizados
+
+**`.env.example`** — adicionado bloco ao final com comentarios explicativos:
+- Secao "DigitalOcean Spaces" com 6 variaveis e valores de exemplo
+- Secao "SMTP e-mail delivery" com 11 variaveis, incluindo `SMTP_ACCIDENT_NOTIFY_EMAIL`
+
+**`deploy/.env.production.example`** — adicionado apos o bloco `MAPBOX_ACCESS_TOKEN`:
+- Mesmas 17 variaveis, com prefixo `CHANGE_ME_*` para valores sensiveis
+- Sem comentarios prolixos (formato compacto para producao)
+
+### Documento criado: docs/descritivos/env_vars_modo_acidente.md
+
+Guia operacional completo com:
+
+**Tabelas de referencia** (2 tabelas: DO Spaces e SMTP) com: variavel env → campo Settings → obrigatoriedade → descricao.
+
+**Comportamento sem as variaveis:** descricao do fallback local (DO Spaces) e descarte silencioso de e-mails (SMTP).
+
+**Procedimento de atualizacao em 5 passos:**
+1. Editar `.env.production` no droplet via SSH (`nano /opt/checking/.env`)
+2. Restart do container: `docker compose -f docker-compose.api.yml restart api`
+3. Verificacao rapida: `curl .../api/admin/accidents/active` → 401 (nao 500)
+4. Teste SMTP via Python in-container: `smtplib.SMTP.login()` → "SMTP OK"
+5. Teste DO Spaces via Python in-container: `boto3.list_objects_v2()` → "DO Spaces OK"
+
+**Checklist Go/No-Go** (7 itens):
+1. `.env.production` com vars DO Spaces
+2. `.env.production` com vars SMTP
+3. Container reiniciado sem erros
+4. `curl /api/admin/accidents/active` → 401
+5. `settings.do_spaces_bucket` correto
+6. Teste SMTP OK
+7. Teste DO Spaces OK
+
+### Criterios de aceitacao
+
+- `curl /api/admin/accidents/active` em producao retorna 401 (nao 500): **coberto pelo item 4 do checklist — requer execucao humana pos-deploy**.
+- Logs mostram brokers iniciados, SMTP test: **coberto pelos passos 2 e 4 do procedimento**.
+
+### Arquivos alterados/criados nesta tarefa
+
+- `.env.example` (editado — adicionado bloco DO Spaces + SMTP ao final)
+- `deploy/.env.production.example` (editado — adicionado bloco DO Spaces + SMTP apos MAPBOX_ACCESS_TOKEN)
+- `docs/descritivos/env_vars_modo_acidente.md` (criado — referencia completa de variaveis + procedimento de atualizacao)
