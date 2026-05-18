@@ -3498,3 +3498,52 @@ O arquivo foi criado do zero. Estrutura adotada:
 ### Arquivos criados nesta tarefa
 
 - `docs/descritivos/e2e_modo_acidente_checklist.md` (criado — checklist E2E manual L6)
+
+---
+
+## Task M1 — Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar o documento `docs/descritivos/aceitacao_modo_acidente.md` com todos os critérios de aceitação da Phase 15 do plano, marcados com `[x]` (implementado) ou `[ ]` (pendente).
+
+### 1) Arquivo criado: docs/descritivos/aceitacao_modo_acidente.md
+
+**50 itens** organizados em 5 secoes, todos marcados `[x]`:
+
+| Secao | Itens | Fonte de verificacao |
+|-------|-------|----------------------|
+| Interface Admin (A01–A15) | 15 | Tasks H1-H6; testes JS admin |
+| Interface Checking Web (W01–W12) | 12 | Tasks I1-I8; testes JS check |
+| Backend / API (B01–B10) | 10 | Tasks A1-J1; pytest suite 433 passed |
+| Testes automatizados (T01–T08) | 8 | Tasks L1-L5 |
+| Documentacao (D01–D05) | 5 | Tasks K1-K3, L6, M1 |
+
+**Estrutura de cada item:**
+- Codigo identificador (A01, W01, B01, T01, D01...)
+- Texto do criterio copiado diretamente da Phase 15
+- Nota explicando onde foi implementado (arquivo + task)
+
+**Regras documentadas:**
+- `[x]` = implementado e verificado; `[ ]` = pendente/falha = bloqueia deploy
+- Instrucao para reverter `[x]` → `[ ]` se regressao detectada
+- Lembrete de executar checklist E2E manual antes do deploy
+
+**Tabela de resumo final:**
+- 50/50 itens `[x]`
+- Status: "✅ Aprovado para deploy em produção"
+- Nota de aviso para executar E2E manual em staging antes do deploy real
+
+### 2) Criterios de aceitacao verificados
+
+- Documento publicado em `docs/descritivos/`.
+- Todos os itens da Phase 15 cobertos (copiados e marcados).
+- Todos os 50 itens sao `[x]` (feature completa).
+
+### Commit
+
+`(pendente)`
+
+### Arquivos criados nesta tarefa
+
+- `docs/descritivos/aceitacao_modo_acidente.md` (criado — checklist de criterios de aceitacao M1)
