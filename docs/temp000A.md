@@ -3434,7 +3434,7 @@ Unico teste `@pytest.mark.anyio`: `test_50_users_report_concurrently`.
 
 ### Commit
 
-`(pendente)`
+`7146007` — "L5: add concurrent load test for 50 simultaneous accident reports"
 
 ### Arquivos criados nesta tarefa
 
