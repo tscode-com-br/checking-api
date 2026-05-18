@@ -2927,3 +2927,84 @@ accident: {
 ### Arquivos alterados nesta tarefa
 
 - sistema/app/static/check/i18n-dictionaries.js (editado -- secao accident adicionada ao dicionario pt-BR)
+
+
+---
+
+## Task J1 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar chamadas `log_event` em cada operacao que muda o estado do acidente, para que a aba "Eventos" do admin exiba o ciclo completo.
+
+### 1) Restricao de tamanho do campo `action`
+
+O modelo `CheckEvent.action` e definido como `String(16)` em `sistema/app/models.py` e o `log_event` trunca o valor com `action[:16]`. Os nomes de action ja existentes no admin (do Bloco D) ficavam dentro do limite (`accident_open`=13, `accident_close`=14, `accident_delete`=15). Para os novos pontos de log foram usados nomes curtos compativeis:
+- `"accident_report"` (15 chars) -- relatorio de seguranca do usuario
+- `"accident_video"` (14 chars) -- upload de video
+- `"accident_email"` (14 chars) -- entrega de emails
+
+### 2) Arquivo editado: sistema/app/routers/web_check.py
+
+Tres pontos de log adicionados:
+
+**a) `open_web_accident` (linha ~933):** Apos `open_accident(...)` retornar com sucesso, o retorno e capturado em `accident = open_accident(...)` (antes era descartado). Adicionado:
+```python
+log_event(db, source="web", action="accident_open", status="done",
+          message="Accident opened via web", rfid=user.chave,
+          details=f"accident_id={accident.id} number={accident.accident_number} ...",
+          commit=True)
+```
+
+**b) `report_web_accident_status` (linha ~962):** Apos `upsert_user_safety_report(...)`:
+```python
+log_event(db, source="web", action="accident_report", status="done",
+          rfid=user.chave, details=f"accident_id={active.id} zone=... status=...",
+          commit=True)
+```
+
+**c) `upload_accident_video` (linha ~1038):** Apos `attach_video_upload(...)`:
+```python
+log_event(db, source="web", action="accident_video", status="done",
+          rfid=user.chave, details=f"accident_id={active.id} size_bytes=...",
+          commit=True)
+```
+
+Importacao adicionada no topo: `from ..services.event_logger import log_event`.
+
+### 3) Arquivo editado: sistema/app/services/email_sender.py
+
+Em `deliver_pending_emails`, adicionados contadores `sent_count` e `failed_count` acumulados no loop de entrega. Ao final do bloco `with SessionLocal() as db:`:
+```python
+log_event(db, source="system", action="accident_email", status="done",
+          message="Email delivery batch completed",
+          details=f"recipient_count={len(log_ids)} sent_count={sent_count} failed_count={failed_count}",
+          commit=True)
+```
+
+Importacao adicionada: `from .event_logger import log_event`.
+
+### 4) Arquivo criado: tests/services/test_accident_event_logging.py
+
+4 testes de integracao/unidade:
+- `test_open_web_accident_logs_event`: faz POST /check/accident/open e verifica linha em `check_events` com `action='accident_open'`, `source='web'`.
+- `test_report_web_accident_logs_event`: faz POST /check/accident/report e verifica `action='accident_report'`.
+- `test_video_upload_logs_event`: faz POST /check/accident/video e verifica `action='accident_video'`.
+- `test_deliver_pending_emails_logs_event`: teste isolado com DB temporario, mock SMTP, verifica `action='accident_email'` com `sent_count=1 failed_count=0` nos details.
+
+**Correcao aplicada nos testes:** `_latest_check_event` usa `.scalars().first()` (nao `scalar_one_or_none()`) para evitar `MultipleResultsFound` quando ha multiplos eventos do mesmo tipo no DB compartilhado.
+
+### 5) Resultado dos testes
+
+- `tests/services/test_accident_event_logging.py`: **4/4 passed**.
+- Suite completa: 425 passed, 24 failed (apenas `test_transport_ai_suggestion_commands.py` -- pre-existente), 2 skipped.
+
+### Commit
+
+`f4c3973` -- "J1: add accident event logging to web_check and email_sender"
+
+### Arquivos alterados nesta tarefa
+
+- `sistema/app/routers/web_check.py` (editado -- import log_event, captura retorno open_accident, 3 chamadas log_event)
+- `sistema/app/services/email_sender.py` (editado -- import log_event, contadores sent/failed, chamada log_event)
+- `tests/services/test_accident_event_logging.py` (criado -- 4 testes J1)
