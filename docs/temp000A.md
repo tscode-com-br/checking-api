@@ -2860,3 +2860,70 @@ Todos 7 testes passaram. Todos 137 testes Python passaram.
 - sistema/app/static/check/app.js (editado -- hooks onLogin/onLogout em loadAuthenticatedApplication e logoutWebSession)
 - tests/static/check/test_accident_button.test.js (criado -- 7 testes estaticos)
 - docs/temp000A.md (atualizado)
+
+## Task I8 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Adicionar ao dicionario pt-BR todas as chaves i18n necessarias para o Modo Acidente (Bloco I, Phase 9.8).
+
+### Arquivo editado: sistema/app/static/check/i18n-dictionaries.js
+
+**Insercao:** Nova secao `accident` adicionada ao objeto `dictionaries.pt`, imediatamente antes da secao `support` existente (antes da linha 465 original).
+
+**Estrutura adicionada:**
+```js
+accident: {
+  button: {
+    report: 'Reportar Acidente',
+    reported: 'Acidente Reportado',
+  },
+  wizard: {
+    selectProject: 'Selecione o Projeto',
+    selectLocation: 'Local do Acidente',
+    yourSituation: 'Sua Situacao:',
+    confirmTitle: 'Confirmacao de Acidente',
+    confirmTextTemplate: 'Voce esta prestes a reportar um acidente na localizacao {location} do projeto {project}.',
+  },
+  notification: {
+    bannerTemplate: 'Acidente Reportado no projeto {project}!',
+  },
+  inquiry: {
+    title: 'Estou em:',
+    titleAfter: 'Sua Situacao',
+    safetyZone: 'Zona de Seguranca',
+    accidentZone: 'Zona de Acidente',
+    imOk: 'Estou bem.',
+    needHelp: 'Preciso de Ajuda!',
+  },
+  confirm: {
+    safety: 'Voce confirma que esta fora de perigo?',
+    accidentOk: 'Voce confirma que esta na zona do acidente e que esta fora de perigo?',
+    help: 'Voce confirma que esta na zona do acidente e que precisa de ajuda?',
+  },
+  actions: {
+    title: 'Acoes de Emergencia',
+    audioVideo: 'Audio & Video',
+    reportNew: 'Reportar Novo Acidente',
+    back: 'Voltar',
+  },
+  settings: {
+    permitAudioVideo: 'Permitir Audio & Video',
+    permitted: 'Audio & Video permitido',
+  },
+},
+```
+
+**Total de chaves adicionadas:** 22 chaves pt-BR.
+
+**Fallback:** A funcao `t()` em `i18n.js` (linha 193) ja implementa fallback automatico para o idioma padrao (`pt`) via `getDictionary(defaultLanguage)`. Nenhuma alteracao foi necessaria nos outros dicionarios (en, zh, ms, id, tl).
+
+### Verificacoes realizadas
+
+- `node -e` verificou que todas as 22 chaves estao presentes no arquivo.
+- 7 testes Node.js (`tests/static/check/test_accident_button.test.js`) continuaram passando (7/7).
+- 137 testes Python continuaram passando (137/137).
+
+### Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/i18n-dictionaries.js (editado -- secao accident adicionada ao dicionario pt-BR)
