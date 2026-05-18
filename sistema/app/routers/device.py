@@ -8,6 +8,7 @@ from ..database import get_db
 from ..models import CheckEvent, DeviceHeartbeat, PendingRegistration, User
 from ..schemas import HeartbeatRequest, ScanRequest, ScanResponse
 from ..services.admin_updates import notify_admin_data_changed
+from ..services.accident_lifecycle import fire_accident_hook_for_check_event
 from ..services.event_logger import log_event
 from ..services.forms_queue import enqueue_forms_submission
 from ..services.time_utils import now_sgt, resolve_project_timezone_name
@@ -224,6 +225,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
         )
         db.commit()
         notify_admin_data_changed(action)
+        fire_accident_hook_for_check_event(db, user=user, action=action, event_time=activity_time)
         return ScanResponse(
             outcome="local_updated",
             led="green_blink_3x_1s",
@@ -299,6 +301,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
     )
     db.commit()
     notify_admin_data_changed(action)
+    fire_accident_hook_for_check_event(db, user=user, action=action, event_time=activity_time)
     return ScanResponse(
         outcome="submitted",
         led="green_1s",

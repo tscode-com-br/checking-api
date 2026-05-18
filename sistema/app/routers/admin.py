@@ -4,9 +4,9 @@ from io import BytesIO
 from datetime import date, datetime, time as dt_time, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import asc, delete, desc, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..database import get_database_diagnostics
 from ..models import (
+    Accident,
+    AccidentArchive,
     AdminAccessRequest,
+    AdminUser,
     CheckEvent,
     CheckingHistory,
     ManagedLocation,
@@ -29,6 +32,13 @@ from ..models import (
     Vehicle,
 )
 from ..schemas import (
+    AccidentClosedListResponse,
+    AccidentClosedRow,
+    AccidentLocationOption,
+    AccidentProjectOption,
+    AccidentSummary,
+    AdminAccidentOpenRequest,
+    AdminAccidentStateResponse,
     AdminAccessRequestCreate,
     AdminActionResponse,
     DatabaseDiagnosticsResponse,
@@ -98,7 +108,7 @@ from ..services.admin_auth import (
     user_profile_has_access,
     verify_password,
 )
-from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed
+from ..services.admin_updates import admin_updates_broker, notify_admin_data_changed, notify_web_check_data_changed
 from ..services.admin_project_scope import (
     location_matches_effective_admin_scope,
     project_matches_effective_admin_scope,
@@ -159,6 +169,17 @@ from ..services.user_projects import (
     resolve_user_active_project,
 )
 from ..services.user_sync import find_user_by_chave, find_user_by_rfid, resolve_latest_user_activities, resolve_latest_user_activity
+from ..services.accident_lifecycle import (
+    AccidentAlreadyActiveError,
+    InvalidAccidentLocationError,
+    NoActiveAccidentError,
+    close_accident,
+    list_active_accident,
+    open_accident,
+)
+from ..services.accident_numbering import format_accident_number
+from ..services.accident_archive_builder import build_and_attach_archive_for_accident
+from ..services.accident_situation_table import build_situation_rows
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -1958,6 +1979,241 @@ async def stream_updates(request: Request) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _accident_summary(db: Session, accident: Accident) -> AccidentSummary:
+    opened_by_label = "—"
+    if accident.opened_by_admin_id:
+        admin = db.get(AdminUser, accident.opened_by_admin_id)
+        if admin:
+            opened_by_label = admin.nome_completo
+    elif accident.opened_by_user_id:
+        user = db.get(User, accident.opened_by_user_id)
+        if user:
+            opened_by_label = user.nome
+    return AccidentSummary(
+        id=accident.id,
+        accident_number=accident.accident_number,
+        accident_number_label=format_accident_number(accident.accident_number),
+        project_name=accident.project_name_snapshot,
+        location_name=accident.location_name_snapshot,
+        location_is_registered=accident.location_is_registered,
+        origin=accident.origin,
+        opened_by_label=opened_by_label,
+        opened_at=accident.opened_at,
+        closed_at=accident.closed_at,
+    )
+
+
+@router.get("/accidents/active", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_admin_session)])
+def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentStateResponse:
+    active = list_active_accident(db)
+    if active is None:
+        return AdminAccidentStateResponse(is_active=False)
+    return AdminAccidentStateResponse(
+        is_active=True,
+        accident=_accident_summary(db, active),
+        situation_rows=build_situation_rows(db, accident=active),
+    )
+
+
+@router.post("/accidents/open", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+def open_admin_accident(
+    payload: AdminAccidentOpenRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+    try:
+        accident = open_accident(
+            db,
+            origin="admin",
+            project_id=payload.project_id,
+            location_id=payload.location_id,
+            custom_location_name=payload.custom_location_name,
+            opened_by_admin_id=current_admin.id,
+            opened_by_user_id=None,
+        )
+    except AccidentAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="Ja existe um acidente em curso.")
+    except InvalidAccidentLocationError:
+        raise HTTPException(status_code=422, detail="O local selecionado nao pertence ao projeto.")
+
+    log_event(
+        db,
+        source="admin",
+        action="accident_open",
+        status="done",
+        message="Accident opened by admin",
+        request_path="/api/admin/accidents/open",
+        http_status=200,
+        details=f"accident_number={accident.accident_number} project_id={payload.project_id}",
+        commit=True,
+    )
+    return AdminAccidentStateResponse(
+        is_active=True,
+        accident=_accident_summary(db, accident),
+        situation_rows=build_situation_rows(db, accident=accident),
+    )
+
+
+
+
+@router.post("/accidents/close", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_full_admin_session)])
+def close_admin_accident(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminAccidentStateResponse:
+    active = list_active_accident(db)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+
+    closed = close_accident(db, accident=active, closed_by_admin_id=current_admin.id)
+    background_tasks.add_task(build_and_attach_archive_for_accident, closed.id)
+
+    log_event(
+        db,
+        source="admin",
+        action="accident_close",
+        status="done",
+        message="Accident closed by admin",
+        request_path="/api/admin/accidents/close",
+        http_status=200,
+        details=f"accident_id={closed.id}",
+        commit=True,
+    )
+    return AdminAccidentStateResponse(is_active=False)
+
+
+def generate_presigned_url(object_key: str, expires_in_seconds: int = 300) -> str:
+    from ..services.object_storage import generate_presigned_url as _gen_url
+    return _gen_url(object_key=object_key, expires_in_seconds=expires_in_seconds)
+
+
+@router.get("/accidents", response_model=AccidentClosedListResponse, dependencies=[Depends(require_full_admin_session)])
+def list_closed_accidents_endpoint(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AccidentClosedListResponse:
+    rows = []
+    accidents = db.execute(
+        select(Accident).where(Accident.closed_at.is_not(None)).order_by(Accident.accident_number.desc())
+    ).scalars().all()
+    for accident in accidents:
+        archive = db.execute(
+            select(AccidentArchive).where(AccidentArchive.accident_id == accident.id)
+        ).scalar_one_or_none()
+        opened_by_label = "—"
+        if accident.opened_by_admin_id:
+            admin = db.get(AdminUser, accident.opened_by_admin_id)
+            if admin:
+                opened_by_label = admin.nome_completo
+        elif accident.opened_by_user_id:
+            user = db.get(User, accident.opened_by_user_id)
+            if user:
+                opened_by_label = user.nome
+        rows.append(AccidentClosedRow(
+            id=accident.id,
+            accident_number_label=format_accident_number(accident.accident_number),
+            project_name=accident.project_name_snapshot,
+            author_label=opened_by_label,
+            opened_at=accident.opened_at,
+            closed_at=accident.closed_at,
+            download_url=f"/api/admin/accidents/{accident.id}/archive",
+            download_ready=archive is not None,
+            can_delete=(current_admin.perfil == 9),
+        ))
+    return AccidentClosedListResponse(rows=rows)
+
+
+@router.get("/accidents/{accident_id}/archive", dependencies=[Depends(require_full_admin_session)])
+def download_accident_archive(
+    accident_id: int,
+    db: Session = Depends(get_db),
+) -> Response:
+    archive = db.execute(
+        select(AccidentArchive).where(AccidentArchive.accident_id == accident_id)
+    ).scalar_one_or_none()
+    if archive is None:
+        raise HTTPException(status_code=404, detail="Arquivo do acidente ainda nao esta pronto.")
+    presigned_url = generate_presigned_url(object_key=archive.zip_object_key, expires_in_seconds=300)
+    return RedirectResponse(url=presigned_url, status_code=307)
+
+
+@router.get("/accidents/wizard/projects", response_model=list[AccidentProjectOption], dependencies=[Depends(require_full_admin_session)])
+def list_accident_wizard_projects(db: Session = Depends(get_db)) -> list[AccidentProjectOption]:
+    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+
+
+@router.get("/accidents/wizard/locations", response_model=list[AccidentLocationOption], dependencies=[Depends(require_full_admin_session)])
+def list_accident_wizard_locations(
+    project_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentLocationOption]:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    options = []
+    for loc in db.execute(select(ManagedLocation)).scalars().all():
+        try:
+            projects = json.loads(loc.projects_json or "[]")
+        except Exception:
+            projects = []
+        if project.name in projects:
+            options.append(AccidentLocationOption(id=loc.id, name=loc.local, registered=True))
+    return options
+
+
+def delete_prefix(prefix: str) -> None:
+    from ..services.object_storage import delete_prefix as _del_prefix
+    _del_prefix(prefix=prefix)
+
+
+@router.get("/accidents/local-asset/{path:path}")
+def serve_local_asset(path: str) -> Response:
+    """Serve locally-stored accident assets (dev only). Returns 404 in production."""
+    from ..services.object_storage import _use_remote, _local_root
+    if _use_remote():
+        raise HTTPException(status_code=404, detail="Not available in production.")
+    target = _local_root() / path
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Asset nao encontrado.")
+    return FileResponse(str(target))
+
+
+@router.delete("/accidents/{accident_id}", response_model=AdminActionResponse, dependencies=[Depends(require_full_admin_session)])
+def delete_accident_endpoint(
+    accident_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(require_full_admin_session),
+) -> AdminActionResponse:
+    if current_admin.perfil != 9:
+        raise HTTPException(status_code=403, detail="Apenas perfil 9 pode remover acidentes.")
+    accident = db.get(Accident, accident_id)
+    if accident is None:
+        raise HTTPException(status_code=404, detail="Acidente nao encontrado.")
+    if accident.closed_at is None:
+        raise HTTPException(status_code=409, detail="Nao e possivel remover um acidente em curso. Encerre o Modo Acidente primeiro.")
+
+    accident_number = accident.accident_number
+    db.delete(accident)  # cascade removes reports, videos, archive
+    db.commit()
+
+    delete_prefix(prefix=f"accidents/{format_accident_number(accident_number)}/")
+    log_event(
+        db,
+        source="admin",
+        action="accident_delete",
+        status="done",
+        message=f"Accident {accident_number} deleted",
+        details=f"by admin={current_admin.chave}",
+        commit=True,
+    )
+
+    notify_admin_data_changed("accident_closed", metadata={"deleted_accident_id": accident_id})
+    notify_web_check_data_changed("accident_closed", metadata={"deleted_accident_id": accident_id})
+
+    return AdminActionResponse(ok=True, message="Acidente removido com sucesso.")
 
 
 @router.get("/administrators", response_model=list[AdminManagementRow], dependencies=[Depends(require_full_admin_session)])

@@ -76,5 +76,26 @@ class Settings(BaseSettings):
     serve_user_site_in_api: bool = True
     serve_transport_site_in_api: bool = True
 
+    # DigitalOcean Spaces / S3-compatible object storage
+    do_spaces_endpoint_url: str | None = None
+    do_spaces_region: str | None = None
+    do_spaces_bucket: str | None = None
+    do_spaces_access_key: str | None = None
+    do_spaces_secret_key: str | None = None
+    do_spaces_public_base_url: str | None = None
+
+    # SMTP e-mail delivery
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str = "CheckCheck"
+    smtp_use_tls: bool = False
+    smtp_use_starttls: bool = True
+    smtp_timeout_seconds: int = 30
+    smtp_max_retries: int = 3
+    smtp_accident_notify_email: str | None = None
+
 
 settings = Settings()

@@ -1,15 +1,22 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
+from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
 from ..schemas import (
+    AccidentLocationOption,
+    AccidentProjectOption,
     ProjectRow,
+    WebAccidentOpenRequest,
+    WebAccidentReportRequest,
+    WebAccidentStateResponse,
+    WebAccidentUserReport,
+    AccidentVideoUploadResponse,
     WebCheckHistoryResponse,
     WebLocationOptionsResponse,
     WebPasswordActionResponse,
@@ -37,8 +44,18 @@ from ..schemas import (
 from ..services.admin_updates import (
     notify_admin_data_changed,
     notify_transport_data_changed,
+    notify_web_check_data_changed,
     transport_updates_broker,
+    web_check_updates_broker,
 )
+from ..services.accident_lifecycle import (
+    AccidentAlreadyActiveError,
+    attach_video_upload,
+    list_active_accident,
+    open_accident,
+    upsert_user_safety_report,
+)
+from ..services.accident_numbering import format_accident_number
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
 from ..services.location_matching import (
     resolve_captured_location_label,
@@ -54,6 +71,8 @@ from ..services.location_settings import (
 from ..services.passwords import hash_password, verify_password
 from ..services.project_catalog import ensure_known_project, list_projects
 from ..services.transport_reevaluation_events import emit_transport_reevaluation_event
+from ..services.email_sender import queue_help_request_emails
+from ..services.event_logger import log_event
 from ..services.time_utils import build_timezone_label, now_sgt, resolve_project_timezone_name
 from ..services.transport import (
     TransportRequestConflictError,
@@ -86,6 +105,9 @@ WEB_TRANSPORT_REQUEST_LABELS = {
     "weekend": "Transporte Fim de Semana",
     "extra": "Transporte Extra",
 }
+
+MAX_VIDEO_BYTES = 50 * 1024 * 1024  # 50 MB
+ALLOWED_VIDEO_TYPES = {"video/webm", "video/mp4", "video/quicktime"}
 
 WEB_CHECK_CHANNEL = FormsSubmitChannel(
     event_label="Web check event",
@@ -585,7 +607,39 @@ async def stream_web_transport_updates(
     )
 
 
-@router.post("/transport/address", response_model=WebTransportActionResponse)
+@router.get("/check/stream")
+async def stream_web_check_updates(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    _require_matching_authenticated_web_user(request, db, chave)
+    subscriber_id, queue = web_check_updates_broker.subscribe()
+
+    async def event_generator():
+        try:
+            yield _encode_sse({"reason": "connected"})
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            web_check_updates_broker.unsubscribe(subscriber_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 def update_web_transport_address(
     payload: WebTransportAddressUpdateRequest,
     request: Request,
@@ -819,3 +873,214 @@ def submit_web_check(
         channel=WEB_CHECK_CHANNEL,
     )
     return WebCheckSubmitResponse(**response.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# E1 — Accident state & open
+# ---------------------------------------------------------------------------
+
+
+@router.get("/check/accident/state", response_model=WebAccidentStateResponse)
+def get_web_accident_state(
+    request: Request,
+    chave: str = Query(min_length=4, max_length=4),
+    db: Session = Depends(get_db),
+) -> WebAccidentStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    active = list_active_accident(db)
+    if active is None:
+        return WebAccidentStateResponse(is_active=False)
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == active.id,
+            AccidentUserReport.user_id == user.id,
+        )
+    ).scalar_one_or_none()
+    return WebAccidentStateResponse(
+        is_active=True,
+        accident_number_label=format_accident_number(active.accident_number),
+        project_name=active.project_name_snapshot,
+        location_name=active.location_name_snapshot,
+        current_user_report=WebAccidentUserReport(
+            zone=("safety" if report and report.zone == "safety" else "accident" if report and report.zone == "accident" else None),
+            status=("ok" if report and report.status == "ok" else "help" if report and report.status == "help" else None),
+            reported_at=report.reported_at if report else None,
+        ) if report else None,
+    )
+
+
+@router.post("/check/accident/open", response_model=WebAccidentStateResponse)
+def open_web_accident(
+    payload: WebAccidentOpenRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> WebAccidentStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    try:
+        accident = open_accident(
+            db,
+            origin="web",
+            project_id=payload.project_id,
+            location_id=payload.location_id,
+            custom_location_name=payload.custom_location_name,
+            opened_by_admin_id=None,
+            opened_by_user_id=user.id,
+            reporter_zone=payload.zone,
+            reporter_status=payload.status,
+        )
+    except AccidentAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
+    log_event(
+        db,
+        source="web",
+        action="accident_open",
+        status="done",
+        message="Accident opened by web user",
+        request_path="/api/web/check/accident/open",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_number={accident.accident_number} project_id={payload.project_id}",
+        commit=True,
+    )
+    return get_web_accident_state(request=request, chave=payload.chave, db=db)
+
+
+@router.post("/check/accident/report", response_model=WebAccidentStateResponse)
+def report_web_accident_status(
+    payload: WebAccidentReportRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> WebAccidentStateResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    active = list_active_accident(db)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+    _, fired_help = upsert_user_safety_report(db, accident=active, user=user, zone=payload.zone, status=payload.status)
+    if fired_help:
+        background_tasks.add_task(queue_help_request_emails, accident_id=active.id, requester_user_id=user.id)
+    log_event(
+        db,
+        source="web",
+        action="accident_report",
+        status="done",
+        message="User safety report submitted",
+        request_path="/api/web/check/accident/report",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_id={active.id} zone={payload.zone} status={payload.status}",
+        commit=True,
+    )
+    return get_web_accident_state(request=request, chave=payload.chave, db=db)
+
+
+# ---------------------------------------------------------------------------
+# E3 — Video upload
+# ---------------------------------------------------------------------------
+
+
+async def stream_upload_to_storage(
+    *,
+    object_key: str,
+    upload_file: UploadFile,
+    content_type: str,
+    max_bytes: int,
+) -> tuple[int, str]:
+    from ..services.object_storage import stream_upload_to_storage as _stream_upload
+    return await _stream_upload(
+        object_key=object_key,
+        upload_file=upload_file,
+        content_type=content_type,
+        max_bytes=max_bytes,
+    )
+
+
+@router.post("/check/accident/video", response_model=AccidentVideoUploadResponse)
+async def upload_accident_video(
+    request: Request,
+    chave: str = Form(...),
+    idempotency_key: str = Form(..., min_length=8, max_length=80),
+    duration_seconds: int | None = Form(None),
+    video: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> AccidentVideoUploadResponse:
+    user = _require_matching_authenticated_web_user(request, db, chave)
+    active = list_active_accident(db)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+    if video.content_type not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(status_code=415, detail="Tipo de video nao suportado.")
+
+    accident_label = format_accident_number(active.accident_number)
+    ext_map = {"video/webm": "webm", "video/mp4": "mp4", "video/quicktime": "mov"}
+    ext = ext_map[video.content_type]
+    safe_key = idempotency_key.replace("/", "_").replace(" ", "_")
+    object_key = f"accidents/{accident_label}/{user.chave}/{safe_key}.{ext}"
+
+    size_bytes, public_url = await stream_upload_to_storage(
+        object_key=object_key,
+        upload_file=video,
+        content_type=video.content_type,
+        max_bytes=MAX_VIDEO_BYTES,
+    )
+
+    upload = attach_video_upload(
+        db,
+        accident=active,
+        user=user,
+        object_key=object_key,
+        public_url=public_url,
+        content_type=video.content_type,
+        size_bytes=size_bytes,
+        duration_seconds=duration_seconds,
+        idempotency_key=idempotency_key,
+    )
+    log_event(
+        db,
+        source="web",
+        action="accident_video",
+        status="done",
+        message="Accident video uploaded",
+        request_path="/api/web/check/accident/video",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_id={active.id} size_bytes={size_bytes}",
+        commit=True,
+    )
+    return AccidentVideoUploadResponse(
+        video_id=upload.id,
+        public_url=upload.public_url,
+        captured_at=upload.captured_at,
+    )
+
+
+@router.get("/check/accident/wizard/projects", response_model=list[AccidentProjectOption])
+def list_web_accident_projects(
+    request: Request,
+    chave: str = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentProjectOption]:
+    _require_matching_authenticated_web_user(request, db, chave)
+    return [AccidentProjectOption(id=p.id, name=p.name) for p in list_projects(db)]
+
+
+@router.get("/check/accident/wizard/locations", response_model=list[AccidentLocationOption])
+def list_web_accident_locations(
+    request: Request,
+    chave: str = Query(...),
+    project_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> list[AccidentLocationOption]:
+    _require_matching_authenticated_web_user(request, db, chave)
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
+    options = []
+    for loc in db.execute(select(ManagedLocation)).scalars().all():
+        try:
+            projects = json.loads(loc.projects_json or "[]")
+        except Exception:
+            projects = []
+        if project.name in projects:
+            options.append(AccidentLocationOption(id=loc.id, name=loc.local, registered=True))
+    return options

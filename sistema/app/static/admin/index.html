@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
+    <header class="app-header">
       <div class="header-brand" role="img" aria-label="Checking">
         <svg class="header-logo-icon" viewBox="0 0 220 170" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
           <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
@@ -28,6 +28,15 @@
         </svg>
         <span class="header-logo-text">Checking</span>
       </div>
+      <button
+        id="accidentToggleButton"
+        type="button"
+        class="accident-button accident-button-off hidden"
+        aria-pressed="false"
+        aria-label="Reportar Acidente"
+      >
+        <span class="accident-button-label">Reportar Acidente</span>
+      </button>
       <div id="sessionBar" class="session-bar hidden">
         <span id="sessionUserLabel" class="session-user-label"></span>
         <button id="logoutButton" type="button" class="secondary-button">Sair</button>
@@ -115,6 +124,7 @@
 
     <div id="adminShell" class="hidden">
       <nav class="tabs" aria-label="Seções do painel administrativo">
+        <button data-tab="acidente" id="accidentTabButton" class="tab-accident hidden">Acidente</button>
         <button data-tab="checkin" class="active">Check-In</button>
         <button data-tab="checkout">Check-Out</button>
         <button data-tab="forms">Forms</button>
@@ -125,6 +135,35 @@
       </nav>
 
       <main>
+      <section id="tab-acidente" class="tab">
+        <div class="section-header">
+          <div class="section-title-block">
+            <h2 id="accidentSectionTitle">Acidente em curso</h2>
+            <p id="accidentSectionMeta" class="section-header-copy"></p>
+          </div>
+          <div class="section-header-actions">
+            <span id="accidentSectionCount" class="auth-status">0 registros</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="responsive-table situacao-pessoal-table">
+            <thead>
+              <tr>
+                <th>Horário</th>
+                <th>Nome</th>
+                <th>Chave</th>
+                <th>Projetos</th>
+                <th>Local</th>
+                <th>Zona de</th>
+                <th>Situação</th>
+                <th>Contato</th>
+                <th>Registros</th>
+              </tr>
+            </thead>
+            <tbody id="situacaoPessoalBody"></tbody>
+          </table>
+        </div>
+      </section>
       <section id="tab-checkin" class="tab active">
         <div class="section-header">
           <div class="section-title-block">
@@ -383,6 +422,29 @@
                 <tr><th>RFID</th><th>Nome</th><th>Chave</th><th>Projetos</th><th>Ações</th></tr>
               </thead>
               <tbody id="pendingBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="cadastro-section-panel cadastro-section-panel--accidents" data-cadastro-section="acidentes">
+          <div class="section-header">
+            <h2>Acidentes</h2>
+            <button id="refreshAccidentsButton" type="button" class="secondary-button">Atualizar</button>
+          </div>
+          <div class="table-wrap cadastro-grid-wrap">
+            <table class="responsive-table cadastro-table cadastro-accidents-table">
+              <thead>
+                <tr>
+                  <th>Número</th>
+                  <th>Projeto</th>
+                  <th>Autor</th>
+                  <th>Aberto em</th>
+                  <th>Encerrado em</th>
+                  <th>Download</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="accidentsBody"></tbody>
             </table>
           </div>
         </article>
@@ -663,6 +725,60 @@
           <div class="modal-footer">
             <button id="downloadAllEventArchives" type="button" class="secondary-button">Baixar Tudo</button>
             <button id="closeEventArchivesFooter" type="button">Fechar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentWizardProjectModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardProjectTitle">
+          <div class="section-header modal-header"><h2 id="accidentWizardProjectTitle">Selecione o Projeto</h2></div>
+          <div id="accidentWizardProjectOptions" class="accident-wizard-options"></div>
+          <p id="accidentWizardProjectError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentWizardProjectCancel" type="button" class="secondary-button">Cancelar</button>
+            <button id="accidentWizardProjectAdvance" type="button" disabled>Avançar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentWizardLocationModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardLocationTitle">
+          <div class="section-header modal-header"><h2 id="accidentWizardLocationTitle">Local do Acidente</h2></div>
+          <div id="accidentWizardLocationOptions" class="accident-wizard-options"></div>
+          <label class="accident-wizard-custom">
+            <input type="radio" name="accidentLocationChoice" value="__custom__" />
+            <span>Outro local:</span>
+            <input id="accidentWizardCustomLocation" type="text" maxlength="120" placeholder="Descreva o local" disabled />
+          </label>
+          <p id="accidentWizardLocationError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentWizardLocationCancel" type="button" class="secondary-button">Cancelar</button>
+            <button id="accidentWizardLocationAdvance" type="button" disabled>Avançar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentWizardConfirmModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardConfirmTitle">
+          <div class="section-header modal-header"><h2 id="accidentWizardConfirmTitle">Confirmação de Acidente</h2></div>
+          <p id="accidentWizardConfirmText" class="accident-wizard-confirm-text"></p>
+          <p>Você confirma esta ação?</p>
+          <p id="accidentWizardConfirmError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentWizardConfirmCancel" type="button" class="secondary-button">Cancelar</button>
+            <button id="accidentWizardConfirmSubmit" type="button">Confirmar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="accidentEndModal" class="modal-backdrop hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentEndTitle">
+          <div class="section-header modal-header"><h2 id="accidentEndTitle">Encerramento do Modo Acidente</h2></div>
+          <p>Tem certeza que deseja finalizar o 'Modo Acidente'?</p>
+          <p id="accidentEndError" class="auth-status"></p>
+          <div class="modal-footer">
+            <button id="accidentEndBack" type="button" class="secondary-button">Voltar</button>
+            <button id="accidentEndConfirm" type="button">Confirmar</button>
           </div>
         </div>
       </div>

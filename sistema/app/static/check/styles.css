@@ -21,6 +21,35 @@
   --settings-trigger-size: clamp(42px, 9vw, 50px);
 }
 
+:root.accident-mode {
+  --primary: #c8222a;
+  --primary-hover: #8c1a20;
+  --accent-bg-soft: #fde7e9;
+}
+
+:root.accident-mode header {
+  background: #c8222a;
+}
+
+:root.accident-mode .submit-button {
+  background: #c8222a;
+}
+
+:root.accident-mode .submit-button:hover {
+  background: #8c1a20;
+}
+
+/* Preservar border-color dos campos chave/senha sem override em modo acidente */
+:root.accident-mode #chaveInput,
+:root.accident-mode #passwordInput {
+  /* border-color controlled by auth-status rules — not overridden here */
+}
+
+:root.accident-mode #notificationLinePrimary {
+  color: #c8222a;
+  font-weight: 700;
+}
+
 html {
   width: 100%;
   min-height: 100%;
@@ -146,6 +175,79 @@ header {
   border: 1px solid rgba(15, 118, 110, 0.16);
   border-radius: calc(var(--control-radius) + 2px);
   background: rgba(248, 250, 252, 0.9);
+}
+
+.accident-inquiry-card {
+  background: rgba(255, 80, 90, 0.1);
+  border: 2px solid #c8222a;
+}
+
+.accident-inquiry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.accident-inquiry-button {
+  padding: 14px;
+  background: #fff;
+  border: 2px solid #c8222a;
+  color: #c8222a;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.accident-inquiry-button:hover {
+  background: #fde7e9;
+}
+
+.accident-camera-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.accident-camera-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: #1e293b;
+  border-radius: 16px;
+  width: min(92vw, 480px);
+}
+
+.accident-camera-preview {
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+  max-height: 60vh;
+  object-fit: cover;
+}
+
+.accident-camera-status {
+  margin: 0;
+  color: #f1f5f9;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.accident-camera-stop-button {
+  width: 100%;
+  padding: 12px;
+  background: #c8222a;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
 }
 
 .notification-card {
@@ -908,6 +1010,43 @@ header {
 .submit-button:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.accident-report-button {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 14px 16px;
+  background: #c8222a;
+  color: #fff;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: box-shadow 0.2s, transform 0.1s;
+}
+
+.accident-report-button[aria-pressed="true"] {
+  border-color: #ff4d57;
+  box-shadow: 0 0 0 3px #ff4d57, 0 0 18px #ff4d57;
+  transform: scale(0.98);
+}
+
+.accident-report-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.accident-report-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
 }
 
 .password-dialog-backdrop {

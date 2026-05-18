@@ -462,6 +462,45 @@
           checkSuccessAlt: 'Estado de sucesso após um check-in ou check-out realizado no Checking Web.',
         },
       },
+      accident: {
+        button: {
+          report: 'Reportar Acidente',
+          reported: 'Acidente Reportado',
+        },
+        wizard: {
+          selectProject: 'Selecione o Projeto',
+          selectLocation: 'Local do Acidente',
+          yourSituation: 'Sua Situação:',
+          confirmTitle: 'Confirmação de Acidente',
+          confirmTextTemplate: 'Você está prestes a reportar um acidente na localização {location} do projeto {project}.',
+        },
+        notification: {
+          bannerTemplate: 'Acidente Reportado no projeto {project}!',
+        },
+        inquiry: {
+          title: 'Estou em:',
+          titleAfter: 'Sua Situação',
+          safetyZone: 'Zona de Segurança',
+          accidentZone: 'Zona de Acidente',
+          imOk: 'Estou bem.',
+          needHelp: 'Preciso de Ajuda!',
+        },
+        confirm: {
+          safety: 'Você confirma que está fora de perigo?',
+          accidentOk: 'Você confirma que está na zona do acidente e que está fora de perigo?',
+          help: 'Você confirma que está na zona do acidente e que precisa de ajuda?',
+        },
+        actions: {
+          title: 'Ações de Emergência',
+          audioVideo: 'Audio & Video',
+          reportNew: 'Reportar Novo Acidente',
+          back: 'Voltar',
+        },
+        settings: {
+          permitAudioVideo: 'Permitir Audio & Video',
+          permitted: 'Audio & Video permitido',
+        },
+      },
       support: {
         phoneNumber: '5521992174446',
         messageTemplate: 'Preciso de ajuda com a aplicação Checking Web. Minha chave é {chave}.',

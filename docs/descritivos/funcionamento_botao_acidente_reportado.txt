@@ -230,3 +230,10 @@ Download: um arquivo ZIP contendo um arquivo XLSX na pasta raiz do arquivo zip, 
 - O arquivo XLSX deve conter uma tabela idêntica à tabela 'Situação de Pessoal' congelada no momento em que o acidente foi encerrado;
 - A coluna 'Registros' desta tabela deve conter os links para os arquivos de video que estão na subpasta 'Registros' de forma que a funcionalidade dos links dos registros esteja preservada, ou seja, que seja possível ver o video que cada usuário enviou.
 Ações: Coloque um botão 'Remover' para que o acidente seja removido. Apenas um administrador com perfil = 9 poderá remover um acidente.
+---
+
+Status de implementação: IMPLEMENTADO em 2026-05-18.
+Plano de arquitetura: docs/temp000.md
+To-do de execução: docs/temp000A.md
+Checklist de aceitação: docs/descritivos/aceitacao_modo_acidente.md
+Arquitetura detalhada: docs/descritivos/modo_acidente_arquitetura.md

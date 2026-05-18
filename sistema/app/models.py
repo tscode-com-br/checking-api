@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 
@@ -732,3 +732,153 @@ class EndpointApiKey(Base):
     secret_key: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Accident(Base):
+    __tablename__ = "accidents"
+    __table_args__ = (
+        UniqueConstraint("accident_number", name="uq_accidents_accident_number"),
+        Index(
+            "ix_accidents_single_active",
+            "closed_at",
+            unique=True,
+            postgresql_where=text("closed_at IS NULL"),
+            sqlite_where=text("closed_at IS NULL"),
+        ),
+        Index(
+            "ix_accidents_single_active_guard",
+            text("(1)"),
+            unique=True,
+            postgresql_where=text("closed_at IS NULL"),
+            sqlite_where=text("closed_at IS NULL"),
+        ),
+        CheckConstraint(
+            "origin IN ('admin', 'web')",
+            name="ck_accidents_origin_allowed",
+        ),
+        CheckConstraint(
+            "accident_number >= 0",
+            name="ck_accidents_number_non_negative",
+        ),
+        CheckConstraint(
+            "(opened_by_admin_id IS NOT NULL AND opened_by_user_id IS NULL) OR "
+            "(opened_by_admin_id IS NULL AND opened_by_user_id IS NOT NULL)",
+            name="ck_accidents_opened_by_actor_required",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    accident_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    project_name_snapshot: Mapped[str] = mapped_column(String(120), nullable=False)
+    location_name_snapshot: Mapped[str] = mapped_column(String(120), nullable=False)
+    location_is_registered: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    opened_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
+    opened_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # ORM-level cascade: ensures child rows are deleted when an Accident is deleted,
+    # even in SQLite where PRAGMA foreign_keys is off and DB-level CASCADE doesn't fire.
+    user_reports = relationship("AccidentUserReport", cascade="all, delete-orphan")
+    video_uploads = relationship("AccidentVideoUpload", cascade="all, delete-orphan")
+    archive = relationship("AccidentArchive", cascade="all, delete-orphan", uselist=False)
+
+
+class AccidentUserReport(Base):
+    __tablename__ = "accident_user_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "accident_id",
+            "user_id",
+            name="uq_accident_user_reports_accident_id_user_id",
+        ),
+        CheckConstraint(
+            "zone IN ('waiting', 'safety', 'accident')",
+            name="ck_accident_user_reports_zone_allowed",
+        ),
+        CheckConstraint(
+            "status IN ('waiting', 'ok', 'help')",
+            name="ck_accident_user_reports_status_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    accident_id: Mapped[int] = mapped_column(ForeignKey("accidents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_chave_snapshot: Mapped[str] = mapped_column(String(4), nullable=False)
+    user_name_snapshot: Mapped[str] = mapped_column(String(180), nullable=False)
+    user_phone_snapshot: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    user_projects_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    user_local_snapshot: Mapped[str] = mapped_column(String(120), nullable=False)
+    zone: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checkin_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_action_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AccidentVideoUpload(Base):
+    __tablename__ = "accident_video_uploads"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_accident_video_uploads_idempotency_key"),
+        Index("ix_accident_video_uploads_accident_user", "accident_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idempotency_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    accident_id: Mapped[int] = mapped_column(ForeignKey("accidents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    public_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AccidentArchive(Base):
+    __tablename__ = "accident_archives"
+    __table_args__ = (
+        UniqueConstraint("accident_id", name="uq_accident_archives_accident_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    accident_id: Mapped[int] = mapped_column(ForeignKey("accidents.id", ondelete="CASCADE"), nullable=False)
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
+    xlsx_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    zip_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EmailDeliveryLog(Base):
+    __tablename__ = "email_delivery_logs"
+    __table_args__ = (
+        Index("ix_email_delivery_logs_accident", "accident_id"),
+        CheckConstraint(
+            "delivery_status IN ('queued', 'sent', 'failed')",
+            name="ck_email_delivery_logs_status_allowed",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    accident_id: Mapped[int | None] = mapped_column(ForeignKey("accidents.id", ondelete="SET NULL"), nullable=True)
+    triggered_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    recipient_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    recipient_chave: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    body_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    delivery_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
