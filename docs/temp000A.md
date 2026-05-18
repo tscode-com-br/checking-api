@@ -2756,3 +2756,107 @@ Adicionados apos `.accident-inquiry-button:hover` os blocos CSS do overlay da ca
 - sistema/app/static/check/index.html (editado -- script tag adicionado antes de app.js)
 - sistema/app/static/check/styles.css (editado -- 5 blocos CSS do overlay da camera adicionados)
 - docs/temp000A.md (atualizado)
+
+
+---
+
+## Task I7 -- Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Criar o modulo `accident.js` com wiring completo do modo acidente no frontend Checking Web: estado, SSE, polling, wizard de abertura, dialogo de acoes, confirmacao de zona e integracao com `app.js`.
+
+### 1) Arquivo criado: sistema/app/static/check/accident.js
+
+Implementado como IIFE (`(function () { "use strict"; ... })()`). Exporta `window.AccidentMode = { onLogin, onLogout }`.
+
+**Variaveis de estado:**
+- `state` -- objeto `{ isActive, accident, currentUserReport }` sincronizado com o backend.
+- `eventSource` -- instancia EventSource ou null.
+- `pollingHandle` -- handle do setInterval (30 s) ou null.
+- `refreshDebounce` -- handle do setTimeout (250 ms) para debounce de SSE.
+- `wizardData` -- dados coletados pelo wizard (projectId, projectName, locationId, locationName, locationRegistered, zone, status).
+
+**`refreshState()`** -- async: GET `/api/web/check/accident/state?chave=...`, atualiza `state`, chama `applyTheme`, `renderBanner`, `renderInquiryCard`, `updateReportButton`.
+
+**`applyTheme(isActive)`** -- toggle da classe `accident-mode` no `<html>`.
+
+**`renderBanner(s)`** -- escreve "Acidente Reportado no projeto X!" em `#notificationLinePrimary` quando ativo; limpa quando inativo.
+
+**`renderInquiryCard(s)`** -- mostra/oculta `#accidentInquiryCard` e o history-card com base em `isActive` e `current_user_report`. Chama `resetInquiryCard()` para restaurar labels dos botoes.
+
+**`updateReportButton(s)`** -- revela `#accidentReportButton`, seta `aria-pressed` e label ("Acidente Reportado" / "Reportar Acidente").
+
+**SSE:** `startEventSource()` cria EventSource em `/api/web/check/stream?chave=...`. Mensagens com `reason` iniciando em `"accident_"` disparam `scheduleRefresh()` (debounce 250 ms).
+
+**Polling:** `startPolling()` / `stopPolling()` com `setInterval(refreshState, 30000)`.
+
+**`askConfirm(zone, status)`** -- reutiliza `#accidentReportConfirmDialog` para confirmar zona/status. POST para `/api/web/check/accident/report` com `{ chave, zone, status }`.
+
+**`openAccidentWizard()`** -- sequencia 4 passos:
+1. GET `/api/web/check/accident/wizard/projects?chave=...` -> renderiza radios em `#accidentReportProjectOptions`.
+2. GET `/api/web/check/accident/wizard/locations?chave=...&project_id=...` -> renderiza radios em `#accidentReportLocationOptions` + campo "Outro local".
+3. Mostra `#accidentReportSituationDialog` com 3 radios (safety-ok, accident-ok, accident-help).
+4. Mostra `#accidentReportConfirmDialog` com texto de confirmacao -> POST `/api/web/check/accident/open` com `{ chave, project_id, location_id, custom_location_name, zone, status }`.
+
+**`openAccidentActionsDialog()`** -- mostra `#accidentActionsDialog` (novo modal) com botao "Gravar Video" (-> `window.AccidentCamera.startRecording(chave)`) e botao "Reportar Novo Acidente" (disabled).
+
+**Event listeners diretos:**
+- `#accidentReportButton`: click -> wizard (inativo) ou actions dialog (ativo).
+- `#accidentZoneSafetyButton`: click -> `askConfirm("safety", "ok")`.
+- `#accidentZoneAccidentButton`: click -> muda labels para "Sua Situacao" / "Estou bem." / "Preciso de Ajuda!" com onclicks correspondentes.
+- `#settingsAudioVideoPermissionButton`: click -> `navigator.mediaDevices.getUserMedia({ video, audio })` para solicitar permissao; desabilita botao apos sucesso.
+
+**`getCurrentChave()`** -- le `#chaveInput.value` se tiver 4 caracteres.
+**`showDialog(el, backdrop)`** / **`hideDialog(el, backdrop)`** -- toggle de `hidden` + `is-hidden`.
+
+**`window.AccidentMode`:**
+- `onLogin()`: `refreshState()` + `startEventSource()` + `startPolling()`.
+- `onLogout()`: `stopEventSource()` + `stopPolling()` + `applyTheme(false)` + reset de `state`.
+
+### 2) Arquivo editado: sistema/app/static/check/index.html
+
+Duas alteracoes:
+
+**a) Adicionado `#accidentActionsDialog`** (novo par backdrop + section) imediatamente antes dos modais do wizard (Task I2):
+- `#accidentActionsBackdrop` -- backdrop padrao.
+- `#accidentActionsDialog` -- card com titulo "Acoes de Emergencia", botao `#accidentActionsVideoButton` "Gravar Video", botao disabled "Reportar Novo Acidente", botao `#accidentActionsClose` "Fechar".
+
+**b) Adicionado `<script src="accident.js"></script>`** imediatamente antes de `<script src="app.js"></script>` (apos `accident-camera.js`).
+
+### 3) Arquivo editado: sistema/app/static/check/app.js
+
+Duas alteracoes cirurgicas:
+
+**a) `loadAuthenticatedApplication`:** apos `authenticatedApplicationReadyFingerprint = passwordVerificationFingerprint`, adicionado:
+```js
+if (window.AccidentMode) window.AccidentMode.onLogin();
+```
+Garante que SSE + polling iniciam toda vez que o usuario conclui autenticacao.
+
+**b) `logoutWebSession`:** apos o bloco `if (!settings.silent)`, adicionado:
+```js
+if (window.AccidentMode) window.AccidentMode.onLogout();
+```
+Para SSE + polling e reseta o tema acidente em todos os caminhos de logout (inclusive startup cleanup e logout manual).
+
+### 4) Arquivo criado: tests/static/check/test_accident_button.test.js
+
+7 testes Node.js estaticos (assert.match sobre conteudo dos arquivos):
+- `test_button_renders_after_login` -- HTML tem `#accidentReportButton`; JS revela via `btn.hidden = false`; app.js chama `onLogin`.
+- `test_wizard_opens_when_inactive` -- wizard aberto quando `!state.isActive`; endpoints corretos.
+- `test_dialog_opens_when_active` -- `openAccidentActionsDialog` chamado; HTML tem `#accidentActionsDialog` e `#accidentActionsVideoButton`; usa `window.AccidentCamera`.
+- `test_sse_message_triggers_refresh` -- EventSource criado; reason `accident_` dispara `scheduleRefresh`; debounce 250 ms.
+- `test_confirm_submits_report` -- `askConfirm` faz POST para `/accident/report` com `chave`, `zone`, `status`.
+- `test_zone_accident_changes_button_labels` -- botao acidente muda labels para "Sua Situacao", "Estou bem.", "Preciso de Ajuda!".
+- `test_audio_video_permission_button_in_settings` -- HTML tem `#settingsAudioVideoPermissionButton`; JS usa `getUserMedia`; desabilita com "Audio & Video permitido".
+
+Todos 7 testes passaram. Todos 137 testes Python passaram.
+
+### 5) Arquivos alterados nesta tarefa
+
+- sistema/app/static/check/accident.js (criado -- modulo principal de wiring do modo acidente)
+- sistema/app/static/check/index.html (editado -- modal accidentActionsDialog + script tag accident.js)
+- sistema/app/static/check/app.js (editado -- hooks onLogin/onLogout em loadAuthenticatedApplication e logoutWebSession)
+- tests/static/check/test_accident_button.test.js (criado -- 7 testes estaticos)
+- docs/temp000A.md (atualizado)

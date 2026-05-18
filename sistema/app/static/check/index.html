@@ -617,6 +617,29 @@
           </div>
         </section>
 
+        <!-- Accident Actions Dialog (Task I7) -->
+
+        <div id="accidentActionsBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentActionsDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentActionsTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentActionsTitle">Ações de Emergência</h2>
+            <div class="password-dialog-actions">
+              <button id="accidentActionsVideoButton" type="button" class="submit-button">Gravar Vídeo</button>
+              <button type="button" class="secondary-button" disabled>Reportar Novo Acidente</button>
+            </div>
+            <div class="password-dialog-actions">
+              <button id="accidentActionsClose" type="button" class="secondary-button">Fechar</button>
+            </div>
+          </div>
+        </section>
+
         <!-- Accident Report Wizard Modals (Task I2) -->
 
         <div id="accidentReportProjectBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
@@ -727,6 +750,7 @@
     <script src="i18n.js"></script>
     <script src="transport-screen.js"></script>
     <script src="accident-camera.js"></script>
+    <script src="accident.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

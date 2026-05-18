@@ -2759,6 +2759,8 @@
         message: settings.message,
       });
     }
+
+    if (window.AccidentMode) window.AccidentMode.onLogout();
   }
 
   function clearProtectedClientState() {
@@ -4576,6 +4578,7 @@
 
       await runLifecycleUpdateSequence({ ignoreCooldown: true, triggerSource: 'startup' });
       authenticatedApplicationReadyFingerprint = passwordVerificationFingerprint;
+      if (window.AccidentMode) window.AccidentMode.onLogin();
       return true;
     })();
 
