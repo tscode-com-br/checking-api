@@ -3653,3 +3653,94 @@ O script M2 cobre automaticamente os cenarios L6/01, L6/02, L6/03, L6/06 e L6/10
 ### Arquivos criados nesta tarefa
 
 - `scripts/smoke_test_accident_mode.py` (criado — script de smoke test automatizado para staging)
+
+---
+
+## Task M3 — Concluido
+
+### Resumo detalhado
+
+**Objetivo:** Garantir que a migration SQL para producao esta correta, documentada e com plano de rollback explicitamente descrito.
+
+### 1) Script SQL: sistema/scripts/migrate_accidents_v1.sql
+
+O arquivo ja existia na branch (criado em tarefa anterior). Verificado que esta **completo e alinhado** com os modelos SQLAlchemy:
+
+**Tabelas criadas (todas com `IF NOT EXISTS`):**
+- `accidents` — 16 colunas, SERIAL PK, FKs para `projects`, `users`, `admin_users`
+- `accident_user_reports` — FK CASCADE para `accidents`, UNIQUE (accident_id, user_id)
+- `accident_video_uploads` — FK CASCADE para `accidents`, UNIQUE (idempotency_key)
+- `accident_archives` — FK CASCADE para `accidents`, UNIQUE (accident_id)
+- `email_delivery_logs` — FK SET NULL para `accidents`
+
+**Constraints verificadas vs. modelos:**
+- `ck_accidents_origin_allowed` CHECK (origin IN ('admin', 'web')) ✅
+- `ck_accidents_number_non_negative` CHECK (accident_number >= 0) ✅
+- `ck_accidents_opened_by_actor_required` CHECK (XOR opened_by_admin_id / opened_by_user_id) ✅
+- `ck_accident_user_reports_zone_allowed` CHECK (zone IN ('waiting', 'safety', 'accident')) ✅
+- `ck_accident_user_reports_status_allowed` CHECK (status IN ('waiting', 'ok', 'help')) ✅
+- `ck_email_delivery_logs_status_allowed` CHECK (delivery_status IN ('queued', 'sent', 'failed')) ✅
+
+**Indices:**
+- `ix_accidents_single_active` UNIQUE partial WHERE closed_at IS NULL ✅
+- `ix_accidents_single_active_guard` UNIQUE partial em `(1)` WHERE closed_at IS NULL ✅
+- `ix_accident_video_uploads_accident_user` btree (accident_id, user_id) ✅
+- `ix_email_delivery_logs_accident` btree (accident_id) ✅
+
+**Validacao de sintaxe:** DDL testado em SQLite in-memory (subconjunto compativel) — nenhum erro.
+
+**Aplicacao em producao (Postgres):**
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f sistema/scripts/migrate_accidents_v1.sql
+```
+
+### 2) Runbook criado: docs/descritivos/migration_m3_runbook.md
+
+Documento de 5 passos para aplicacao em producao:
+
+**Passo 1 — Backup completo:**
+- `pg_dump "$DATABASE_URL" --format=custom --file="backup_pre_m3_$(date +%Y%m%d_%H%M%S).dump"`
+- Verificacao do dump: `pg_restore --list | head -20` + `ls -lh`.
+
+**Passo 2 — Aplicar migration:**
+- Comando `psql -v ON_ERROR_STOP=1 -f migrate_accidents_v1.sql`.
+- Saida esperada: 9 mensagens de criacao (5x CREATE TABLE, 4x CREATE INDEX).
+- Script e idempotente (pode ser re-executado em caso de falha parcial).
+
+**Passo 3 — Verificacao de schema:**
+- `\dt` lista as 5 tabelas.
+- `\d accidents` mostra 15 colunas + 4 indices (incluindo 2 parciais) + 3 check constraints.
+- `\d accident_user_reports` verifica UNIQUE + 2 check constraints.
+- Queries `pg_indexes` para verificar indices das tabelas filhas.
+- Insercoes deliberadamente invalidas para validar que constraints disparam corretamente.
+
+**Passo 4 — Verificacao de rowcount:**
+- SELECT COUNT(*) nas 5 tabelas — todas devem retornar 0.
+
+**Passo 5 — Rollback:**
+```sql
+DROP TABLE IF EXISTS accident_archives, accident_video_uploads,
+    accident_user_reports, email_delivery_logs, accidents CASCADE;
+```
+- Em caso de corrupte de dados: `pg_restore --clean --if-exists backup_pre_m3_*.dump`.
+
+**Checklist Go/No-Go** (7 itens, todos devem ser `[x]` antes de continuar o deploy):
+1. Backup confirmado
+2. Migration sem erros
+3. `\dt` mostra 5 tabelas
+4. `\d accidents` com constraints + indices parciais
+5. Rowcount = 0 em todas as tabelas
+6. Smoke test M2 passou (18/18)
+7. Logs sem erros 500 nas primeiras 5 min
+
+### Criterios de aceitacao
+
+- Backup confirmado: **requer execucao humana pre-deploy**.
+- Migration aplicada: **requer execucao humana pre-deploy** usando o script `migrate_accidents_v1.sql` existente.
+- Verificacao de schema: **detalhada no runbook** (`docs/descritivos/migration_m3_runbook.md`).
+- Rollback plan documentado: **sim** — incluido no runbook, Passo 5.
+
+### Arquivos criados/verificados nesta tarefa
+
+- `sistema/scripts/migrate_accidents_v1.sql` (existente — verificado e validado contra modelos)
+- `docs/descritivos/migration_m3_runbook.md` (criado — runbook completo de producao com backup, apply, verify, rollback)
