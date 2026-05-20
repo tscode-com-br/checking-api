@@ -84,6 +84,39 @@ def test_admin_open_accident_creates_admin_user_lazily(
         assert admin_row.chave == admin_perfil_1.user.chave
 
 
+def test_admin_open_accident_with_custom_location(
+    admin_perfil_1: AdminSession,
+    accident_project,
+) -> None:
+    """Regression: opening an accident with a custom (typed) location name
+    must succeed. The frontend wizard sends ``custom_location_name``
+    instead of ``location_id`` for this path. A previous JS version sent
+    ``location_name`` (which the schema ignores as an extra field),
+    causing the XOR validator to reject the request with a 422 whose
+    ``detail`` is an array — rendered as ``[object Object]`` by the UI.
+    """
+    _wipe_accidents_and_admin_users(chave_to_wipe=admin_perfil_1.user.chave)
+
+    with patch(
+        "sistema.app.services.accident_lifecycle.notify_admin_data_changed"
+    ), patch(
+        "sistema.app.services.accident_lifecycle.notify_web_check_data_changed"
+    ):
+        response = admin_perfil_1.client.post(
+            "/api/admin/accidents/open",
+            json={
+                "project_id": accident_project.id,
+                "custom_location_name": "Beira do canal sul",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["is_active"] is True
+    assert body["accident"]["location_name"] == "Beira do canal sul"
+    assert body["accident"]["location_is_registered"] is False
+
+
 def test_admin_close_accident_uses_admin_users_id(
     admin_perfil_1: AdminSession,
     accident_project,

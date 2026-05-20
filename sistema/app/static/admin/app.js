@@ -6882,12 +6882,12 @@ async function submitAccidentOpen() {
   const submitBtn = document.getElementById("accidentWizardConfirmSubmit");
   if (submitBtn) submitBtn.disabled = true;
   try {
-    const body = {
-      project_id: accidentWizardData.projectId,
-      location_id: accidentWizardData.locationId,
-      location_name: accidentWizardData.locationName,
-      location_is_registered: accidentWizardData.locationRegistered,
-    };
+    const body = { project_id: accidentWizardData.projectId };
+    if (accidentWizardData.locationId !== null && accidentWizardData.locationId !== undefined) {
+      body.location_id = accidentWizardData.locationId;
+    } else if (accidentWizardData.locationName) {
+      body.custom_location_name = accidentWizardData.locationName;
+    }
     const response = await fetch("/api/admin/accidents/open", {
       method: "POST",
       credentials: "include",
@@ -6896,7 +6896,8 @@ async function submitAccidentOpen() {
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: "Erro ao abrir acidente." }));
-      document.getElementById("accidentWizardConfirmError").textContent = err.detail || "Erro ao abrir acidente.";
+      document.getElementById("accidentWizardConfirmError").textContent =
+        _formatAccidentErrorDetail(err.detail) || "Erro ao abrir acidente.";
       if (submitBtn) submitBtn.disabled = false;
       return;
     }
@@ -6907,6 +6908,22 @@ async function submitAccidentOpen() {
     console.warn("submitAccidentOpen failed", err);
     document.getElementById("accidentWizardConfirmError").textContent = "Erro de conexão.";
     if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+// FastAPI returns 422 validation errors as `detail: [{loc, msg, type}, ...]`.
+// Render that gracefully instead of the default `[object Object]` toString.
+function _formatAccidentErrorDetail(detail) {
+  if (detail === null || detail === undefined) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => (item && typeof item === "object" && item.msg) ? item.msg : String(item)).join("; ");
+  }
+  if (typeof detail === "object" && detail.msg) return detail.msg;
+  try {
+    return JSON.stringify(detail);
+  } catch (_e) {
+    return "Erro ao abrir acidente.";
   }
 }
 
@@ -6921,7 +6938,8 @@ async function submitAccidentClose() {
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ detail: "Erro ao encerrar acidente." }));
-      document.getElementById("accidentEndError").textContent = err.detail || "Erro ao encerrar acidente.";
+      document.getElementById("accidentEndError").textContent =
+        _formatAccidentErrorDetail(err.detail) || "Erro ao encerrar acidente.";
       if (confirmBtn) confirmBtn.disabled = false;
       return;
     }
