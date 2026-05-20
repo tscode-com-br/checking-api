@@ -117,7 +117,7 @@ let reportsExportQueryString = "";
 let reportsResultsPayload = null;
 let reportsSearchUsersByChave = new Map();
 
-let accidentState = { isActive: false, accident: null, situationRows: [] };
+let accidentState = { is_active: false, accident: null, situation_rows: [] };
 let accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null };
 let accidentRefreshDebounceTimer = null;
 let accidentPollingHandle = null;
@@ -6602,7 +6602,7 @@ function bindActions() {
   const accidentToggleBtn = document.getElementById("accidentToggleButton");
   if (accidentToggleBtn) {
     accidentToggleBtn.addEventListener("click", () => {
-      if (accidentState.isActive) {
+      if (accidentState.is_active) {
         document.getElementById("accidentEndError").textContent = "";
         _showAccidentModal("accidentEndModal");
       } else {
@@ -6644,19 +6644,19 @@ function updateAccidentButton(state) {
   const btn = document.getElementById("accidentToggleButton");
   if (!btn) return;
   btn.classList.remove("hidden");
-  btn.setAttribute("aria-pressed", state.isActive ? "true" : "false");
-  btn.querySelector(".accident-button-label").textContent = state.isActive ? "Acidente Reportado" : "Reportar Acidente";
+  btn.setAttribute("aria-pressed", state.is_active ? "true" : "false");
+  btn.querySelector(".accident-button-label").textContent = state.is_active ? "Acidente Reportado" : "Reportar Acidente";
 }
 
 function renderAccidentTab(state) {
   const tabBtn = document.getElementById("accidentTabButton");
   if (!tabBtn) return;
-  if (state.isActive) {
+  if (state.is_active) {
     tabBtn.classList.remove("hidden");
     document.getElementById("accidentSectionTitle").textContent = `Acidente ${state.accident.accident_number_label}`;
     document.getElementById("accidentSectionMeta").textContent =
       `Projeto ${state.accident.project_name} — Local ${state.accident.location_name} — Aberto por ${state.accident.opened_by_label} em ${new Date(state.accident.opened_at).toLocaleString()}`;
-    renderSituacaoPessoal(state.situationRows);
+    renderSituacaoPessoal(state.situation_rows);
   } else {
     tabBtn.classList.add("hidden");
     if (tabBtn.classList.contains("active")) {
@@ -6714,7 +6714,7 @@ async function fetchAccidentState() {
     const response = await fetch("/api/admin/accidents/active", { credentials: "include" });
     if (!response.ok) return;
     accidentState = await response.json();
-    applyAccidentTheme(accidentState.isActive);
+    applyAccidentTheme(accidentState.is_active);
     renderAccidentTab(accidentState);
     updateAccidentButton(accidentState);
   } catch (err) {
@@ -6977,11 +6977,11 @@ function scheduleAccidentRefresh() {
   if (accidentRefreshDebounceTimer !== null) clearTimeout(accidentRefreshDebounceTimer);
   accidentRefreshDebounceTimer = setTimeout(async () => {
     accidentRefreshDebounceTimer = null;
-    const wasActive = accidentState.isActive;
+    const wasActive = accidentState.is_active;
     await fetchAccidentState();
-    if (wasActive && !accidentState.isActive) {
+    if (wasActive && !accidentState.is_active) {
       await fetchAccidentsHistory();
-    } else if (!wasActive && accidentState.isActive) {
+    } else if (!wasActive && accidentState.is_active) {
       // Another admin opened an accident — close wizard modals if any are open
       const wizardOpen = ["accidentWizardProjectModal", "accidentWizardLocationModal", "accidentWizardConfirmModal"]
         .some((id) => !document.getElementById(id)?.classList.contains("hidden"));

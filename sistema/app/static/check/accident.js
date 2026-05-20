@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  let state = { isActive: false, accident: null, currentUserReport: null };
+  let state = { is_active: false, accident: null, current_user_report: null };
   let eventSource = null;
   let pollingHandle = null;
   let refreshDebounce = null;
@@ -21,7 +21,7 @@
       );
       if (!resp.ok) return;
       state = await resp.json();
-      applyTheme(state.isActive);
+      applyTheme(state.is_active);
       renderBanner(state);
       renderInquiryCard(state);
       updateReportButton(state);
@@ -43,7 +43,7 @@
   function renderBanner(s) {
     const line = document.getElementById("notificationLinePrimary");
     if (!line) return;
-    if (s.isActive) {
+    if (s.is_active) {
       line.textContent = "Acidente Reportado no projeto " + s.project_name + "!";
     } else {
       if (line.textContent.startsWith("Acidente Reportado")) line.textContent = "";
@@ -58,7 +58,7 @@
     const card = document.getElementById("accidentInquiryCard");
     const history = document.querySelector(".history-card:not(.accident-inquiry-card)");
     if (!card) return;
-    if (s.isActive) {
+    if (s.is_active) {
       card.hidden = false;
       card.classList.remove("is-hidden");
       resetInquiryCard();
@@ -87,9 +87,9 @@
     const btn = document.getElementById("accidentReportButton");
     if (!btn) return;
     btn.hidden = false;
-    btn.setAttribute("aria-pressed", s.isActive ? "true" : "false");
+    btn.setAttribute("aria-pressed", s.is_active ? "true" : "false");
     const label = btn.querySelector(".accident-report-button-label");
-    if (label) label.textContent = s.isActive ? "Acidente Reportado" : "Reportar Acidente";
+    if (label) label.textContent = s.is_active ? "Acidente Reportado" : "Reportar Acidente";
   }
 
   // ---------------------------------------------------------------------------
@@ -418,7 +418,7 @@
   const reportBtn = document.getElementById("accidentReportButton");
   if (reportBtn) {
     reportBtn.addEventListener("click", function () {
-      if (state.isActive) openAccidentActionsDialog();
+      if (state.is_active) openAccidentActionsDialog();
       else openAccidentWizard();
     });
   }
@@ -487,7 +487,7 @@
       stopEventSource();
       stopPolling();
       applyTheme(false);
-      state = { isActive: false, accident: null, currentUserReport: null };
+      state = { is_active: false, accident: null, current_user_report: null };
     },
   };
 })();

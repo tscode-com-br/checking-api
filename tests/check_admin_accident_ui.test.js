@@ -20,8 +20,8 @@ test('test_accident_button_visible_after_login', () => {
 });
 
 test('test_accident_button_label_changes_on_state', () => {
-  assert.match(adminJs, /btn\.querySelector\("\.accident-button-label"\)\.textContent = state\.isActive \? "Acidente Reportado" : "Reportar Acidente"/);
-  assert.match(adminJs, /btn\.setAttribute\("aria-pressed", state\.isActive \? "true" : "false"\)/);
+  assert.match(adminJs, /btn\.querySelector\("\.accident-button-label"\)\.textContent = state\.is_active \? "Acidente Reportado" : "Reportar Acidente"/);
+  assert.match(adminJs, /btn\.setAttribute\("aria-pressed", state\.is_active \? "true" : "false"\)/);
 });
 
 test('test_wizard_advances_after_project_selection', () => {
