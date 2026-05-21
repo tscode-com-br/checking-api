@@ -111,11 +111,25 @@
     // Tab section fade-in
     const mainEl = document.querySelector("main");
     if (mainEl) {
-      const observer = new MutationObserver(() => {
+      const observer = new MutationObserver((mutations) => {
+        // Only trigger when a .tab element's class changes (not rows, modals, etc.)
+        const hasTabChange = mutations.some(
+          (m) => m.target instanceof Element && m.target.classList.contains("tab")
+        );
+        if (!hasTabChange) return;
+        // Disconnect to prevent re-entrancy: our own classList mutations would re-fire this
+        observer.disconnect();
         const active = mainEl.querySelector(".tab.active");
         if (active) {
           active.classList.remove("v2-tab-enter");
-          requestAnimationFrame(() => requestAnimationFrame(() => active.classList.add("v2-tab-enter")));
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              active.classList.add("v2-tab-enter");
+              observer.observe(mainEl, { subtree: true, attributes: true, attributeFilter: ["class"] });
+            })
+          );
+        } else {
+          observer.observe(mainEl, { subtree: true, attributes: true, attributeFilter: ["class"] });
         }
       });
       observer.observe(mainEl, { subtree: true, attributes: true, attributeFilter: ["class"] });
