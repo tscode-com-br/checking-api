@@ -1,0 +1,197 @@
+name: Deploy OceanDrive Admin2 Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_dir:
+        description: Optional remote directory for the admin2-only deploy. Leave blank to reuse OCEAN_APP_DIR.
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      deploy_dir:
+        description: Optional remote directory.
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-oceandrive-admin2-manual
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy-admin2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OCEAN_PORT: ${{ secrets.OCEAN_PORT != '' && secrets.OCEAN_PORT || '22' }}
+      ADMIN2_WEB_IMAGE: ghcr.io/tscode-com-br/checkcheck-admin2-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve deploy directory
+        id: deploy_dir
+        env:
+          OCEAN_DEFAULT_APP_DIR: ${{ secrets.OCEAN_APP_DIR }}
+          OCEAN_DEPLOY_DIR_INPUT: ${{ inputs.deploy_dir }}
+        run: |
+          set -e
+          deploy_dir="$OCEAN_DEFAULT_APP_DIR"
+          if [ -n "$OCEAN_DEPLOY_DIR_INPUT" ]; then
+            deploy_dir="$OCEAN_DEPLOY_DIR_INPUT"
+          fi
+          test -n "$deploy_dir"
+          echo "path=$deploy_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Validate deploy secrets
+        env:
+          OCEAN_HOST: ${{ secrets.OCEAN_HOST }}
+          OCEAN_USER: ${{ secrets.OCEAN_USER }}
+          OCEAN_SSH_KEY: ${{ secrets.OCEAN_SSH_KEY }}
+          OCEAN_HOST_FINGERPRINT: ${{ secrets.OCEAN_HOST_FINGERPRINT }}
+        run: |
+          set -e
+          test -n "$OCEAN_HOST"
+          test -n "$OCEAN_USER"
+          test -n "${{ steps.deploy_dir.outputs.path }}"
+          test -n "$OCEAN_SSH_KEY"
+
+      - name: Build and push admin2 website image
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$ADMIN2_WEB_IMAGE:main" || true
+          docker build --pull --cache-from "$ADMIN2_WEB_IMAGE:main" -f deploy/docker/Dockerfile.admin2-web -t "$ADMIN2_WEB_IMAGE:${{ github.sha }}" -t "$ADMIN2_WEB_IMAGE:main" .
+          docker push "$ADMIN2_WEB_IMAGE:${{ github.sha }}"
+          docker push "$ADMIN2_WEB_IMAGE:main"
+          docker logout ghcr.io || true
+
+      - name: Resolve SSH verification settings
+        id: ssh_verification
+        env:
+          OCEAN_HOST: ${{ secrets.OCEAN_HOST }}
+          OCEAN_HOST_FINGERPRINT: ${{ secrets.OCEAN_HOST_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OCEAN_HOST_FINGERPRINT" ] || [ "$OCEAN_HOST_FINGERPRINT" = "__UNSET__" ]; then
+            scanned_fingerprints="$(ssh-keyscan -T 10 -p "$OCEAN_PORT" "$OCEAN_HOST" 2>/dev/null | sed '/^#/d' | ssh-keygen -lf - -E sha256 2>/dev/null | awk '{print $2}' || true)"
+            echo "::warning::OCEAN_HOST_FINGERPRINT nao configurado; validacao de fingerprint desativada."
+            if [ -n "$scanned_fingerprints" ]; then
+              echo "Fingerprints SSH observados para $OCEAN_HOST:$OCEAN_PORT:"
+              printf '%s\n' "$scanned_fingerprints"
+            fi
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"
+            echo "strict_hostkeys_checking=true" >> "$GITHUB_OUTPUT"
+            echo "rsh=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          key="$(ssh-keyscan -T 10 -p "$OCEAN_PORT" "$OCEAN_HOST" 2>/dev/null | sed '/^#/d')"
+          if [ -z "$key" ]; then
+            echo "Nao foi possivel obter a host key SSH de $OCEAN_HOST:$OCEAN_PORT"
+            exit 1
+          fi
+
+          fingerprints="$(printf '%s\n' "$key" | ssh-keygen -lf - -E sha256 | awk '{print $2}')"
+          if ! printf '%s\n' "$fingerprints" | grep -Fxq "$OCEAN_HOST_FINGERPRINT"; then
+            echo "Fingerprint SSH inesperado para $OCEAN_HOST:$OCEAN_PORT"
+            printf '%s\n' "$fingerprints"
+            exit 1
+          fi
+
+          known_hosts_path="$GITHUB_WORKSPACE/.github/ocean_known_hosts"
+          printf '%s\n' "$key" > "$known_hosts_path"
+          chmod 600 "$known_hosts_path"
+          echo "fingerprint=$OCEAN_HOST_FINGERPRINT" >> "$GITHUB_OUTPUT"
+          echo "strict_hostkeys_checking=false" >> "$GITHUB_OUTPUT"
+          echo "rsh=-o UserKnownHostsFile=/github/workspace/.github/ocean_known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure remote app directory exists
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            mkdir -p ${{ steps.deploy_dir.outputs.path }}
+
+      - name: Sync project to server
+        uses: burnett01/rsync-deployments@dc0d5d44c4728aad3f02154a87309809e62a960f # 8.0.4
+        with:
+          switches: >-
+            -avzr --delete
+            --exclude ".git/"
+            --exclude ".github/"
+            --exclude ".venv/"
+            --exclude ".pytest_cache/"
+            --exclude "*.db"
+            --exclude "deploy/keys/"
+            --exclude ".env"
+          path: ./
+          remote_path: ${{ steps.deploy_dir.outputs.path }}
+          remote_host: ${{ secrets.OCEAN_HOST }}
+          remote_user: ${{ secrets.OCEAN_USER }}
+          remote_key: ${{ secrets.OCEAN_SSH_KEY }}
+          remote_port: ${{ env.OCEAN_PORT }}
+          strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
+          rsh: ${{ steps.ssh_verification.outputs.rsh }}
+
+      - name: Pull and restart admin2 website
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 15m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ steps.deploy_dir.outputs.path }}
+            TEMP_DOCKER_CONFIG="$(mktemp -d)"
+            cleanup() {
+              rm -rf "$TEMP_DOCKER_CONFIG"
+            }
+            trap cleanup EXIT
+            export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"
+            printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            ADMIN2_IMAGE='ghcr.io/tscode-com-br/checkcheck-admin2-web:${{ github.sha }}'
+            TEMP_DOCKER_CONFIG="$(mktemp -d)"
+            cleanup() { rm -rf "$TEMP_DOCKER_CONFIG"; }
+            trap cleanup EXIT
+            export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"
+            printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            CHECKCHECK_ADMIN2_WEB_IMAGE="$ADMIN2_IMAGE" docker compose -f docker-compose.websites.yml pull admin2-web
+            docker logout ghcr.io || true
+            CHECKCHECK_ADMIN2_WEB_IMAGE="$ADMIN2_IMAGE" docker compose -f docker-compose.websites.yml up -d --no-build --force-recreate admin2-web
+
+      - name: Validate admin2 website health
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 3m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ steps.deploy_dir.outputs.path }}
+            bash deploy/smoke/validate_target.sh \
+              --label "admin2-web" \
+              --compose-file docker-compose.websites.yml \
+              --service admin2-web \
+              --url http://127.0.0.1:18084/ \
+              --contains "Checking"
