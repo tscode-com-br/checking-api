@@ -33,6 +33,11 @@ done
 backup="/tmp/nginx-$(basename "$server_config").admin2.bak.$(date +%Y%m%d%H%M%S)"
 cp "$server_config" "$backup"
 
+# Clean up any stale admin2 backup files that may have been left in the nginx
+# config directory by a previous run (before the /tmp/ fix).
+stale_dir="$(dirname "$server_config")"
+find "$stale_dir" -maxdepth 1 -name "$(basename "$server_config").admin2.bak.*" -delete 2>/dev/null || true
+
 temp="$(mktemp)"
 merged="$(mktemp)"
 
