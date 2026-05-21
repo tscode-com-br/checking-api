@@ -13,14 +13,28 @@ const adminCss = fs.readFileSync(
   'utf8'
 );
 
+const adminJs = fs.readFileSync(
+  path.join(__dirname, '../sistema/app/static/admin/app.js'),
+  'utf8'
+);
+
 test('cadastro tab groups each maintenance surface into explicit subsection panels', () => {
   assert.match(adminHtml, /<section id="tab-cadastro" class="tab cadastro-tab">/);
   assert.match(adminHtml, /data-cadastro-section="pendencias"/);
+  assert.match(adminHtml, /data-cadastro-section="acidentes"/);
   assert.match(adminHtml, /data-cadastro-section="localizacoes"/);
   assert.match(adminHtml, /data-cadastro-section="checkout-distance"/);
   assert.match(adminHtml, /data-cadastro-section="administradores"/);
   assert.match(adminHtml, /data-cadastro-section="projetos"/);
   assert.match(adminHtml, /data-cadastro-section="usuarios"/);
+  assert.match(adminHtml, /data-cadastro-section="endpoints"/);
+});
+
+test('cadastro runtime converts top-level section titles into accessible collapse toggles', () => {
+  assert.match(adminJs, /function setCadastroSectionCollapsed\(section, toggle, content, collapsed\) \{[\s\S]*section\.dataset\.cadastroCollapsed = collapsed \? "true" : "false";[\s\S]*toggle\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);[\s\S]*content\.hidden = collapsed;[\s\S]*content\.classList\.toggle\("hidden", collapsed\);[\s\S]*\}/);
+  assert.match(adminJs, /function initializeCadastroSection\(section, index\) \{[\s\S]*toggle\.className = "cadastro-section-toggle";[\s\S]*toggle\.dataset\.cadastroToggle = sectionKey;[\s\S]*child\.setAttribute\("data-cadastro-header-action", ""\);[\s\S]*content\.className = "cadastro-section-content";[\s\S]*content\.dataset\.cadastroContent = sectionKey;[\s\S]*toggle\.setAttribute\("aria-controls", content\.id\);[\s\S]*setCadastroSectionCollapsed\(section, toggle, content, true\);[\s\S]*\}/);
+  assert.match(adminJs, /function setupCadastroSectionPanels\(\) \{[\s\S]*document\.getElementById\("tab-cadastro"\)[\s\S]*initializeCadastroSection\(section, index\)[\s\S]*\}/);
+  assert.match(adminJs, /function bindActions\(\) \{[\s\S]*setupCadastroSectionPanels\(\);/);
 });
 
 test('cadastro locations settings include a mixed-zone interval input before the accuracy threshold control', () => {
@@ -31,6 +45,9 @@ test('cadastro mobile layout replaces the generic compressed table stack with pa
   assert.match(adminCss, /\.cadastro-tab \{[\s\S]*gap: 18px;/);
   assert.match(adminCss, /\.cadastro-tab\.active \{[\s\S]*display: grid;/);
   assert.match(adminCss, /\.cadastro-section-panel \{[\s\S]*display: grid;[\s\S]*gap: 14px;/);
+  assert.match(adminCss, /\.cadastro-section-toggle \{[\s\S]*display: inline-flex;[\s\S]*justify-content: space-between;[\s\S]*width: 100%;[\s\S]*background: transparent;[\s\S]*font-weight: 700;/);
+  assert.match(adminCss, /\.cadastro-section-content \{[\s\S]*display: grid;[\s\S]*gap: 12px;/);
+  assert.match(adminCss, /\.cadastro-section-panel\[data-cadastro-collapsed="true"\] \[data-cadastro-header-action\] \{[\s\S]*display: none;/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-section-panel \{[\s\S]*padding: 14px;[\s\S]*border-radius: 16px;[\s\S]*background: linear-gradient\(180deg, #ffffff 0%, #f8fafc 100%\);/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.cadastro-section-panel \.project-editor-panel \{[\s\S]*padding: 0;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*box-shadow: none;/);
 });

@@ -20,7 +20,7 @@ from ..services.admin_updates import notify_admin_data_changed
 from ..services.accident_lifecycle import fire_accident_hook_for_check_event
 from ..services.event_logger import log_event
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
-from ..services.forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now
+from ..services.forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now, record_forms_submission_skip
 from ..services.managed_locations import extract_location_coordinates
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
@@ -28,12 +28,14 @@ from ..services.location_settings import (
 )
 from ..services.project_catalog import ensure_known_project
 from ..services.time_utils import now_sgt, resolve_project_timezone_name
+from ..services.user_projects import list_user_project_names
 from ..services.user_sync import (
     apply_user_state,
     build_mobile_sync_state,
     create_user_sync_event,
     ensure_mobile_user,
     ensure_current_user_state_event,
+    get_forms_skip_reason,
     normalize_event_time,
     normalize_user_key,
     resolve_latest_internal_user_activity,
@@ -129,6 +131,12 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
     event_time = normalize_event_time(payload.event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
     latest_activity = resolve_latest_internal_user_activity(db, user=user)
+    skip_reason = get_forms_skip_reason(
+        latest_activity=latest_activity,
+        action=payload.action,
+        event_time=event_time,
+        timezone_name=project_timezone_name,
+    )
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=payload.action,
@@ -144,6 +152,21 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
     )
 
     if not should_queue_forms:
+        project_candidates = list_user_project_names(db, user)
+        record_forms_submission_skip(
+            db,
+            request_id=payload.client_event_id,
+            rfid=user.rfid,
+            action=payload.action,
+            chave=user.chave,
+            projeto=user.projeto,
+            device_id="android-app",
+            local=resolved_local,
+            event_time=event_time,
+            request_path="/api/mobile/events/submit",
+            project_candidates=project_candidates,
+            skip_reason=skip_reason,
+        )
         create_user_sync_event(
             db,
             user=user,
@@ -169,7 +192,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
             http_status=200,
             details=(
                 f"chave={user.chave}; event_time={event_time.isoformat()}; forms_skipped=true; "
-                "reason=repeated_same_action_same_day"
+                f"reason={skip_reason or 'not_realized'}"
             ),
         )
         db.commit()
@@ -185,6 +208,7 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
         )
 
     try:
+        project_candidates = list_user_project_names(db, user)
         enqueue_forms_submission(
             db,
             request_id=payload.client_event_id,
@@ -194,6 +218,9 @@ def submit_mobile_event(payload: MobileSubmitRequest, db: Session = Depends(get_
             projeto=user.projeto,
             device_id="android-app",
             local=resolved_local,
+            event_time=event_time,
+            request_path="/api/mobile/events/submit",
+            project_candidates=project_candidates,
         )
     except IntegrityError:
         db.rollback()

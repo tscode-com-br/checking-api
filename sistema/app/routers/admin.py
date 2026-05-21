@@ -20,6 +20,7 @@ from ..models import (
     AdminUser,
     CheckEvent,
     CheckingHistory,
+    FormsSubmission,
     ManagedLocation,
     PendingRegistration,
     Project,
@@ -960,6 +961,20 @@ def build_presence_rows(
         return []
 
     latest_activities = resolve_latest_user_activities(db, users=rows)
+    presence_request_ids = {
+        latest_activity.source_request_id
+        for latest_activity in latest_activities.values()
+        if latest_activity is not None and latest_activity.source_request_id
+    }
+    forms_status_by_request_id = {
+        request_id: display_status
+        for request_id, display_status in db.execute(
+            select(FormsSubmission.request_id, FormsSubmission.display_status).where(
+                FormsSubmission.request_id.in_(sorted(presence_request_ids))
+            )
+        ).all()
+        if request_id and display_status
+    } if presence_request_ids else {}
     project_names_by_user_id = list_user_project_names_map(db, rows)
     projects_by_name = {project.name: project for project in all_projects}
     payload: list[tuple[datetime, UserRow]] = []
@@ -1002,6 +1017,7 @@ def build_presence_rows(
                 activity_time_label=activity_time_label,
                 activity_day_key=activity_day_key,
                 assiduidade=format_assiduidade_label(latest_activity.ontime),
+                forms_status=forms_status_by_request_id.get(latest_activity.source_request_id),
                 ),
             )
         )

@@ -1,1 +1,3 @@
+//span[@data-automation-id="radio"][@data-automation-value="P82"]/input
+//label[.//span[normalize-space(.)="P82"]]//input[@type="radio"]
 //*[@id="question-list"]/div[5]/div[2]/div/div/div[2]/div/label/span[1]/input

@@ -96,6 +96,7 @@ let eventsRows = null;
 let formsTotal = 0;
 let formsRows = null;
 let lastDashboardRefreshAt = null;
+let presenceScrollInteractionRevision = 0;
 let userTextareaRefreshFrame = null;
 let databaseEventsLoaded = false;
 let databaseEventsRefreshTimer = null;
@@ -796,14 +797,14 @@ function startProjectEdit(projectId) {
 const PRESENCE_TABLE_CONFIGS = {
   checkin: {
     bodyId: "checkinBody",
-    filterColumns: ["time", "nome", "chave", "projetos", "assiduidade", "local"],
+    filterColumns: ["time", "nome", "chave", "projetos", "assiduidade", "forms", "local"],
     defaultSortKey: "time",
     defaultSortDirection: "desc",
     renderOptions: { includeElapsedDays: true },
   },
   checkout: {
     bodyId: "checkoutBody",
-    filterColumns: ["time", "nome", "chave", "projetos", "assiduidade", "local"],
+    filterColumns: ["time", "nome", "chave", "projetos", "assiduidade", "forms", "local"],
     defaultSortKey: "time",
     defaultSortDirection: "desc",
     renderOptions: {},
@@ -1847,6 +1848,50 @@ function markDashboardRefreshed() {
   updateOperationalChrome();
 }
 
+function markPresenceScrollInteraction() {
+  if (!["checkin", "checkout"].includes(activeTab)) {
+    return;
+  }
+
+  presenceScrollInteractionRevision += 1;
+}
+
+function isPresenceScrollKeyTarget(target) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return target.isContentEditable
+    || target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || target instanceof HTMLButtonElement
+    || target instanceof HTMLAnchorElement;
+}
+
+function handlePresenceScrollKeyInteraction(event) {
+  if (isPresenceScrollKeyTarget(event.target)) {
+    return;
+  }
+
+  if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+    return;
+  }
+
+  markPresenceScrollInteraction();
+}
+
+function bindPresenceScrollInteractionGuards() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.addEventListener("wheel", markPresenceScrollInteraction, { passive: true });
+  window.addEventListener("touchstart", markPresenceScrollInteraction, { passive: true });
+  window.addEventListener("touchmove", markPresenceScrollInteraction, { passive: true });
+  window.addEventListener("keydown", handlePresenceScrollKeyInteraction);
+}
+
 function capturePresencePageScroll() {
   if (typeof window === "undefined" || !["checkin", "checkout"].includes(activeTab)) {
     return null;
@@ -1858,15 +1903,25 @@ function capturePresencePageScroll() {
     y: window.scrollY,
     elementTop: scrollingElement ? scrollingElement.scrollTop : null,
     elementLeft: scrollingElement ? scrollingElement.scrollLeft : null,
+    interactionRevision: presenceScrollInteractionRevision,
   };
 }
 
 function restorePresencePageScroll(snapshot) {
-  if (!snapshot || typeof window === "undefined") {
+  if (
+    !snapshot
+    || typeof window === "undefined"
+    || !["checkin", "checkout"].includes(activeTab)
+    || snapshot.interactionRevision !== presenceScrollInteractionRevision
+  ) {
     return;
   }
 
   const applySnapshot = () => {
+    if (snapshot.interactionRevision !== presenceScrollInteractionRevision) {
+      return;
+    }
+
     window.scrollTo(snapshot.x, snapshot.y);
     const scrollingElement = document.scrollingElement;
     if (scrollingElement && snapshot.elementTop !== null && snapshot.elementLeft !== null) {
@@ -1876,9 +1931,100 @@ function restorePresencePageScroll(snapshot) {
   };
 
   window.requestAnimationFrame(() => {
+    if (snapshot.interactionRevision !== presenceScrollInteractionRevision) {
+      return;
+    }
+
     applySnapshot();
-    window.requestAnimationFrame(applySnapshot);
+
+    window.requestAnimationFrame(() => {
+      if (snapshot.interactionRevision !== presenceScrollInteractionRevision) {
+        return;
+      }
+
+      applySnapshot();
+    });
   });
+}
+
+function setCadastroSectionCollapsed(section, toggle, content, collapsed) {
+  if (!(section instanceof HTMLElement) || !(toggle instanceof HTMLButtonElement) || !(content instanceof HTMLElement)) {
+    return;
+  }
+
+  section.dataset.cadastroCollapsed = collapsed ? "true" : "false";
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  content.hidden = collapsed;
+  content.classList.toggle("hidden", collapsed);
+}
+
+function initializeCadastroSection(section, index) {
+  if (!(section instanceof HTMLElement) || section.dataset.cadastroSectionInitialized === "true") {
+    return;
+  }
+
+  const header = Array.from(section.children).find((child) => child.classList && child.classList.contains("section-header"));
+  if (!(header instanceof HTMLElement)) {
+    return;
+  }
+
+  const heading = header.querySelector("h2");
+  if (!(heading instanceof HTMLElement)) {
+    return;
+  }
+
+  const sectionKey = section.dataset.cadastroSection || `section-${index + 1}`;
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "cadastro-section-toggle";
+  toggle.dataset.cadastroToggle = sectionKey;
+
+  const toggleLabel = document.createElement("span");
+  toggleLabel.className = "cadastro-section-toggle-label";
+  toggleLabel.textContent = heading.textContent ? heading.textContent.trim() : "Seção";
+
+  const toggleIndicator = document.createElement("span");
+  toggleIndicator.className = "cadastro-section-toggle-indicator";
+  toggleIndicator.setAttribute("aria-hidden", "true");
+
+  toggle.append(toggleLabel, toggleIndicator);
+  heading.replaceWith(toggle);
+
+  Array.from(header.children).forEach((child) => {
+    if (child !== toggle) {
+      child.setAttribute("data-cadastro-header-action", "");
+    }
+  });
+
+  const content = document.createElement("div");
+  content.className = "cadastro-section-content";
+  content.dataset.cadastroContent = sectionKey;
+  content.id = `cadastro-section-content-${sectionKey}`;
+
+  while (header.nextSibling) {
+    content.appendChild(header.nextSibling);
+  }
+
+  section.appendChild(content);
+  toggle.setAttribute("aria-controls", content.id);
+  setCadastroSectionCollapsed(section, toggle, content, true);
+
+  toggle.addEventListener("click", () => {
+    setCadastroSectionCollapsed(section, toggle, content, !content.hidden);
+  });
+
+  section.dataset.cadastroSectionInitialized = "true";
+}
+
+function setupCadastroSectionPanels() {
+  const cadastroTab = document.getElementById("tab-cadastro");
+  if (!(cadastroTab instanceof HTMLElement)) {
+    return;
+  }
+
+  Array.from(cadastroTab.children)
+    .filter((child) => child instanceof HTMLElement && child.dataset.cadastroSection)
+    .forEach((section, index) => initializeCadastroSection(section, index));
 }
 
 function showAuthShell(message = "", kind = "info") {
@@ -2127,6 +2273,31 @@ function formatLocal(local) {
     return "A bordo da P83";
   }
   return local || "-";
+}
+
+function formatFormsStatus(status) {
+  if (status === "not_realized") {
+    return "Não Realizado";
+  }
+  if (status === "url_loaded") {
+    return "URL Carregada";
+  }
+  if (status === "filling") {
+    return "Preenchendo...";
+  }
+  if (status === "filled") {
+    return "Preenchido";
+  }
+  if (status === "sent") {
+    return "Enviado";
+  }
+  if (status === "aborted") {
+    return "Abortado";
+  }
+  if (status === "not_found") {
+    return "Não Encontrado";
+  }
+  return "-";
 }
 
 function formatAction(action) {
@@ -3062,11 +3233,11 @@ function buildPresenceRow(row, options = {}) {
 
   if (responsiveVariant !== "desktop") {
     tr.classList.add("presence-mobile-row");
-    tr.innerHTML = `<td colspan="7" class="presence-mobile-card-cell">${buildPresenceMobileCard(row, timeCell, { responsiveVariant })}</td>`;
+    tr.innerHTML = `<td colspan="8" class="presence-mobile-card-cell">${buildPresenceMobileCard(row, timeCell, { responsiveVariant })}</td>`;
     return tr;
   }
 
-  tr.innerHTML = `<td>${timeCell.html}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td title="${escapeHtml(projectsLabel)}">${escapeHtml(projectsLabel)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
+  tr.innerHTML = `<td>${timeCell.html}</td><td>${escapeHtml(row.nome)}</td><td>${escapeHtml(row.chave)}</td><td title="${escapeHtml(projectsLabel)}">${escapeHtml(projectsLabel)}</td><td>${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</td><td>${escapeHtml(row.assiduidade ?? "Normal")}</td><td>${escapeHtml(formatFormsStatus(row.forms_status))}</td><td>${escapeHtml(formatLocal(row.local))}</td>`;
   return tr;
 }
 
@@ -3141,6 +3312,9 @@ function getPresenceRowDisplayValue(tableKey, row, key) {
   }
   if (key === "assiduidade") {
     return row.assiduidade || "Normal";
+  }
+  if (key === "forms") {
+    return formatFormsStatus(row.forms_status);
   }
   if (key === "local") {
     return formatLocal(row.local);
@@ -3364,7 +3538,7 @@ function applyPresenceTableState(tableKey) {
 
 function renderPresenceTable(bodyId, rows, options = {}) {
   if (!rows.length) {
-    renderEmptyStateRow(bodyId, 7, options.emptyMessage || "Nenhum registro encontrado.");
+    renderEmptyStateRow(bodyId, 8, options.emptyMessage || "Nenhum registro encontrado.");
     updateUserTitle(bodyId, 0, registeredUsersTotal);
     return;
   }
@@ -5954,6 +6128,9 @@ function bindLocationSettingsInput(inputId) {
 }
 
 function bindActions() {
+  bindPresenceScrollInteractionGuards();
+  setupCadastroSectionPanels();
+
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });

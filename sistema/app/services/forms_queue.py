@@ -37,6 +37,18 @@ FORMS_WORKER_DATETIME_FIELDS = (
     "last_loop_started_at",
     "last_loop_completed_at",
 )
+FORMS_DISPLAY_STATUS_BY_LABEL = {
+    "URL Carregada": "url_loaded",
+    "Preenchendo...": "filling",
+    "Preenchido": "filled",
+    "Enviado": "sent",
+    "Abortado": "aborted",
+    "Nao Encontrado": "not_found",
+}
+FORMS_TERMINAL_DISPLAY_STATUS_BY_RESULT = {
+    True: "sent",
+    False: "aborted",
+}
 
 
 def _log_forms_queue_event(event: str, **fields: object) -> None:
@@ -50,6 +62,51 @@ def _log_forms_queue_event(event: str, **fields: object) -> None:
             sort_keys=True,
         )
     )
+
+
+def _normalize_project_candidates(project_candidates: list[str] | tuple[str, ...] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in project_candidates or []:
+        candidate = str(value or "").strip().upper()
+        if candidate and candidate not in normalized:
+            normalized.append(candidate)
+    return normalized
+
+
+def _dump_project_candidates_json(project_candidates: list[str] | tuple[str, ...] | None) -> str | None:
+    normalized_candidates = _normalize_project_candidates(project_candidates)
+    if not normalized_candidates:
+        return None
+    return json.dumps(normalized_candidates, separators=(",", ":"), ensure_ascii=True)
+
+
+def _load_project_candidates_json(project_candidates_json: str | None) -> list[str]:
+    if not project_candidates_json:
+        return []
+    try:
+        payload = json.loads(project_candidates_json)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return _normalize_project_candidates(payload)
+
+
+def _normalize_display_status_from_worker_label(status_label: str | None) -> str | None:
+    normalized_label = str(status_label or "").strip()
+    if not normalized_label:
+        return None
+    return FORMS_DISPLAY_STATUS_BY_LABEL.get(normalized_label)
+
+
+def _persist_submission_display_status(db, *, submission_id: int, action: str, display_status: str) -> None:
+    submission = db.get(FormsSubmission, submission_id)
+    if submission is None or submission.display_status == display_status:
+        return
+    submission.display_status = display_status
+    submission.updated_at = now_sgt()
+    db.commit()
+    notify_admin_data_changed(action)
 
 
 def _age_seconds(reference_time: datetime, timestamp: datetime | None) -> int | None:
@@ -367,6 +424,9 @@ def enqueue_forms_submission(
     projeto: str,
     device_id: str | None,
     local: str | None,
+    event_time: datetime | None = None,
+    request_path: str | None = None,
+    project_candidates: list[str] | tuple[str, ...] | None = None,
     ontime: bool = True,
 ) -> FormsSubmission:
     timestamp = now_sgt()
@@ -378,6 +438,10 @@ def enqueue_forms_submission(
         projeto=projeto,
         device_id=device_id,
         local=local,
+        event_time=event_time,
+        request_path=request_path,
+        display_status=None,
+        project_candidates_json=_dump_project_candidates_json(project_candidates),
         ontime=ontime,
         status="pending",
         retry_count=0,
@@ -393,6 +457,52 @@ def enqueue_forms_submission(
         db.rollback()
         raise
     _maybe_emit_worker_down_warning(db, request_id=request_id, reference_time=timestamp)
+    return submission
+
+
+def record_forms_submission_skip(
+    db,
+    *,
+    request_id: str,
+    rfid: str | None,
+    action: str,
+    chave: str,
+    projeto: str,
+    device_id: str | None,
+    local: str | None,
+    event_time: datetime | None = None,
+    request_path: str | None = None,
+    project_candidates: list[str] | tuple[str, ...] | None = None,
+    ontime: bool = True,
+    skip_reason: str | None = None,
+) -> FormsSubmission:
+    timestamp = now_sgt()
+    submission = FormsSubmission(
+        request_id=request_id,
+        rfid=rfid,
+        action=action,
+        chave=chave,
+        projeto=projeto,
+        device_id=device_id,
+        local=local,
+        event_time=event_time,
+        request_path=request_path,
+        display_status="not_realized",
+        project_candidates_json=_dump_project_candidates_json(project_candidates),
+        ontime=ontime,
+        status="skipped",
+        retry_count=0,
+        last_error=skip_reason,
+        created_at=timestamp,
+        updated_at=timestamp,
+        processed_at=timestamp,
+    )
+    db.add(submission)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise
     return submission
 
 
@@ -460,12 +570,30 @@ def _process_submission(submission_id: int) -> None:
             return
 
         worker = FormsWorker(assets_dir=_assets_dir())
+
+        def _status_callback(status_label: str) -> None:
+            display_status = _normalize_display_status_from_worker_label(status_label)
+            if display_status is None:
+                return
+            _persist_submission_display_status(
+                db,
+                submission_id=submission.id,
+                action=submission.action,
+                display_status=display_status,
+            )
+
         result = worker.submit_with_retries(
             action=submission.action,
             chave=submission.chave,
             projeto=submission.projeto,
             ontime=submission.ontime,
+            project_candidates=_load_project_candidates_json(submission.project_candidates_json),
+            status_callback=_status_callback,
         )
+
+        submission = db.get(FormsSubmission, submission_id)
+        if submission is None:
+            return
 
         final_audit_event = next(
             (
@@ -485,6 +613,10 @@ def _process_submission(submission_id: int) -> None:
         else:
             submission.status = "failed"
             submission.last_error = (result.get("message") or "unknown error")[:1000]
+        if result.get("error_code") == "forms_step_timeout":
+            submission.display_status = "not_found"
+        elif submission.display_status is None:
+            submission.display_status = FORMS_TERMINAL_DISPLAY_STATUS_BY_RESULT[bool(result.get("success"))]
 
         log_event(
             db,
@@ -497,7 +629,7 @@ def _process_submission(submission_id: int) -> None:
             project=submission.projeto,
             device_id=submission.device_id,
             local=submission.local,
-            request_path="/api/scan",
+            request_path=submission.request_path or "/api/scan",
             http_status=200 if result.get("success") else 500,
             ontime=submission.ontime,
             submitted_at=submission.processed_at if result.get("success") else None,
@@ -507,6 +639,7 @@ def _process_submission(submission_id: int) -> None:
                     f"chave={submission.chave}; "
                     f"ontime={submission.ontime}; "
                     f"queue_status={submission.status}; "
+                    f"display_status={submission.display_status or '-'}; "
                     f"error_code={result.get('error_code', 'none')}; "
                     f"failed_step={result.get('failed_step', '-')}; "
                     f"forms_details={final_audit_event.get('details', '-') if final_audit_event else '-'}"

@@ -1,1 +1,3 @@
+//span[@data-automation-id="radio"][@data-automation-value="Normal"]/input
+//label[.//span[normalize-space(.)="Normal"]]//input[@type="radio"]
 //*[@id="question-list"]/div[3]/div[2]/div/div/div[1]/div/label/span[1]/input

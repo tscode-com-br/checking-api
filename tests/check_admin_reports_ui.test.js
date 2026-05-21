@@ -38,7 +38,7 @@ test('admin reports tab is inserted between cadastro and eventos with the expect
 
 test('admin reports controller keeps the tab full-admin only and wires the mutual search flow', () => {
   assert.match(adminJs, /relatorios:\s*"Relatórios"/);
-  assert.match(adminJs, /const DEFAULT_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados"\]\);/);
+  assert.match(adminJs, /const DEFAULT_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"\]\);/);
   assert.match(adminJs, /const LIMITED_ADMIN_ALLOWED_TABS = Object\.freeze\(\["checkin", "checkout"\]\);/);
   assert.match(adminJs, /async function loadRegisteredUsers\(\) \{[\s\S]*fetchJson\("\/api\/admin\/users"\);[\s\S]*populateReportsSearchOptions\(rows\);/);
   assert.match(adminJs, /function populateReportsSearchOptions\(rows\) \{[\s\S]*sort\(\(left, right\) => left\.chave\.localeCompare\(right\.chave, "pt-BR", \{ sensitivity: "base" \}\)\)[\s\S]*Selecione uma chave[\s\S]*Selecione um nome/);

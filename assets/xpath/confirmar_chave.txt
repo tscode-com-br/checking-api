@@ -1,1 +1,3 @@
+(//input[@data-automation-id="textInput"])[2]
+//div[@data-automation-id="questionItem"][2]//input[@data-automation-id="textInput"]
 //*[@id="question-list"]/div[2]/div[2]/div/span/input

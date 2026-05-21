@@ -31,10 +31,13 @@ test('check-in and check-out tables share the same fixed-width class', () => {
   assert.match(adminHtml, /data-presence-primary-header-label="checkout">Horário</);
   assert.match(adminHtml, /data-presence-name-header-label="checkin">Nome</);
   assert.match(adminHtml, /data-presence-name-header-label="checkout">Nome</);
+  assert.match(adminHtml, /data-presence-filter="forms"/);
+  assert.match(adminHtml, /data-sort-key="forms"[\s\S]*>Forms</);
   assert.match(adminHtml, /id="checkinFilters" class="presence-controls" data-presence-table="checkin" data-filter-panel="checkin"/);
   assert.match(adminHtml, /id="checkoutFilters" class="presence-controls" data-presence-table="checkout" data-filter-panel="checkout"/);
   assert.match(adminCss, /\.presence-users-table \{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*table-layout:\s*fixed;/);
-  assert.match(adminCss, /\.presence-users-table th:nth-child\(2\),[\s\S]*\.presence-users-table td:nth-child\(2\) \{[\s\S]*width:\s*20%;/);
+  assert.match(adminCss, /\.presence-users-table th:nth-child\(2\),[\s\S]*\.presence-users-table td:nth-child\(2\) \{[\s\S]*width:\s*18%;/);
+  assert.match(adminCss, /\.presence-users-table th:nth-child\(8\),[\s\S]*\.presence-users-table td:nth-child\(8\) \{[\s\S]*width:\s*12%;/);
   assert.match(adminCss, /\.presence-users-table th,\s*[\r\n]+\.presence-users-table td \{[\s\S]*font-size:\s*12px;[\s\S]*line-height:\s*1\.2;/);
   assert.match(adminCss, /\.presence-users-table tbody td \{[\s\S]*font-weight:\s*400;/);
 });
@@ -105,19 +108,22 @@ test('presence tables use safe activity-time helpers and dynamic labels', () => 
   assert.match(adminJs, /inline: shouldUseInlinePresenceDateTime\(displayParts, \{ responsiveVariant \}\),/);
   assert.match(adminJs, /const \{ highlightMissingCheckout = false, includeElapsedDays = false, responsiveVariant = "desktop" \} = options;/);
   assert.match(adminJs, /const timeCell = buildPresencePrimaryCell\(row, \{ includeElapsedDays, responsiveVariant \}\);/);
-  assert.match(adminJs, /if \(responsiveVariant !== "desktop"\) \{[\s\S]*tr\.classList\.add\("presence-mobile-row"\);[\s\S]*colspan="7" class="presence-mobile-card-cell"[\s\S]*buildPresenceMobileCard\(row, timeCell, \{ responsiveVariant \}\)[\s\S]*return tr;[\s\S]*\}/);
+  assert.match(adminJs, /if \(responsiveVariant !== "desktop"\) \{[\s\S]*tr\.classList\.add\("presence-mobile-row"\);[\s\S]*colspan="8" class="presence-mobile-card-cell"[\s\S]*buildPresenceMobileCard\(row, timeCell, \{ responsiveVariant \}\)[\s\S]*return tr;[\s\S]*\}/);
   assert.match(adminJs, /responsiveVariant: getPresenceResponsiveVariant\(tableKey\),/);
   assert.match(adminJs, /tr\.innerHTML = `<td>\$\{timeCell\.html\}<\/td><td>\$\{escapeHtml\(row\.nome\)\}<\/td>/);
   assert.match(adminJs, /const parsedDay = Date\.parse\(activityDayKey \? `\$\{activityDayKey\}T00:00:00Z` : ""\);/);
-  assert.match(adminJs, /renderEmptyStateRow\(bodyId, 7, options\.emptyMessage \|\| "Nenhum registro encontrado\."\);/);
+  assert.match(adminJs, /renderEmptyStateRow\(bodyId, 8, options\.emptyMessage \|\| "Nenhum registro encontrado\."\);/);
 });
 
 test('presence tables aggregate plural memberships for project display, sorting and filtering', () => {
   assert.match(adminJs, /function getUserMembershipProjectNames\(row\) \{/);
   assert.match(adminJs, /function formatUserMembershipProjects\(row, emptyLabel = "-"\) \{/);
-  assert.match(adminJs, /filterColumns: \["time", "nome", "chave", "projetos", "assiduidade", "local"\],/);
+  assert.match(adminJs, /function formatFormsStatus\(status\) \{/);
+  assert.match(adminJs, /if \(status === "not_realized"\) \{[\s\S]*return "Não Realizado";/);
+  assert.match(adminJs, /filterColumns: \["time", "nome", "chave", "projetos", "assiduidade", "forms", "local"\],/);
   assert.match(adminJs, /filterColumns: \["nome", "chave", "projetos", "latest_time", "inactivity_days"\],/);
   assert.match(adminJs, /const projectsLabel = formatUserMembershipProjects\(row\);/);
+  assert.match(adminJs, /if \(key === "forms"\) \{[\s\S]*return formatFormsStatus\(row\.forms_status\);/);
   assert.match(adminJs, /if \(key === "projetos"\) \{[\s\S]*return formatUserMembershipProjects\(row\);/);
   assert.match(adminJs, /<span class="admin-mobile-card-label">Projetos<\/span><span class="admin-mobile-card-value">\$\{escapeHtml\(projectsLabel\)\}<\/span>/);
 });
@@ -202,7 +208,7 @@ test('reports and events switch to dedicated mobile cards and reuse cached resul
   assert.match(adminJs, /function renderEventsTable\(rows, options = \{\}\) \{[\s\S]*const mobile = isMobileAdminViewport\(\);[\s\S]*renderEmptyStateRow\("eventsBody", 15, "Nenhum evento encontrado\."\);[\s\S]*rows\.forEach\(\(row\) => body\.appendChild\(buildEventRow\(row, \{ mobile, canViewTime \}\)\)\);/);
   assert.match(adminJs, /eventsRows = Array\.isArray\(rows\) \? rows : \[\];[\s\S]*renderEventsTable\(eventsRows, \{ canViewTime \}\);/);
   assert.match(adminCss, /\.reports-group-header \{[\s\S]*align-items:\s*flex-start;[\s\S]*gap:\s*10px;/);
-  assert.match(adminCss, /\.reports-group-count \{[\s\S]*font-weight:\s*700;[\s\S]*color:\s*#0f766e;/);
+  assert.match(adminCss, /\.reports-group-count \{[\s\S]*font-weight:\s*700;[\s\S]*color:\s*var\(--primary\);/);
   assert.match(adminCss, /\.reports-results-cards \{[\s\S]*display:\s*grid;[\s\S]*gap:\s*12px;/);
   assert.match(adminCss, /\.events-mobile-card \{[\s\S]*border-color:\s*rgba\(14, 116, 144, 0\.18\);/);
   assert.match(adminCss, /@media \(max-width: 800px\) \{[\s\S]*\.reports-group-header \{[\s\S]*flex-direction:\s*column;[\s\S]*align-items:\s*flex-start;/);

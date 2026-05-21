@@ -19,8 +19,9 @@ PROVIDER_ACTIVITY_LOCAL = "Forms"
 SYNC_EVENT_FALLBACK_STATUSES = ("queued", "updated", "success", "synced", "created", "submitted")
 LOW_PRIORITY_SYNC_SOURCES = frozenset(("state_import",))
 SECONDARY_SYNC_SOURCES = frozenset(("provider",))
+NON_ACTIVITY_CHECK_EVENT_SOURCES = frozenset(("forms",))
 INTERNAL_DECISION_IGNORED_SYNC_SOURCES = frozenset(("provider", "state_import"))
-INTERNAL_DECISION_IGNORED_CHECK_EVENT_SOURCES = frozenset(("provider",))
+INTERNAL_DECISION_IGNORED_CHECK_EVENT_SOURCES = frozenset(("provider", "forms"))
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class ResolvedUserActivity:
     local: str | None
     ontime: bool | None
     source: str | None = None
+    source_request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,14 +108,35 @@ def should_enqueue_forms_for_action(
     event_time: datetime,
     timezone_name: str | None = None,
 ) -> bool:
-    if latest_activity is None:
-        return True
+    return get_forms_skip_reason(
+        latest_activity=latest_activity,
+        action=action,
+        event_time=event_time,
+        timezone_name=timezone_name,
+    ) is None
 
-    return latest_activity.action != action or not is_same_project_day(
+
+def get_forms_skip_reason(
+    *,
+    latest_activity: ResolvedUserActivity | None,
+    action: str,
+    event_time: datetime,
+    timezone_name: str | None = None,
+) -> str | None:
+    if latest_activity is None:
+        return None
+
+    if latest_activity.action == "checkout" and action == "checkout":
+        return "repeated_checkout"
+
+    if latest_activity.action == action and is_same_project_day(
         latest_activity.event_time,
         event_time,
         timezone_name=timezone_name,
-    )
+    ):
+        return "repeated_same_action_same_day"
+
+    return None
 
 
 def find_user_by_rfid(db: Session, rfid: str) -> User | None:
@@ -565,7 +588,7 @@ def resolve_latest_user_activity(
         user=user,
         inputs=load_user_activity_inputs(db, users=[user]),
         ignored_sync_sources=ignored_sync_sources,
-        ignored_check_event_sources=ignored_check_event_sources,
+        ignored_check_event_sources=ignored_check_event_sources | NON_ACTIVITY_CHECK_EVENT_SOURCES,
         include_current_state=include_current_state,
     )
 
@@ -624,6 +647,7 @@ def resolve_latest_user_activity_from_inputs(
                     local=resolve_activity_local(local=latest_sync.local, source=latest_sync.source),
                     ontime=latest_sync.ontime,
                     source=latest_sync.source,
+                    source_request_id=latest_sync.source_request_id,
                 ),
             )
         )
@@ -639,27 +663,30 @@ def resolve_latest_user_activity_from_inputs(
                     local=user.local,
                     ontime=True,
                     source="state",
+                    source_request_id=None,
                 ),
             )
         )
 
-    for latest_check_event in check_events:
-        if is_sync_source_included(latest_check_event.source, ignored_check_event_sources):
-            continue
-        candidates.append(
-            (
-                latest_check_event.event_time,
-                1,
-                ResolvedUserActivity(
-                    action=latest_check_event.action,
-                    event_time=latest_check_event.event_time,
-                    local=resolve_activity_local(local=latest_check_event.local, source=latest_check_event.source),
-                    ontime=(latest_check_event.ontime if latest_check_event.ontime is not None else True),
-                    source=latest_check_event.source,
-                ),
+    if latest_sync is None:
+        for latest_check_event in check_events:
+            if is_sync_source_included(latest_check_event.source, ignored_check_event_sources):
+                continue
+            candidates.append(
+                (
+                    latest_check_event.event_time,
+                    1,
+                    ResolvedUserActivity(
+                        action=latest_check_event.action,
+                        event_time=latest_check_event.event_time,
+                        local=resolve_activity_local(local=latest_check_event.local, source=latest_check_event.source),
+                        ontime=(latest_check_event.ontime if latest_check_event.ontime is not None else True),
+                        source=latest_check_event.source,
+                        source_request_id=None,
+                    ),
+                )
             )
-        )
-        break
+            break
 
     if not candidates:
         return None
@@ -685,7 +712,7 @@ def resolve_latest_user_activities(
             user=user,
             inputs=inputs,
             ignored_sync_sources=ignored_sync_sources,
-            ignored_check_event_sources=ignored_check_event_sources,
+            ignored_check_event_sources=ignored_check_event_sources | NON_ACTIVITY_CHECK_EVENT_SOURCES,
             include_current_state=include_current_state,
         )
     return payload

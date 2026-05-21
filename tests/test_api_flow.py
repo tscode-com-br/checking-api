@@ -275,6 +275,70 @@ def login_web_password(client: TestClient, *, chave: str, senha: str):
     )
 
 
+def clear_forms_queue_backlog() -> None:
+    with SessionLocal() as db:
+        db.execute(delete(FormsSubmission).where(FormsSubmission.status.in_(("pending", "processing"))))
+        db.commit()
+
+
+def submit_web_check(
+    client: TestClient,
+    *,
+    chave: str,
+    projeto: str,
+    action: str,
+    event_time: datetime,
+    client_event_id: str | None = None,
+    local: str | None = None,
+    informe: str = "normal",
+):
+    payload = {
+        "chave": chave,
+        "projeto": projeto,
+        "action": action,
+        "informe": informe,
+        "event_time": event_time.isoformat(),
+        "client_event_id": client_event_id or f"web-check-{uuid.uuid4().hex}",
+    }
+    if local is not None:
+        payload["local"] = local
+    return client.post("/api/web/check", json=payload)
+
+
+def get_admin_presence_row_by_chave(client: TestClient, *, endpoint: str, chave: str) -> dict[str, object]:
+    response = client.get(f"/api/admin/{endpoint}")
+    assert response.status_code == 200, response.text
+    return next(row for row in response.json() if row["chave"] == chave)
+
+
+def mocked_successful_forms_submit_with_statuses(
+    self,
+    action,
+    chave,
+    projeto,
+    ontime=True,
+    status_callback=None,
+    **_kwargs,
+):
+    if status_callback is not None:
+        for status_label in ("URL Carregada", "Preenchendo...", "Preenchido", "Enviado"):
+            status_callback(status_label)
+    return {
+        "success": True,
+        "message": f"mocked {action}",
+        "retry_count": 0,
+        "audit_events": [
+            {
+                "source": "forms",
+                "action": "forms",
+                "status": "completed",
+                "message": "Forms submission completed",
+                "details": f"chave={chave}; projeto={projeto}; ontime={ontime}",
+            }
+        ],
+    }
+
+
 def get_http_request_logs(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
     logs: list[dict[str, object]] = []
     for record in caplog.records:
@@ -4979,7 +5043,7 @@ def test_explicit_checkin_and_checkout_flow(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -5079,7 +5143,7 @@ def test_checkout_without_checkin_returns_red_2s(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -5119,7 +5183,7 @@ def test_repeated_same_day_checkout_updates_state_without_forms_submission(monke
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -5183,7 +5247,9 @@ def test_repeated_same_day_checkout_updates_state_without_forms_submission(monke
 
             assert user.checkin is False
             assert user.local == "co80-b"
-            assert len(queued) == 2
+            assert len(queued) == 3
+            assert queued[-1].status == "skipped"
+            assert queued[-1].display_status == "not_realized"
 
 
 def test_device_checkout_ignores_provider_only_history():
@@ -5232,11 +5298,11 @@ def test_device_checkout_ignores_provider_only_history():
             assert queued == []
 
 
-def test_repeated_checkout_after_singapore_midnight_is_queued_again(monkeypatch):
+def test_repeated_checkout_after_singapore_midnight_is_not_sent_to_forms_again(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -5272,8 +5338,8 @@ def test_repeated_checkout_after_singapore_midnight_is_queued_again(monkeypatch)
             },
         )
         assert scan_checkout.status_code == 200
-        assert scan_checkout.json()["outcome"] == "submitted"
-        assert scan_checkout.json()["led"] == "green_1s"
+        assert scan_checkout.json()["outcome"] == "local_updated"
+        assert scan_checkout.json()["led"] == "green_blink_3x_1s"
 
         with SessionLocal() as db:
             user = get_user_by_rfid(db, "CARD2002")
@@ -5282,13 +5348,15 @@ def test_repeated_checkout_after_singapore_midnight_is_queued_again(monkeypatch)
             assert user.checkin is False
             assert user.local == "co83-new"
             assert len(queued) == 1
+            assert queued[0].status == "skipped"
+            assert queued[0].display_status == "not_realized"
 
 
 def test_forms_step_timeout_returns_red_blink_pattern(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": False,
             "message": "Step 'digitar_chave' not found within 10 seconds",
             "retry_count": 0,
@@ -5346,7 +5414,7 @@ def test_valid_scan_updates_user_before_forms_processing(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -5388,7 +5456,7 @@ def test_forms_queue_processing_persists_failure_state(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": False,
             "message": "mocked queue failure",
             "retry_count": 2,
@@ -5561,7 +5629,7 @@ def test_forms_queue_processing_emits_structured_logs(monkeypatch, caplog: pytes
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": "mocked queue success",
             "retry_count": 1,
@@ -6106,7 +6174,7 @@ def test_forms_success_generates_single_final_forms_event(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": "Form submitted successfully",
             "retry_count": 0,
@@ -6220,10 +6288,12 @@ def test_forms_worker_requires_success_xpath_after_submit(tmp_path, monkeypatch)
                 "xpath=//digitar_chave",
                 "xpath=//confirmar_chave",
                 "xpath=//botao_normal",
+                "xpath=//botao_retroativo",
                 "xpath=//botao_checkin",
                 "xpath=//botao_checkout",
                 send_selector,
                 "xpath=//botao_projeto_P80",
+                "xpath=//botao_projeto_P82",
                 "xpath=//botao_projeto_P83",
             }
 
@@ -7049,14 +7119,22 @@ def test_mobile_forms_submit_skips_same_day_repeated_action():
 
         with SessionLocal() as db:
             user = get_user_by_chave(db, "AF12")
-            queued = db.execute(select(FormsSubmission).where(FormsSubmission.chave == "AF12")).scalars().all()
+            queued = db.execute(
+                select(FormsSubmission)
+                .where(FormsSubmission.chave == "AF12")
+                .order_by(FormsSubmission.id)
+            ).scalars().all()
             sync_events = db.execute(
                 select(UserSyncEvent).where(UserSyncEvent.chave == "AF12", UserSyncEvent.action == "checkin")
             ).scalars().all()
 
             assert user.checkin is True
             assert user.local == "Area B"
-            assert len(queued) == 1
+            assert len(queued) == 2
+            assert queued[0].status == "pending"
+            assert queued[-1].status == "skipped"
+            assert queued[-1].display_status == "not_realized"
+            assert queued[-1].last_error == "repeated_same_action_same_day"
             assert len(sync_events) == 2
 
 
@@ -7581,7 +7659,7 @@ def test_mobile_state_reflects_rfid_scan_history(monkeypatch):
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -7621,7 +7699,7 @@ def test_mobile_forms_submit_accepts_retroativo_and_persists_ontime_false(monkey
     monkeypatch.setattr(
         FormsWorker,
         "submit_with_retries",
-        lambda self, action, chave, projeto, ontime=True: {
+        lambda self, action, chave, projeto, ontime=True, **_kwargs: {
             "success": True,
             "message": f"mocked {action}",
             "retry_count": 0,
@@ -17266,10 +17344,401 @@ def test_web_check_reuses_flutter_like_hidden_project_for_checkout():
             assert user.nome == "Oriundo da Web"
             assert user.projeto == "P83"
             assert user.checkin is False
-            assert len(queued) == 1
+            assert len(queued) == 2
+            ordered_queued = sorted(queued, key=lambda submission: submission.id)
+            assert ordered_queued[0].status == "pending"
+            assert ordered_queued[-1].status == "skipped"
+            assert ordered_queued[-1].display_status == "not_realized"
+            assert ordered_queued[-1].last_error == "repeated_checkout"
             assert len(sync_events) == 2
             assert any(event.ontime is False and event.action == "checkout" for event in sync_events)
             assert any(event.action == "checkout" and event.status == "queued" for event in request_events)
+
+
+def test_web_checkout_after_checkin_processes_forms_and_admin_checkout_shows_sent(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        mocked_successful_forms_submit_with_statuses,
+    )
+
+    clear_forms_queue_backlog()
+    web_key = make_test_key("W")
+    checkin_request_id = f"web-checkin-{uuid.uuid4().hex}"
+    checkout_request_id = f"web-checkout-{uuid.uuid4().hex}"
+    reference_time = now_sgt().replace(second=0, microsecond=0)
+    checkin_at = reference_time - timedelta(hours=1)
+    checkout_at = reference_time - timedelta(minutes=5)
+
+    with TestClient(app) as web_client, TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        auth_response = register_web_password(web_client, chave=web_key, senha="web123", projeto="P80")
+        assert auth_response.status_code == 200, auth_response.text
+
+        checkin_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkin",
+            event_time=checkin_at,
+            client_event_id=checkin_request_id,
+            local="Portaria P80",
+        )
+        assert checkin_response.status_code == 200, checkin_response.text
+        assert checkin_response.json()["queued_forms"] is True
+
+        checkout_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkout",
+            event_time=checkout_at,
+            client_event_id=checkout_request_id,
+            local="Saida P80",
+        )
+        assert checkout_response.status_code == 200, checkout_response.text
+        assert checkout_response.json()["queued_forms"] is True
+        assert checkout_response.json()["state"]["current_action"] == "checkout"
+
+        processed = process_forms_submission_queue_once(max_items=2)
+        assert processed == 2
+
+        checkout_row = get_admin_presence_row_by_chave(admin_client, endpoint="checkout", chave=web_key)
+        assert checkout_row["forms_status"] == "sent"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == checkout_request_id)
+            ).scalar_one()
+            assert queued.status == "success"
+            assert queued.display_status == "sent"
+
+
+def test_web_checkin_after_previous_checkout_processes_forms_and_admin_checkin_shows_sent(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        mocked_successful_forms_submit_with_statuses,
+    )
+
+    clear_forms_queue_backlog()
+    web_key = make_test_key("W")
+    first_checkin_request_id = f"web-checkin-initial-{uuid.uuid4().hex}"
+    previous_checkout_request_id = f"web-checkout-previous-{uuid.uuid4().hex}"
+    current_checkin_request_id = f"web-checkin-current-{uuid.uuid4().hex}"
+    reference_time = now_sgt().replace(second=0, microsecond=0)
+    current_checkin_at = reference_time - timedelta(minutes=5)
+    previous_checkout_at = current_checkin_at - timedelta(hours=8)
+    first_checkin_at = previous_checkout_at - timedelta(hours=8)
+
+    with TestClient(app) as web_client, TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        auth_response = register_web_password(web_client, chave=web_key, senha="web123", projeto="P80")
+        assert auth_response.status_code == 200, auth_response.text
+
+        first_checkin_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkin",
+            event_time=first_checkin_at,
+            client_event_id=first_checkin_request_id,
+            local="Portaria P80",
+        )
+        assert first_checkin_response.status_code == 200, first_checkin_response.text
+        assert first_checkin_response.json()["queued_forms"] is True
+
+        previous_checkout_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkout",
+            event_time=previous_checkout_at,
+            client_event_id=previous_checkout_request_id,
+            local="Saida P80",
+        )
+        assert previous_checkout_response.status_code == 200, previous_checkout_response.text
+        assert previous_checkout_response.json()["queued_forms"] is True
+
+        current_checkin_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkin",
+            event_time=current_checkin_at,
+            client_event_id=current_checkin_request_id,
+            local="Retorno P80",
+        )
+        assert current_checkin_response.status_code == 200, current_checkin_response.text
+        assert current_checkin_response.json()["queued_forms"] is True
+        assert current_checkin_response.json()["state"]["current_action"] == "checkin"
+
+        processed = process_forms_submission_queue_once(max_items=3)
+        assert processed == 3
+
+        checkin_row = get_admin_presence_row_by_chave(admin_client, endpoint="checkin", chave=web_key)
+        assert checkin_row["forms_status"] == "sent"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == current_checkin_request_id)
+            ).scalar_one()
+            assert queued.status == "success"
+            assert queued.display_status == "sent"
+
+
+def test_web_repeated_same_day_checkin_marks_admin_forms_as_not_realized():
+    clear_forms_queue_backlog()
+    web_key = make_test_key("W")
+    first_request_id = f"web-checkin-first-{uuid.uuid4().hex}"
+    repeated_request_id = f"web-checkin-repeat-{uuid.uuid4().hex}"
+    reference_time = now_sgt().replace(second=0, microsecond=0)
+    minutes_since_midnight = (reference_time.hour * 60) + reference_time.minute
+    first_offset_minutes = max(min(minutes_since_midnight, 30), 2)
+    repeated_offset_minutes = max(first_offset_minutes - 1, 1)
+    first_checkin_at = reference_time - timedelta(minutes=first_offset_minutes)
+    repeated_checkin_at = reference_time - timedelta(minutes=repeated_offset_minutes)
+
+    with TestClient(app) as web_client, TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        auth_response = register_web_password(web_client, chave=web_key, senha="web123", projeto="P83")
+        assert auth_response.status_code == 200, auth_response.text
+
+        first_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P83",
+            action="checkin",
+            event_time=first_checkin_at,
+            client_event_id=first_request_id,
+            local="Portaria P83",
+        )
+        assert first_response.status_code == 200, first_response.text
+        assert first_response.json()["queued_forms"] is True
+
+        repeated_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P83",
+            action="checkin",
+            event_time=repeated_checkin_at,
+            client_event_id=repeated_request_id,
+            local="Portaria P83 B",
+        )
+        assert repeated_response.status_code == 200, repeated_response.text
+        assert repeated_response.json()["queued_forms"] is False
+        assert repeated_response.json()["state"]["current_action"] == "checkin"
+
+        checkin_row = get_admin_presence_row_by_chave(admin_client, endpoint="checkin", chave=web_key)
+        assert checkin_row["forms_status"] == "not_realized"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == repeated_request_id)
+            ).scalar_one()
+            assert queued.status == "skipped"
+            assert queued.display_status == "not_realized"
+            assert queued.last_error == "repeated_same_action_same_day"
+
+
+def test_web_repeated_checkout_next_day_marks_admin_forms_as_not_realized():
+    clear_forms_queue_backlog()
+    web_key = make_test_key("W")
+    first_checkin_request_id = f"web-checkin-first-{uuid.uuid4().hex}"
+    first_checkout_request_id = f"web-checkout-first-{uuid.uuid4().hex}"
+    repeated_checkout_request_id = f"web-checkout-repeat-{uuid.uuid4().hex}"
+    reference_time = now_sgt().replace(second=0, microsecond=0)
+    repeated_checkout_at = reference_time - timedelta(minutes=5)
+    first_checkout_at = repeated_checkout_at - timedelta(days=1)
+    first_checkin_at = first_checkout_at - timedelta(hours=8)
+
+    with TestClient(app) as web_client, TestClient(app) as admin_client:
+        ensure_admin_session(admin_client)
+        auth_response = register_web_password(web_client, chave=web_key, senha="web123", projeto="P80")
+        assert auth_response.status_code == 200, auth_response.text
+
+        first_checkin_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkin",
+            event_time=first_checkin_at,
+            client_event_id=first_checkin_request_id,
+            local="Portaria P80",
+        )
+        assert first_checkin_response.status_code == 200, first_checkin_response.text
+        assert first_checkin_response.json()["queued_forms"] is True
+
+        first_checkout_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkout",
+            event_time=first_checkout_at,
+            client_event_id=first_checkout_request_id,
+            local="Saida P80",
+        )
+        assert first_checkout_response.status_code == 200, first_checkout_response.text
+        assert first_checkout_response.json()["queued_forms"] is True
+
+        repeated_checkout_response = submit_web_check(
+            web_client,
+            chave=web_key,
+            projeto="P80",
+            action="checkout",
+            event_time=repeated_checkout_at,
+            client_event_id=repeated_checkout_request_id,
+            local="Saida P80 Dia Seguinte",
+        )
+        assert repeated_checkout_response.status_code == 200, repeated_checkout_response.text
+        assert repeated_checkout_response.json()["queued_forms"] is False
+        assert repeated_checkout_response.json()["state"]["current_action"] == "checkout"
+
+        checkout_row = get_admin_presence_row_by_chave(admin_client, endpoint="checkout", chave=web_key)
+        assert checkout_row["forms_status"] == "not_realized"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == repeated_checkout_request_id)
+            ).scalar_one()
+            assert queued.status == "skipped"
+            assert queued.display_status == "not_realized"
+            assert queued.last_error == "repeated_checkout"
+
+
+def test_mobile_forms_submit_projects_sent_status_in_admin_checkin_after_queue(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        mocked_successful_forms_submit_with_statuses,
+    )
+
+    clear_forms_queue_backlog()
+    mobile_key = make_test_key("M")
+    client_event_id = f"mobile-admin-status-{uuid.uuid4().hex}"
+    event_time = now_sgt().replace(second=0, microsecond=0) - timedelta(minutes=5)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        response = client.post(
+            "/api/mobile/events/forms-submit",
+            headers=MOBILE_HEADERS,
+            json={
+                "chave": mobile_key,
+                "projeto": "P80",
+                "action": "checkin",
+                "local": "Android Base P80",
+                "informe": "normal",
+                "event_time": event_time.isoformat(),
+                "client_event_id": client_event_id,
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["queued_forms"] is True
+
+        processed = process_forms_submission_queue_once(max_items=1)
+        assert processed == 1
+
+        checkin_row = get_admin_presence_row_by_chave(client, endpoint="checkin", chave=mobile_key)
+        assert checkin_row["forms_status"] == "sent"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == client_event_id)
+            ).scalar_one()
+            assert queued.request_path == "/api/mobile/events/forms-submit"
+            assert queued.status == "success"
+            assert queued.display_status == "sent"
+
+
+def test_device_scan_projects_sent_status_in_admin_checkin_after_queue(monkeypatch):
+    monkeypatch.setattr(
+        FormsWorker,
+        "submit_with_retries",
+        mocked_successful_forms_submit_with_statuses,
+    )
+
+    clear_forms_queue_backlog()
+    device_key = make_test_key("D")
+    device_rfid = f"RF{uuid.uuid4().hex[:8].upper()}"
+    request_id = f"device-admin-status-{uuid.uuid4().hex}"
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        save_user = client.post(
+            "/api/admin/users",
+            json={"rfid": device_rfid, "nome": "Usuario Device Admin", "chave": device_key, "projeto": "P83"},
+        )
+        assert save_user.status_code == 200, save_user.text
+
+        response = client.post(
+            "/api/scan",
+            json={
+                "local": "Portaria Device P83",
+                "rfid": device_rfid,
+                "action": "checkin",
+                "device_id": "ESP32-ADMIN-STATUS",
+                "request_id": request_id,
+                "shared_key": "device-test-key",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["outcome"] == "submitted"
+
+        processed = process_forms_submission_queue_once(max_items=1)
+        assert processed == 1
+
+        checkin_row = get_admin_presence_row_by_chave(client, endpoint="checkin", chave=device_key)
+        assert checkin_row["forms_status"] == "sent"
+
+        with SessionLocal() as db:
+            queued = db.execute(
+                select(FormsSubmission).where(FormsSubmission.request_id == request_id)
+            ).scalar_one()
+            assert queued.request_path == "/api/scan"
+            assert queued.status == "success"
+            assert queued.display_status == "sent"
+
+
+def test_provider_current_state_keeps_presence_forms_status_empty_and_forms_panel_populated():
+    clear_forms_queue_backlog()
+    provider_key = make_test_key("P")
+    provider_time = now_sgt().replace(second=0, microsecond=0) - timedelta(minutes=10)
+
+    with TestClient(app) as client:
+        ensure_admin_session(client)
+
+        response = client.post(
+            "/api/provider/updaterecords",
+            headers=PROVIDER_HEADERS,
+            json={
+                "chave": provider_key,
+                "nome": "USUARIO PROVIDER PRESENCA",
+                "projeto": "P80",
+                "atividade": "check-out",
+                "informe": "normal",
+                "data": provider_time.strftime("%d/%m/%Y"),
+                "hora": provider_time.strftime("%H:%M:%S"),
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["updated_current_state"] is True
+
+        checkout_row = get_admin_presence_row_by_chave(client, endpoint="checkout", chave=provider_key)
+        assert checkout_row["forms_status"] is None
+
+        forms_rows = client.get("/api/admin/forms")
+        assert forms_rows.status_code == 200, forms_rows.text
+        provider_row = next(row for row in forms_rows.json() if row["chave"] == provider_key)
+        assert provider_row["atividade"] == "check-out"
+
+        with SessionLocal() as db:
+            forms_submissions = db.execute(
+                select(FormsSubmission).where(FormsSubmission.chave == provider_key)
+            ).scalars().all()
+            assert forms_submissions == []
 
 
 def test_web_check_state_returns_latest_public_history():

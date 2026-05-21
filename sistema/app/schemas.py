@@ -1218,6 +1218,7 @@ class UserRow(BaseModel):
     activity_time_label: str | None = None
     activity_day_key: str
     assiduidade: Literal["Normal", "Retroativo"]
+    forms_status: str | None = None
 
 
 class ProviderFormRow(BaseModel):

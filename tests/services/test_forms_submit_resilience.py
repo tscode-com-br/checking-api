@@ -30,11 +30,11 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session, sessionmaker
 
 from sistema.app.database import Base
-from sistema.app.models import CheckEvent, Project, User
+from sistema.app.models import CheckEvent, FormsSubmission, Project, User
 from sistema.app.routers.web_check import WEB_CHECK_CHANNEL
 from sistema.app.schemas import MobileSyncStateResponse
 from sistema.app.services.forms_submit import submit_forms_event
-from sistema.app.services.user_sync import ensure_web_user
+from sistema.app.services.user_sync import ResolvedUserActivity, ensure_web_user
 
 
 _NOW = datetime(2026, 5, 19, 8, 0, 0, tzinfo=timezone.utc)
@@ -132,3 +132,65 @@ def test_submit_forms_event_returns_ok_when_accident_hook_fails(tmp_path: Path):
     assert (
         db.execute(sa.select(sa.func.count()).select_from(CheckEvent)).scalar() >= 1
     ), "log_event must have committed at least one CheckEvent before the hook fired"
+
+
+def test_submit_forms_event_records_not_realized_submission_when_forms_is_skipped(tmp_path: Path):
+    db = _make_session(tmp_path)
+    _make_project(db)
+
+    previous_checkout = datetime(2026, 5, 18, 18, 0, 0, tzinfo=timezone.utc)
+    repeated_checkout = datetime(2026, 5, 19, 8, 0, 0, tzinfo=timezone.utc)
+
+    user = User(
+        rfid=None,
+        chave="SKP1",
+        nome="Usuario Skip",
+        projeto=_PROJECT_NAME,
+        local="Web",
+        checkin=False,
+        time=previous_checkout,
+        last_active_at=previous_checkout,
+        inactivity_days=0,
+    )
+    db.add(user)
+    db.commit()
+
+    with patch(
+        "sistema.app.services.forms_submit.build_mobile_sync_state",
+        side_effect=lambda db_, *, chave: _stub_sync_state(chave),
+    ), patch(
+        "sistema.app.services.forms_submit.resolve_latest_internal_user_activity",
+        return_value=ResolvedUserActivity(
+            action="checkout",
+            event_time=previous_checkout,
+            local="Web",
+            ontime=True,
+            source="web_forms",
+            source_request_id="prior-checkout-1",
+        ),
+    ), patch(
+        "sistema.app.services.forms_submit.fire_accident_hook_for_check_event",
+        return_value=None,
+    ):
+        response = submit_forms_event(
+            db,
+            chave="SKP1",
+            projeto=_PROJECT_NAME,
+            action="checkout",
+            informe="normal",
+            local="Web",
+            event_time=repeated_checkout,
+            client_event_id="skip-event-001",
+            ensure_user=ensure_web_user,
+            channel=WEB_CHECK_CHANNEL,
+        )
+
+    skipped_submission = db.execute(
+        sa.select(FormsSubmission).where(FormsSubmission.request_id == "skip-event-001")
+    ).scalar_one()
+
+    assert response.ok is True
+    assert response.queued_forms is False
+    assert skipped_submission.status == "skipped"
+    assert skipped_submission.display_status == "not_realized"
+    assert skipped_submission.last_error == "repeated_checkout"

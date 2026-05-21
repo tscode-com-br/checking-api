@@ -1,1 +1,3 @@
+//*[@role="heading" and (contains(normalize-space(.), "Sua resposta foi enviada") or contains(normalize-space(.), "Your response was submitted"))]
+//*[contains(normalize-space(.), "Sua resposta foi enviada")]
 //*[@id="form-main-content1"]/div/div/div[2]/div[1]/div[2]/div[2]/span

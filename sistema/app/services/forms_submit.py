@@ -13,13 +13,15 @@ from ..schemas import MobileSubmitResponse
 from .admin_updates import notify_admin_data_changed
 from .accident_lifecycle import fire_accident_hook_for_check_event
 from .event_logger import log_event
-from .forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now
+from .forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now, record_forms_submission_skip
 from .time_utils import resolve_project_timezone_name
+from .user_projects import list_user_project_names
 from .user_sync import (
     apply_user_state,
     build_mobile_sync_state,
     create_user_sync_event,
     ensure_current_user_state_event,
+    get_forms_skip_reason,
     normalize_event_time,
     resolve_latest_internal_user_activity,
     should_enqueue_forms_for_action,
@@ -76,6 +78,12 @@ def submit_forms_event(
     normalized_event_time = normalize_event_time(event_time, timezone_name=project_timezone_name)
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
     latest_activity = resolve_latest_internal_user_activity(db, user=user)
+    skip_reason = get_forms_skip_reason(
+        latest_activity=latest_activity,
+        action=action,
+        event_time=normalized_event_time,
+        timezone_name=project_timezone_name,
+    )
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=action,
@@ -91,6 +99,22 @@ def submit_forms_event(
     )
 
     if not should_queue_forms:
+        project_candidates = list_user_project_names(db, user)
+        record_forms_submission_skip(
+            db,
+            request_id=client_event_id,
+            rfid=user.rfid,
+            action=action,
+            chave=user.chave,
+            projeto=user.projeto,
+            device_id=channel.device_id,
+            local=resolved_local,
+            event_time=normalized_event_time,
+            request_path=channel.request_path,
+            project_candidates=project_candidates,
+            ontime=ontime,
+            skip_reason=skip_reason,
+        )
         create_user_sync_event(
             db,
             user=user,
@@ -120,7 +144,7 @@ def submit_forms_event(
             details=(
                 f"chave={user.chave}; event_time={normalized_event_time.isoformat()}; "
                 f"forms_skipped=true; informe={informe}; ontime={ontime}; "
-                "reason=repeated_same_action_same_day"
+                f"reason={skip_reason or 'not_realized'}"
             ),
         )
         db.commit()
@@ -136,6 +160,7 @@ def submit_forms_event(
         )
 
     try:
+        project_candidates = list_user_project_names(db, user)
         enqueue_forms_submission(
             db,
             request_id=client_event_id,
@@ -145,6 +170,9 @@ def submit_forms_event(
             projeto=user.projeto,
             device_id=channel.device_id,
             local=resolved_local,
+            event_time=normalized_event_time,
+            request_path=channel.request_path,
+            project_candidates=project_candidates,
             ontime=ontime,
         )
     except IntegrityError:

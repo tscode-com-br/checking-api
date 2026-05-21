@@ -10,13 +10,15 @@ from ..schemas import HeartbeatRequest, ScanRequest, ScanResponse
 from ..services.admin_updates import notify_admin_data_changed
 from ..services.accident_lifecycle import fire_accident_hook_for_check_event
 from ..services.event_logger import log_event
-from ..services.forms_queue import enqueue_forms_submission
+from ..services.forms_queue import enqueue_forms_submission, record_forms_submission_skip
 from ..services.time_utils import now_sgt, resolve_project_timezone_name
+from ..services.user_projects import list_user_project_names
 from ..services.user_sync import (
     apply_user_state,
     create_user_sync_event,
     ensure_current_user_state_event,
     find_user_by_rfid,
+    get_forms_skip_reason,
     resolve_latest_internal_user_activity,
     should_enqueue_forms_for_action,
 )
@@ -156,6 +158,12 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
     ensure_current_user_state_event(db, user=user, skip_if_provider_backed=True)
     latest_activity = resolve_latest_internal_user_activity(db, user=user)
     project_timezone_name = resolve_project_timezone_name(db, user.projeto)
+    skip_reason = get_forms_skip_reason(
+        latest_activity=latest_activity,
+        action=action,
+        event_time=activity_time,
+        timezone_name=project_timezone_name,
+    )
     should_queue_forms = should_enqueue_forms_for_action(
         latest_activity=latest_activity,
         action=action,
@@ -194,13 +202,28 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             event_time=activity_time,
             local=payload.local,
         )
+        project_candidates = list_user_project_names(db, user)
+        record_forms_submission_skip(
+            db,
+            request_id=payload.request_id,
+            rfid=user.rfid,
+            action=action,
+            chave=user.chave,
+            projeto=user.projeto,
+            device_id=payload.device_id,
+            local=user.local,
+            event_time=activity_time,
+            request_path="/api/scan",
+            project_candidates=project_candidates,
+            skip_reason=skip_reason,
+        )
         log_event(
             db,
             idempotency_key=f"{payload.request_id}:local-updated",
             source="device",
             action=action,
             status="updated",
-            message="Repeated same-day action accepted without submitting Forms",
+            message="Operation accepted without new Forms submission",
             rfid=user.rfid,
             project=user.projeto,
             device_id=payload.device_id,
@@ -208,7 +231,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             request_path="/api/scan",
             http_status=200,
             details=(
-                f"chave={user.chave}; forms_skipped=true; reason=repeated_same_action_same_day; "
+                f"chave={user.chave}; forms_skipped=true; reason={skip_reason or 'not_realized'}; "
                 f"latest_action={latest_activity.action if latest_activity else 'unknown'}"
             ),
         )
@@ -240,6 +263,7 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
     )
 
     try:
+        project_candidates = list_user_project_names(db, user)
         enqueue_forms_submission(
             db,
             request_id=payload.request_id,
@@ -249,6 +273,9 @@ def scan(payload: ScanRequest, db: Session = Depends(get_db)) -> ScanResponse:
             projeto=user.projeto,
             device_id=payload.device_id,
             local=payload.local,
+            event_time=activity_time,
+            request_path="/api/scan",
+            project_candidates=project_candidates,
         )
     except IntegrityError:
         log_event(
