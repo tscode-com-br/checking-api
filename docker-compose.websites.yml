@@ -1,3 +1,5 @@
+name: checkcheck-websites
+
 services:
   admin-web:
     image: ${CHECKCHECK_ADMIN_WEB_IMAGE:-checkcheck-admin-web:local}
