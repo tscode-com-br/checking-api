@@ -195,3 +195,23 @@ jobs:
               --service admin2-web \
               --url http://127.0.0.1:18084/ \
               --contains "Checking"
+
+      - name: Diagnose admin2 routing
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            echo "=== docker ps (admin2) ==="
+            docker ps -a --filter "name=admin2" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            echo "=== port 18084 test ==="
+            curl -s -o /dev/null -w "http_code=%{http_code}\n" http://127.0.0.1:18084/ || echo "curl failed on 18084"
+            echo "=== nginx conf grep admin2 ==="
+            grep -r "admin2" /etc/nginx/ 2>/dev/null || echo "no admin2 found in /etc/nginx/"
+            echo "=== nginx conf grep 18084 ==="
+            grep -r "18084" /etc/nginx/ 2>/dev/null || echo "no 18084 found in /etc/nginx/"
