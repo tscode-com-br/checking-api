@@ -98,35 +98,6 @@ body::before {
   transition: opacity 0.4s ease 0.1s;
 }
 
-/* ── Toast notifications ────────────────────────────────────────────── */
-#v2-toast-container {
-  position: fixed;
-  top: 76px;
-  right: 16px;
-  z-index: 9998;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 340px;
-  pointer-events: none;
-}
-.v2-toast {
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
-  box-shadow: var(--shadow-lg);
-  pointer-events: auto;
-  opacity: 0;
-  transform: translateX(20px);
-  transition: opacity 0.22s ease, transform 0.22s ease;
-  border-left: 3px solid transparent;
-}
-.v2-toast.v2-toast-show { opacity: 1; transform: translateX(0); }
-.v2-toast-ok  { background: #fff; color: #065f46; border-color: var(--primary); }
-.v2-toast-err { background: #fff; color: #991b1b; border-color: var(--danger); }
-
 /* ── Animation classes ──────────────────────────────────────────────── */
 .v2-row-enter {
   animation: v2RowEnter 0.22s ease both;
@@ -210,26 +181,27 @@ body::before {
   gap: 7px;
   padding: 7px 14px;
   border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.12);
+  background: #c8222a;
   color: #ffffff;
-  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  border: 1.5px solid #ffffff;
   font: 600 13px/1 "Inter", system-ui, sans-serif;
   cursor: pointer;
   transition: background 0.18s, border-color 0.18s, box-shadow 0.18s, transform 0.1s;
   white-space: nowrap;
 }
 .accident-button:hover {
-  background: rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.7);
+  background: #a31820;
+  border-color: rgba(255, 255, 255, 0.85);
   transform: translateY(-1px);
 }
 .accident-button[aria-pressed="true"] {
-  background: rgba(255, 255, 255, 0.92);
+  background: #ffffff;
   color: #c8222a;
   border-color: #ffffff;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25), 0 4px 16px rgba(0,0,0,0.2);
   animation: accidentPulse 2.5s ease-in-out infinite;
 }
+.accident-button-icon { flex: 0 0 auto; }
 .accident-button-label { display: block; }
 @keyframes accidentPulse {
   0%, 100% { box-shadow: 0 0 0 3px rgba(255,255,255,0.25), 0 4px 16px rgba(0,0,0,0.2); }
@@ -346,6 +318,24 @@ button.is-loading {
 }
 .secondary-button:hover:not(:disabled) {
   background: #0f172a;
+}
+
+.danger-button {
+  background: var(--danger);
+  color: #ffffff;
+}
+.danger-button:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+.confirm-destructive-card {
+  max-width: 460px;
+}
+.confirm-destructive-body {
+  margin: 0 0 4px;
+  color: var(--text);
+  line-height: 1.55;
+  white-space: pre-line;
 }
 
 /* ── Main content area ──────────────────────────────────────────────── */
@@ -774,26 +764,6 @@ tbody tr:hover {
 .db-events-table th:nth-child(13), .db-events-table td:nth-child(13) { width: auto; }
 .db-events-table th:nth-child(14), .db-events-table td:nth-child(14) { width: 90px; }
 
-/* ── Forms table ─────────────────────────────────────────────────────── */
-.forms-wrap { padding-bottom: 8px; }
-.forms-table {
-  min-width: 980px;
-  table-layout: fixed;
-}
-.forms-table--without-time { min-width: 892px; }
-.forms-table--without-time th[data-forms-time-column-header],
-.forms-table--without-time td:nth-child(9) { display: none; }
-.forms-table th, .forms-table td { text-align: center; vertical-align: middle; }
-.forms-table th:nth-child(1), .forms-table td:nth-child(1) { width: 136px; }
-.forms-table th:nth-child(2), .forms-table td:nth-child(2) { width: 84px; }
-.forms-table th:nth-child(3), .forms-table td:nth-child(3) { width: 220px; }
-.forms-table th:nth-child(4), .forms-table td:nth-child(4) { width: 92px; }
-.forms-table th:nth-child(5), .forms-table td:nth-child(5) { width: 136px; }
-.forms-table th:nth-child(6), .forms-table td:nth-child(6) { width: 96px; }
-.forms-table th:nth-child(7), .forms-table td:nth-child(7) { width: 96px; }
-.forms-table th:nth-child(8), .forms-table td:nth-child(8) { width: 92px; }
-.forms-table th:nth-child(9), .forms-table td:nth-child(9) { width: 88px; }
-
 /* ── Event detail elements ──────────────────────────────────────────── */
 .event-cell {
   display: block;
@@ -1005,6 +975,8 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 }
 .cadastro-section-panel[data-cadastro-collapsed="false"] .cadastro-section-toggle-indicator { transform: rotate(225deg); }
 .cadastro-section-content { display: grid; gap: 12px; }
+.cadastro-section-content[hidden],
+.cadastro-section-content.hidden { display: none; }
 .cadastro-section-panel[data-cadastro-collapsed="true"] [data-cadastro-header-action] { display: none; }
 .cadastro-side-panel { min-width: 0; }
 .cadastro-split-table-wrap { margin-top: 0; }
@@ -1020,7 +992,8 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .cadastro-grid-wrap > .cadastro-table { margin-top: 0; }
 
@@ -1036,7 +1009,8 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .cadastro-grid-wrap > .cadastro-locations-table,
 .cadastro-grid-wrap > .cadastro-admin-table,
 .cadastro-grid-wrap > .cadastro-projects-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border: none;
   border-radius: 0;
   border-collapse: separate;
@@ -1074,30 +1048,21 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .cadastro-table .pending-actions { flex-wrap: nowrap; align-items: center; }
 .cadastro-table .pending-actions button { white-space: nowrap; }
 
-/* table-level overrides */
-.cadastro-admin-table    { width: 100%; min-width: 1220px; table-layout: fixed; }
-.cadastro-projects-table { min-width: 980px; }
+/* table-level overrides — width fits content (no fixed widths) */
+.cadastro-admin-table    { table-layout: auto; }
 .cadastro-projects-actions { margin-top: 16px; }
-.cadastro-pending-table th:nth-child(1), .cadastro-pending-table td:nth-child(1) { min-width: 124px; }
-.cadastro-pending-table td:nth-child(2) .inline { min-width: 220px; }
-.cadastro-pending-table td:nth-child(3) .inline { min-width: 76px; }
-.cadastro-pending-table td:nth-child(4) .membership-projects-cell { min-width: 220px; }
+.cadastro-pending-table td:nth-child(2) .inline { min-width: 180px; }
+.cadastro-pending-table td:nth-child(4) .membership-projects-cell { min-width: 200px; }
 
-.cadastro-users-table {
-  width: 100%;
-  min-width: 1640px;
-  table-layout: fixed;
-}
-.cadastro-users-table th:nth-child(1), .cadastro-users-table td:nth-child(1) { width: 118px; }
-.cadastro-users-table th:nth-child(2), .cadastro-users-table td:nth-child(2) { width: 188px; }
-.cadastro-users-table th:nth-child(3), .cadastro-users-table td:nth-child(3) { width: 82px; }
-.cadastro-users-table th:nth-child(4), .cadastro-users-table td:nth-child(4) { width: 84px; }
-.cadastro-users-table th:nth-child(5), .cadastro-users-table td:nth-child(5) { width: 224px; }
-.cadastro-users-table th:nth-child(6), .cadastro-users-table td:nth-child(6) { width: 270px; }
-.cadastro-users-table th:nth-child(7), .cadastro-users-table td:nth-child(7) { width: 110px; }
-.cadastro-users-table th:nth-child(8), .cadastro-users-table td:nth-child(8) { width: 176px; }
-.cadastro-users-table th:nth-child(9), .cadastro-users-table td:nth-child(9) { width: 236px; }
-.cadastro-users-table th:nth-child(10), .cadastro-users-table td:nth-child(10) { width: 190px; }
+.cadastro-users-table { table-layout: auto; }
+.cadastro-users-table td .inline { width: auto; min-width: 0; }
+.cadastro-users-table .user-rfid { min-width: 110px; }
+.cadastro-users-table .user-nome { min-width: 180px; }
+.cadastro-users-table .user-chave { min-width: 60px; }
+.cadastro-users-table .user-perfil { min-width: 56px; }
+.cadastro-users-table .user-end-rua { min-width: 180px; }
+.cadastro-users-table .user-zip { min-width: 80px; }
+.cadastro-users-table .user-email { min-width: 200px; }
 
 .cadastro-users-table th { padding: 8px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
 .cadastro-users-table td { padding: 7px 8px; font-size: 12px; vertical-align: middle; overflow: hidden; }
@@ -1128,7 +1093,6 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .cadastro-users-table .user-zip.inline { text-align: center; font-family: Consolas, "Courier New", monospace; letter-spacing: 0.02em; }
 .cadastro-users-table .user-nome.inline { font-weight: 700; }
 .cadastro-users-table .user-end-rua.inline,
-.cadastro-users-table .user-cargo.inline,
 .cadastro-users-table .user-email.inline { white-space: nowrap; overflow: hidden; }
 .cadastro-users-table .user-row:hover td { background: var(--surface-hover); }
 .cadastro-users-table .user-row:hover .inline:disabled { background: var(--surface-alt); }
@@ -1294,14 +1258,7 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .admin-mobile-card-actions { display: grid; }
 .admin-mobile-card-actions button { width: 100%; min-height: 44px; }
 .inactive-mobile-card { border-color: rgba(185,28,28,0.15); background: linear-gradient(180deg, #fff7f7 0%, var(--surface) 100%); }
-.forms-mobile-card    { border-color: var(--border-strong); }
 .events-mobile-card   { border-color: rgba(14,116,144,0.16); }
-
-.forms-mobile-card-copy {
-  margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-muted);
-  white-space: pre-wrap; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
-}
 
 /* ── Presence mobile card ────────────────────────────────────────────── */
 .presence-mobile-card {
@@ -1319,18 +1276,68 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .presence-mobile-card-context { color: var(--text-muted); font-weight: 400; }
 .presence-mobile-card-local { font-size: inherit; font-weight: 400; color: var(--text-muted); }
 
-/* ── Status line ─────────────────────────────────────────────────────── */
+/* ── Status line (legado: agora reflete em #topNotificationBar) ──────── */
 #statusLine {
-  position: sticky;
-  bottom: 0;
-  z-index: 50;
-  margin: 0;
+  display: none;
+}
+
+/* ── Top notification bar (fixa entre header e tabelas) ──────────────── */
+.top-notification-bar {
+  position: relative;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
   padding: 6px 24px;
-  background: transparent;
-  font-size: 12px;
-  font-weight: 600;
-  min-height: 24px;
+  background: #ffffff;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.2s ease;
+  pointer-events: auto;
+}
+.top-notification-bar.is-empty {
   pointer-events: none;
+  background: transparent;
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+}
+.top-notification-bar.is-empty::before {
+  content: "";
+  display: block;
+  min-height: 24px;
+}
+.top-notification-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  background: var(--primary-light);
+  color: var(--primary-hover);
+  border-left: 4px solid var(--primary);
+  box-shadow: var(--shadow-xs);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.top-notification-item.is-show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.top-notification-item.is-err {
+  background: var(--danger-light);
+  color: var(--danger-hover);
+  border-left-color: var(--danger);
+}
+@media (max-width: 640px) {
+  .top-notification-bar { padding: 4px 14px; min-height: 32px; }
+  .top-notification-item { font-size: 12px; padding: 5px 10px; }
 }
 
 /* ── Checkout distance ───────────────────────────────────────────────── */
@@ -1363,7 +1370,7 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 
 /* data-label responsive patterns for tables without card mode */
 @media (max-width: 640px) {
-  .responsive-table:not(.presence-users-table):not(.events-table):not(.forms-table):not(.db-events-table) td::before {
+  .responsive-table:not(.presence-users-table):not(.events-table):not(.db-events-table) td::before {
     content: attr(data-label);
     display: block;
     font-size: 10px;

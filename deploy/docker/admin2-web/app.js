@@ -42,27 +42,32 @@
     return _origFetch.apply(this, args);
   };
 
-  // 2. Toast notification system ───────────────────────────────────────
-  let _toastEl = null;
-  function getToastContainer() {
-    if (!_toastEl) {
-      _toastEl = document.createElement("div");
-      _toastEl.id = "v2-toast-container";
-      document.body.appendChild(_toastEl);
-    }
-    return _toastEl;
+  // 2. Top notification bar (fixa entre header e tabelas) ──────────────
+  function getNotificationBar() {
+    return document.getElementById("topNotificationBar");
+  }
+  function syncNotificationBarEmptyState() {
+    const bar = getNotificationBar();
+    if (!bar) return;
+    const hasItems = bar.querySelector(".top-notification-item") !== null;
+    bar.classList.toggle("is-empty", !hasItems);
   }
   window.v2Toast = function(message, ok) {
     if (!message || !String(message).trim()) return;
-    const c = getToastContainer();
-    const t = document.createElement("div");
-    t.className = "v2-toast " + (ok === false ? "v2-toast-err" : "v2-toast-ok");
-    t.textContent = String(message).trim();
-    c.appendChild(t);
-    requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add("v2-toast-show")));
+    const bar = getNotificationBar();
+    if (!bar) return;
+    const item = document.createElement("div");
+    item.className = "top-notification-item " + (ok === false ? "is-err" : "is-ok");
+    item.textContent = String(message).trim();
+    bar.appendChild(item);
+    syncNotificationBarEmptyState();
+    requestAnimationFrame(() => requestAnimationFrame(() => item.classList.add("is-show")));
     setTimeout(() => {
-      t.classList.remove("v2-toast-show");
-      setTimeout(() => t.remove(), 320);
+      item.classList.remove("is-show");
+      setTimeout(() => {
+        item.remove();
+        syncNotificationBarEmptyState();
+      }, 260);
     }, 3800);
   };
 
@@ -208,7 +213,7 @@ let refreshAllTimer = null;
 let eventStream = null;
 let isAuthenticated = false;
 let adminAccessScope = "full";
-let allowedAdminTabs = ["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"];
+let allowedAdminTabs = ["checkin", "checkout", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"];
 let adminCanViewActivityTime = true;
 let currentAdminChave = "";
 let currentAdminPerfil = 0;
@@ -216,6 +221,8 @@ let currentAdminProjectNames = [];
 let currentAdminProjectScopeResolved = false;
 let currentAdminProjectScopeLoadPromise = null;
 let registeredUsersTotal = 0;
+let checkinTotalInScope = 0;
+let checkoutTotalInScope = 0;
 let eventArchives = [];
 let eventArchivesFilterQuery = "";
 let eventArchivesPage = 1;
@@ -233,8 +240,6 @@ let pendingUsersTotal = 0;
 let administratorsTotal = 0;
 let eventsTotal = 0;
 let eventsRows = null;
-let formsTotal = 0;
-let formsRows = null;
 let lastDashboardRefreshAt = null;
 let presenceScrollInteractionRevision = 0;
 let userTextareaRefreshFrame = null;
@@ -535,8 +540,8 @@ function buildProjectMembershipPanelMarkup(editor) {
       ${optionsMarkup || `<span class="location-empty-copy">${escapeHtml(currentAdminProjectScopeResolved ? "Nenhum projeto disponível no seu escopo." : "Nenhum projeto cadastrado.")}</span>`}
     </div>
     <div class="membership-projects-panel-footer">
-      <button type="button" class="secondary-button" data-project-membership-back="${escapeHtml(editorKey)}">Back</button>
-      <button type="button" data-project-membership-apply="${escapeHtml(editorKey)}" ${optionStates.length ? "" : "disabled"}>Save</button>
+      <button type="button" class="secondary-button" data-project-membership-back="${escapeHtml(editorKey)}">Voltar</button>
+      <button type="button" data-project-membership-apply="${escapeHtml(editorKey)}" ${optionStates.length ? "" : "disabled"}>Salvar</button>
     </div>
   `;
 }
@@ -623,7 +628,7 @@ function makeProjectMembershipCell({ kind, rowId, selectedProjects }) {
         aria-expanded="false"
         disabled
         title="${escapeHtml(getProjectMembershipDisabledTitle(kind))}"
-      >Select</button>
+      >Selecionar</button>
       <span class="membership-projects-summary" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span>
       <div class="membership-projects-panel" hidden></div>
     </div>
@@ -973,7 +978,6 @@ const presenceTableStates = Object.fromEntries(
 const TAB_LABELS = {
   checkin: "Check-In",
   checkout: "Check-Out",
-  forms: "Forms",
   inactive: "Inativos",
   cadastro: "Cadastro",
   relatorios: "Relatórios",
@@ -981,7 +985,7 @@ const TAB_LABELS = {
   "banco-dados": "Banco de Dados",
 };
 const ADMIN_MOBILE_VIEWPORT_QUERY = "(max-width: 800px)";
-const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "forms", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"]);
+const DEFAULT_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout", "inactive", "cadastro", "relatorios", "eventos", "banco-dados", "acidente"]);
 const LIMITED_ADMIN_ALLOWED_TABS = Object.freeze(["checkin", "checkout"]);
 const MOBILE_FILTER_PANEL_KEYS = Object.freeze(["checkin", "checkout", "inactive", "relatorios"]);
 let adminViewportMediaQueryList = null;
@@ -1209,7 +1213,6 @@ function syncAdminResponsiveState(options = {}) {
 
   adminResponsiveStateKey = nextStateKey;
   syncPresenceTimeLabels();
-  const canViewFormsTime = syncFormsTimeColumnVisibility();
   const canViewEventsTime = syncEventsPrimaryColumnLabel();
 
   Object.entries(presenceTableStates).forEach(([tableKey, state]) => {
@@ -1221,9 +1224,6 @@ function syncAdminResponsiveState(options = {}) {
     applyPresenceTableState(tableKey);
   });
 
-  if (formsRows !== null) {
-    renderFormsTable(formsRows, { canViewTime: canViewFormsTime });
-  }
   if (eventsRows !== null) {
     renderEventsTable(eventsRows, { canViewTime: canViewEventsTime });
   }
@@ -1314,25 +1314,6 @@ function canCurrentAdminViewActivityTime() {
 
 function isLimitedMobilePresenceVariant(tableKey, responsiveVariant = getPresenceResponsiveVariant(tableKey)) {
   return ["checkin", "checkout"].includes(String(tableKey || "").trim()) && responsiveVariant === "mobile-limited";
-}
-
-function getFormsColumnCount(includeTime = canCurrentAdminViewActivityTime()) {
-  return includeTime ? 9 : 8;
-}
-
-function syncFormsTimeColumnVisibility() {
-  const formsTable = document.getElementById("formsTable");
-  const formsTimeHeader = document.querySelector("[data-forms-time-column-header]");
-  const canViewTime = canCurrentAdminViewActivityTime();
-
-  if (formsTable) {
-    formsTable.classList.toggle("forms-table--without-time", !canViewTime);
-  }
-  if (formsTimeHeader) {
-    formsTimeHeader.hidden = !canViewTime;
-  }
-
-  return canViewTime;
 }
 
 function getEventsPrimaryColumnLabel() {
@@ -1946,7 +1927,6 @@ function updateDashboardSummary() {
   const counts = {
     checkin: presenceTableStates.checkin.rawRows.length,
     checkout: presenceTableStates.checkout.rawRows.length,
-    forms: formsTotal,
     inactive: presenceTableStates.inactive.rawRows.length,
     pending: pendingUsersTotal,
     users: registeredUsersTotal,
@@ -2178,8 +2158,6 @@ function showAuthShell(message = "", kind = "info") {
   lastDashboardRefreshAt = null;
   closeChangePasswordModal();
   eventsRows = null;
-  formsTotal = 0;
-  formsRows = null;
   reportsResultsPayload = null;
   databaseEventsLoaded = false;
   if (databaseEventsRefreshTimer !== null) {
@@ -2859,6 +2837,24 @@ async function fetchJson(url, options = {}) {
   return res.json();
 }
 
+// fetchJson variant that also exposes response headers (e.g., X-Total-In-Scope).
+async function fetchJsonWithMeta(url, options = {}) {
+  const res = await fetch(url, {
+    credentials: "same-origin",
+    ...options,
+    headers: { ...(options.headers || {}) },
+  });
+  if (!res.ok) {
+    const message = await parseErrorResponse(res);
+    if (res.status === 401) {
+      await handleUnauthorized(message);
+    }
+    throw new Error(message);
+  }
+  const data = res.status === 204 ? null : await res.json();
+  return { data, headers: res.headers };
+}
+
 async function postJson(url, body) {
   const options = {
     method: "POST",
@@ -2921,6 +2917,54 @@ function openEventDetails({ message, details }) {
   document.getElementById("eventDetailsText").value = details || "-";
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
+}
+
+// Modal universal de confirmação para operações destrutivas.
+// Substitui window.confirm em todos os deletes do painel.
+function confirmDestructive({ title = "Confirmar remoção", body = "", confirmLabel = "Remover", cancelLabel = "Cancelar" } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("confirmDestructiveModal");
+    const titleEl = document.getElementById("confirmDestructiveTitle");
+    const bodyEl = document.getElementById("confirmDestructiveBody");
+    const cancelBtn = document.getElementById("confirmDestructiveCancel");
+    const confirmBtn = document.getElementById("confirmDestructiveConfirm");
+    if (!modal || !titleEl || !bodyEl || !cancelBtn || !confirmBtn) {
+      // Fallback de segurança: se o modal não existir no DOM, recusa silenciosamente.
+      resolve(false);
+      return;
+    }
+
+    titleEl.textContent = title;
+    bodyEl.textContent = body;
+    confirmBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+
+    const close = (result) => {
+      modal.classList.add("hidden");
+      modal.setAttribute("aria-hidden", "true");
+      cancelBtn.removeEventListener("click", onCancel);
+      confirmBtn.removeEventListener("click", onConfirm);
+      modal.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+      resolve(result);
+    };
+    const onCancel = () => close(false);
+    const onConfirm = () => close(true);
+    const onBackdrop = (event) => { if (event.target === modal) close(false); };
+    const onKey = (event) => {
+      if (event.key === "Escape") close(false);
+      if (event.key === "Enter") close(true);
+    };
+
+    cancelBtn.addEventListener("click", onCancel);
+    confirmBtn.addEventListener("click", onConfirm);
+    modal.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey);
+
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    cancelBtn.focus();
+  });
 }
 
 function closeEventDetails() {
@@ -3211,8 +3255,8 @@ function countRenderedDataRows(bodyId) {
 }
 
 function syncUserTitles() {
-  updateUserTitle("checkinBody", countRenderedDataRows("checkinBody"), registeredUsersTotal);
-  updateUserTitle("checkoutBody", countRenderedDataRows("checkoutBody"), registeredUsersTotal);
+  updateUserTitle("checkinBody", countRenderedDataRows("checkinBody"), checkinTotalInScope);
+  updateUserTitle("checkoutBody", countRenderedDataRows("checkoutBody"), checkoutTotalInScope);
   updateDashboardSummary();
 }
 
@@ -3676,17 +3720,23 @@ function applyPresenceTableState(tableKey) {
   syncPresenceSortHeaders(tableKey);
 }
 
+function getPresenceTotalForTitle(bodyId) {
+  if (bodyId === "checkinBody") return checkinTotalInScope;
+  if (bodyId === "checkoutBody") return checkoutTotalInScope;
+  return registeredUsersTotal;
+}
+
 function renderPresenceTable(bodyId, rows, options = {}) {
   if (!rows.length) {
     renderEmptyStateRow(bodyId, 8, options.emptyMessage || "Nenhum registro encontrado.");
-    updateUserTitle(bodyId, 0, registeredUsersTotal);
+    updateUserTitle(bodyId, 0, getPresenceTotalForTitle(bodyId));
     return;
   }
   const body = document.getElementById(bodyId);
   body.innerHTML = "";
   rows.forEach((row) => body.appendChild(buildPresenceRow(row, options)));
   applyResponsiveLabels(bodyId);
-  updateUserTitle(bodyId, rows.length, registeredUsersTotal);
+  updateUserTitle(bodyId, rows.length, getPresenceTotalForTitle(bodyId));
 }
 
 function formatInactivityDays(days) {
@@ -3763,63 +3813,6 @@ function renderMissingCheckoutTable(rows, options = {}) {
   rows.forEach((row) => body.appendChild(buildMissingCheckoutRow(row)));
   applyResponsiveLabels("missingCheckoutBody");
   updateMissingCheckoutTitle(rows.length);
-}
-
-function buildFormsMobileCard(row, options = {}) {
-  const canViewTime = options.canViewTime !== false;
-  const receivedAtHtml = makeEventDateTimeCellFromParts(row.recebimento_date_label, row.recebimento_time_label);
-  const eventDateTimeHtml = makeEventDateTimeCellFromParts(row.data ?? "-", canViewTime ? (row.hora ?? "") : "");
-  const eventDateTimeLabel = canViewTime ? "Data e Hora" : "Data";
-  const informeValue = String(row.informe ?? "-").trim() || "-";
-
-  return `<article class="admin-mobile-card forms-mobile-card"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Recebimento</span><div class="admin-mobile-card-datetime">${receivedAtHtml}</div></div><strong class="admin-mobile-card-title">${escapeHtml(row.nome ?? "-")}</strong><div class="admin-mobile-card-grid"><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Atividade</span><span class="admin-mobile-card-value">${escapeHtml(row.atividade ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Chave</span><span class="admin-mobile-card-value">${escapeHtml(row.chave ?? "-")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">${eventDateTimeLabel}</span><div class="admin-mobile-card-datetime">${eventDateTimeHtml}</div></div></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Informe</span><p class="forms-mobile-card-copy">${escapeHtml(informeValue)}</p></div></article>`;
-}
-
-function buildFormsRow(row, options = {}) {
-  const canViewTime = options.canViewTime !== false;
-  const tr = document.createElement("tr");
-
-  if (options.mobile) {
-    tr.classList.add("forms-mobile-row");
-    tr.innerHTML = `<td colspan="${getFormsColumnCount(canViewTime)}" class="forms-mobile-card-cell">${buildFormsMobileCard(row, { canViewTime })}</td>`;
-    return tr;
-  }
-
-  const cells = [
-    `<td>${makeEventDateTimeCellFromParts(row.recebimento_date_label, row.recebimento_time_label)}</td>`,
-    `<td>${makeEventCell(row.chave ?? "-")}</td>`,
-    `<td>${makeEventCell(row.nome ?? "-", "event-cell-left")}</td>`,
-    `<td>${makeEventCell(row.projeto ?? "-")}</td>`,
-    `<td>${makeEventCell(formatTimeZoneLabel(row.timezone_label))}</td>`,
-    `<td>${makeEventCell(row.atividade ?? "-")}</td>`,
-    `<td>${makeEventCell(row.informe ?? "-")}</td>`,
-    `<td>${makeEventCell(row.data ?? "-")}</td>`,
-  ];
-  if (canViewTime) {
-    cells.push(`<td>${makeEventCell(row.hora ?? "-")}</td>`);
-  }
-  tr.innerHTML = cells.join("");
-  return tr;
-}
-
-function renderFormsTable(rows, options = {}) {
-  const body = document.getElementById("formsBody");
-  if (!body) {
-    return false;
-  }
-
-  const canViewTime = options.canViewTime !== false;
-  const mobile = isMobileAdminViewport();
-  body.innerHTML = "";
-
-  if (!rows.length) {
-    renderEmptyStateRow("formsBody", getFormsColumnCount(canViewTime), "Nenhum evento do provider encontrado no historico sincronizado.");
-    return true;
-  }
-
-  rows.forEach((row) => body.appendChild(buildFormsRow(row, { canViewTime, mobile })));
-  applyResponsiveLabels("formsBody");
-  return true;
 }
 
 function createLocationCoordinateEntry(value = "", overrides = {}) {
@@ -4617,7 +4610,11 @@ async function removeLocationRow(rowId) {
     return;
   }
 
-  const confirmed = window.confirm(`Deseja remover a localização ${row.local}?`);
+  const confirmed = await confirmDestructive({
+    title: "Remover localização",
+    body: `Deseja remover a localização "${row.local}"? Polígonos vinculados serão apagados.`,
+    confirmLabel: "Remover localização",
+  });
   if (!confirmed) {
     return;
   }
@@ -4739,7 +4736,6 @@ function makeRegisteredUserRow(user) {
     </td>
     <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" title="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
     <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" title="${escapeHtml(user.zip ?? "")}" disabled /></td>
-    <td><input class="inline user-cargo" maxlength="255" value="${escapeHtml(user.cargo ?? "")}" title="${escapeHtml(user.cargo ?? "")}" disabled /></td>
     <td><input class="inline user-email" type="email" maxlength="255" value="${escapeHtml(user.email ?? "")}" title="${escapeHtml(user.email ?? "")}" spellcheck="false" disabled /></td>
     <td class="pending-actions user-actions">
       <button data-user-edit="${user.id}">Editar</button>
@@ -4900,7 +4896,6 @@ function setRegisteredUserEditingState(userId, editing) {
   const projectEditor = getProjectMembershipEditor("user", userId);
   const endRua = row.querySelector(".user-end-rua");
   const zip = row.querySelector(".user-zip");
-  const cargo = row.querySelector(".user-cargo");
   const email = row.querySelector(".user-email");
   const saveButton = row.querySelector(`[data-user-save="${userId}"]`);
   const editButton = row.querySelector(`[data-user-edit="${userId}"]`);
@@ -4913,7 +4908,6 @@ function setRegisteredUserEditingState(userId, editing) {
   syncProjectMembershipToggleState(projectEditor, editing);
   endRua.disabled = !editing;
   zip.disabled = !editing;
-  cargo.disabled = !editing;
   email.disabled = !editing;
   saveButton.disabled = !editing;
   editButton.disabled = editing;
@@ -4983,15 +4977,23 @@ function readAdministratorProjects(id) {
 }
 
 async function loadCheckin() {
-  const rows = await fetchJson("/api/admin/checkin");
-  presenceTableStates.checkin.rawRows = Array.isArray(rows) ? rows : [];
+  const { data, headers } = await fetchJsonWithMeta("/api/admin/checkin");
+  presenceTableStates.checkin.rawRows = Array.isArray(data) ? data : [];
+  const totalInScope = Number.parseInt(headers.get("X-Total-In-Scope") || "", 10);
+  if (Number.isFinite(totalInScope)) {
+    checkinTotalInScope = totalInScope;
+  }
   applyPresenceTableState("checkin");
   updateDashboardSummary();
 }
 
 async function loadCheckout() {
-  const rows = await fetchJson("/api/admin/checkout");
-  presenceTableStates.checkout.rawRows = Array.isArray(rows) ? rows : [];
+  const { data, headers } = await fetchJsonWithMeta("/api/admin/checkout");
+  presenceTableStates.checkout.rawRows = Array.isArray(data) ? data : [];
+  const totalInScope = Number.parseInt(headers.get("X-Total-In-Scope") || "", 10);
+  if (Number.isFinite(totalInScope)) {
+    checkoutTotalInScope = totalInScope;
+  }
   if (presenceTableStates.missingCheckout) {
     presenceTableStates.missingCheckout.rawRows = [];
   }
@@ -5192,7 +5194,13 @@ async function removeProject(projectId) {
   }
 
   const normalizedProjectId = requireIntegerId(projectId, "Projeto");
-  const confirmed = window.confirm("Deseja remover este projeto?");
+  const project = getProjectById(normalizedProjectId);
+  const projectLabel = project?.name ? `"${project.name}"` : `ID ${normalizedProjectId}`;
+  const confirmed = await confirmDestructive({
+    title: "Remover projeto",
+    body: `Deseja remover o projeto ${projectLabel}? Usuários e administradores vinculados ficarão sem este projeto.`,
+    confirmLabel: "Remover projeto",
+  });
   if (!confirmed) {
     return;
   }
@@ -5213,42 +5221,6 @@ async function loadEvents() {
   eventsTotal = eventsRows.length;
   renderEventsTable(eventsRows, { canViewTime });
   updateDashboardSummary();
-}
-
-async function loadForms() {
-  const canViewTime = syncFormsTimeColumnVisibility();
-  const body = document.getElementById("formsBody");
-  if (!body) {
-    formsTotal = 0;
-    formsRows = null;
-    updateFormsClearButtonState();
-    updateDashboardSummary();
-    return;
-  }
-
-  const rows = await fetchJson("/api/admin/forms");
-  formsRows = Array.isArray(rows) ? rows : [];
-  formsTotal = formsRows.length;
-  setTextContentIfPresent("formsTitle", `Forms (${formsTotal})`);
-  updateFormsClearButtonState();
-  renderFormsTable(formsRows, { canViewTime });
-  updateDashboardSummary();
-}
-
-async function clearForms() {
-  if (formsTotal === 0) {
-    return;
-  }
-
-  const confirmed = window.confirm("Deseja remover todos os registros da tabela Forms?");
-  if (!confirmed) {
-    return;
-  }
-
-  const payload = await deleteJson("/api/admin/forms");
-  await loadForms();
-  markDashboardRefreshed();
-  setStatus(payload?.message || "Registros de Forms removidos com sucesso.", true);
 }
 
 function resetReportsView(options = {}) {
@@ -5331,6 +5303,14 @@ function getReportEventTimeLine(row) {
     || "-";
 }
 
+function formatReportSource(row) {
+  const explicitLabel = row && typeof row.source_label === "string" ? row.source_label.trim() : "";
+  const source = row && typeof row.source === "string" ? row.source.trim() : "";
+  if (source === "web_forms" || explicitLabel === "web_forms") return "Checking Web";
+  if (explicitLabel) return explicitLabel;
+  return source || "-";
+}
+
 function getReportsResultTableColumns(includeTime = canCurrentAdminViewActivityTime()) {
   const columns = [];
   if (includeTime) {
@@ -5350,7 +5330,7 @@ function getReportsResultTableColumns(includeTime = canCurrentAdminViewActivityT
     {
       header: "Origem",
       colClass: "reports-col-source",
-      getValue: (row) => row.source_label || row.source || "-",
+      getValue: (row) => formatReportSource(row),
     },
     {
       header: "Local",
@@ -5383,7 +5363,7 @@ function buildReportsResultMobileCardMarkup(row, options = {}) {
     ? `<div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Horário</span><span class="admin-mobile-card-value">${escapeHtml(getReportEventTimeLine(row))}</span></div>`
     : "";
 
-  return `<article class="admin-mobile-card reports-result-card"><strong class="admin-mobile-card-title">${escapeHtml(row.action_label || formatAction(row.action))}</strong><div class="admin-mobile-card-grid">${timeMarkup}<div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Origem</span><span class="admin-mobile-card-value">${escapeHtml(row.source_label || row.source || "-")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Local</span><span class="admin-mobile-card-value">${escapeHtml(row.local_label || formatLocal(row.local))}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Assiduidade</span><span class="admin-mobile-card-value">${escapeHtml(row.assiduidade ?? "Normal")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Fuso horário</span><span class="admin-mobile-card-value">${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</span></div></div></article>`;
+  return `<article class="admin-mobile-card reports-result-card"><strong class="admin-mobile-card-title">${escapeHtml(row.action_label || formatAction(row.action))}</strong><div class="admin-mobile-card-grid">${timeMarkup}<div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Origem</span><span class="admin-mobile-card-value">${escapeHtml(formatReportSource(row))}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Local</span><span class="admin-mobile-card-value">${escapeHtml(row.local_label || formatLocal(row.local))}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Projeto</span><span class="admin-mobile-card-value">${escapeHtml(row.projeto ?? "-")}</span></div><div class="admin-mobile-card-field"><span class="admin-mobile-card-label">Assiduidade</span><span class="admin-mobile-card-value">${escapeHtml(row.assiduidade ?? "Normal")}</span></div><div class="admin-mobile-card-field admin-mobile-card-field--wide"><span class="admin-mobile-card-label">Fuso horário</span><span class="admin-mobile-card-value">${escapeHtml(formatTimeZoneLabel(row.timezone_label))}</span></div></div></article>`;
 }
 
 function buildReportsResultCardsMarkup(rows, options = {}) {
@@ -5629,36 +5609,6 @@ function renderEventsTable(rows, options = {}) {
   return true;
 }
 
-function updateFormsClearButtonState() {
-  const clearButton = document.getElementById("clearFormsButton");
-  if (!clearButton) {
-    return;
-  }
-  clearButton.disabled = formsTotal === 0;
-}
-
-async function runFormsClear(button) {
-  if (!(button instanceof HTMLButtonElement) || button.disabled) {
-    return;
-  }
-
-  const idleLabel = String(button.dataset.idleLabel || button.textContent || "Limpar").trim() || "Limpar";
-  button.dataset.idleLabel = idleLabel;
-  button.disabled = true;
-  button.classList.add("is-loading");
-  button.setAttribute("aria-busy", "true");
-  button.textContent = "Limpando...";
-
-  try {
-    await clearForms();
-  } finally {
-    updateFormsClearButtonState();
-    button.classList.remove("is-loading");
-    button.setAttribute("aria-busy", "false");
-    button.textContent = idleLabel;
-  }
-}
-
 async function refreshActiveTab() {
   if (activeTab === "checkin") {
     await loadCheckin();
@@ -5668,9 +5618,6 @@ async function refreshActiveTab() {
   if (activeTab === "checkout") {
     await loadCheckout();
     markDashboardRefreshed();
-    return;
-  }
-  if (activeTab === "forms") {
     return;
   }
   if (activeTab === "relatorios") {
@@ -5701,9 +5648,6 @@ async function refreshAllTables() {
   }
   if (isAdminTabAllowed("checkout")) {
     jobs.push(loadCheckout());
-  }
-  if (isAdminTabAllowed("forms")) {
-    jobs.push(loadForms());
   }
   if (isAdminTabAllowed("inactive")) {
     jobs.push(loadInactive());
@@ -5950,7 +5894,11 @@ async function deleteEventArchive(fileName) {
 }
 
 async function archiveAndClearEvents() {
-  const confirmed = window.confirm("Deseja salvar os eventos atuais em CSV e limpar a lista de eventos?\n\nOs arquivos antigos continuarão disponíveis para download.");
+  const confirmed = await confirmDestructive({
+    title: "Salvar e limpar eventos",
+    body: "Deseja salvar os eventos atuais em CSV e limpar a lista de eventos?\n\nOs arquivos antigos continuarão disponíveis para download.",
+    confirmLabel: "Salvar e limpar",
+  });
   if (!confirmed) {
     return;
   }
@@ -6031,6 +5979,12 @@ async function savePending(id, rfid) {
 }
 
 async function removePending(id) {
+  const confirmed = await confirmDestructive({
+    title: "Remover pendência",
+    body: "Deseja remover esta pendência de cadastro? Esta ação não pode ser desfeita.",
+    confirmLabel: "Remover pendência",
+  });
+  if (!confirmed) return;
   await deleteJson(`/api/admin/pending/${id}`);
   setStatus("Pendência removida com sucesso", true);
   await loadPending();
@@ -6049,7 +6003,6 @@ async function saveRegisteredUser(userId) {
   const projetos = getProjectMembershipSelectionForSubmit("user", normalizedUserId);
   const endRua = row.querySelector(".user-end-rua").value.trim();
   const zip = row.querySelector(".user-zip").value.trim();
-  const cargo = row.querySelector(".user-cargo").value.trim();
   const email = row.querySelector(".user-email").value.trim().toLowerCase();
   if (!nome || chave.length !== 4) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
@@ -6072,7 +6025,6 @@ async function saveRegisteredUser(userId) {
     projetos,
     end_rua: endRua || null,
     zip: zip || null,
-    cargo: cargo || null,
     email: email || null,
   });
   setStatus("Usuário salvo com sucesso", true);
@@ -6081,6 +6033,20 @@ async function saveRegisteredUser(userId) {
 
 async function removeRegisteredUser(userId) {
   const normalizedUserId = requireIntegerId(userId, "Usuário");
+  const row = document.querySelector(`#usersBody tr[data-user-id="${CSS.escape(normalizedUserId)}"]`);
+  const nomeInput = row?.querySelector(".user-nome");
+  const chaveInput = row?.querySelector(".user-chave");
+  const userNome = nomeInput && "value" in nomeInput ? String(nomeInput.value || "").trim() : "";
+  const userChave = chaveInput && "value" in chaveInput ? String(chaveInput.value || "").trim() : "";
+  const userLabel = userNome
+    ? `${userNome}${userChave ? ` (${userChave})` : ""}`
+    : `ID ${normalizedUserId}`;
+  const confirmed = await confirmDestructive({
+    title: "Remover usuário",
+    body: `Tem certeza que deseja remover o usuário ${userLabel}?\n\nEsta ação é IRREVERSÍVEL. O usuário e todos os vínculos (RFID, projetos, transporte) serão apagados do banco de dados.`,
+    confirmLabel: "Remover usuário",
+  });
+  if (!confirmed) return;
   await deleteJson(`/api/admin/users/${normalizedUserId}`);
   setStatus("Usuário removido com sucesso", true);
   await Promise.all([loadRegisteredUsers(), loadCheckin(), loadCheckout(), loadInactive()]);
@@ -6088,9 +6054,11 @@ async function removeRegisteredUser(userId) {
 
 async function resetRegisteredUserPassword(userId) {
   const normalizedUserId = requireIntegerId(userId, "Usuário");
-  const confirmed = window.confirm(
-    "Deseja remover a senha deste usuário?\n\nDepois disso, ele precisará cadastrar uma nova senha para voltar a acessar a área web.",
-  );
+  const confirmed = await confirmDestructive({
+    title: "Remover senha do usuário",
+    body: "Deseja remover a senha deste usuário?\n\nDepois disso, ele precisará cadastrar uma nova senha para voltar a acessar a área web.",
+    confirmLabel: "Remover senha",
+  });
   if (!confirmed) {
     return;
   }
@@ -6108,16 +6076,24 @@ async function approveAdministrator(id) {
 }
 
 async function rejectAdministrator(id) {
+  const confirmed = await confirmDestructive({
+    title: "Rejeitar solicitação",
+    body: "Deseja rejeitar esta solicitação de administração? A solicitação será removida do sistema.",
+    confirmLabel: "Rejeitar solicitação",
+  });
+  if (!confirmed) return;
   const payload = await postJson(`/api/admin/administrators/requests/${id}/reject`);
   setStatus(payload.message, true);
   await loadAdministrators();
 }
 
 async function revokeAdministrator(id) {
-  const confirmed = window.confirm("Deseja revogar o acesso deste administrador?");
-  if (!confirmed) {
-    return;
-  }
+  const confirmed = await confirmDestructive({
+    title: "Revogar acesso",
+    body: "Deseja revogar o acesso administrativo deste usuário? Ele perderá imediatamente o acesso ao painel.",
+    confirmLabel: "Revogar acesso",
+  });
+  if (!confirmed) return;
   const payload = await postJson(`/api/admin/administrators/${id}/revoke`);
   setStatus(payload.message, true);
   await loadAdministrators();
@@ -6425,8 +6401,6 @@ function bindActions() {
   });
 
   const changePasswordButton = document.getElementById("changePasswordButton");
-  const refreshFormsButton = document.getElementById("refreshFormsButton");
-  const clearFormsButton = document.getElementById("clearFormsButton");
   const refreshInactiveButton = document.getElementById("refreshInactiveButton");
   const refreshAdministratorsButton = document.getElementById("refreshAdministratorsButton");
   const refreshEndpointsButton = document.getElementById("refreshEndpointsButton");
@@ -6434,14 +6408,6 @@ function bindActions() {
   const refreshEventsButton = document.getElementById("refreshEventsButton");
   if (changePasswordButton) {
     changePasswordButton.addEventListener("click", openChangePasswordModal);
-  }
-  bindManualRefreshButton(refreshFormsButton, loadForms);
-  if (clearFormsButton instanceof HTMLButtonElement) {
-    clearFormsButton.dataset.idleLabel = String(clearFormsButton.textContent || "Limpar").trim() || "Limpar";
-    clearFormsButton.addEventListener("click", () => {
-      runFormsClear(clearFormsButton).catch((error) => setStatus(error.message, false));
-    });
-    updateFormsClearButtonState();
   }
   bindManualRefreshButton(refreshInactiveButton, loadInactive);
   bindManualRefreshButton(refreshAdministratorsButton, loadAdministratorsWithProjectCatalog);
@@ -6640,11 +6606,14 @@ function bindActions() {
     }
     if (target.tagName === "BUTTON" && target.dataset.archiveDelete) {
       const fileName = target.dataset.archiveDelete;
-      const confirmed = window.confirm(`Deseja excluir permanentemente o arquivo ${fileName}?`);
-      if (!confirmed) {
-        return;
-      }
-      deleteEventArchive(fileName).catch((error) => setStatus(error.message, false));
+      confirmDestructive({
+        title: "Excluir log salvo",
+        body: `Deseja excluir permanentemente o arquivo ${fileName}? Esta ação não pode ser desfeita.`,
+        confirmLabel: "Excluir arquivo",
+      }).then((confirmed) => {
+        if (!confirmed) return;
+        deleteEventArchive(fileName).catch((error) => setStatus(error.message, false));
+      });
     }
   });
 
@@ -6863,18 +6832,25 @@ function bindActions() {
       }
       if (button.dataset.endpointRotate) {
         const endpointName = button.dataset.endpointRotate;
-        button.disabled = true;
-        button.textContent = "Alterando...";
-        postJson(`/api/partner/admin/endpoint-keys/${encodeURIComponent(endpointName)}/rotate`, {})
-          .then((result) => {
-            setEndpointsStatus(result.message || "Chave alterada com sucesso.", true);
-            loadEndpoints().catch(() => {});
-          })
-          .catch((error) => {
-            setEndpointsStatus(error.message || "Erro ao alterar a chave.", false);
-            button.disabled = false;
-            button.textContent = "Alterar";
-          });
+        confirmDestructive({
+          title: "Alterar chave secreta",
+          body: `Deseja gerar uma nova chave para o endpoint "${endpointName}"? A chave atual será invalidada imediatamente — clientes que ainda usam a chave anterior perderão acesso.`,
+          confirmLabel: "Gerar nova chave",
+        }).then((confirmed) => {
+          if (!confirmed) return;
+          button.disabled = true;
+          button.textContent = "Alterando...";
+          postJson(`/api/partner/admin/endpoint-keys/${encodeURIComponent(endpointName)}/rotate`, {})
+            .then((result) => {
+              setEndpointsStatus(result.message || "Chave alterada com sucesso.", true);
+              loadEndpoints().catch(() => {});
+            })
+            .catch((error) => {
+              setEndpointsStatus(error.message || "Erro ao alterar a chave.", false);
+              button.disabled = false;
+              button.textContent = "Alterar";
+            });
+        });
       }
     });
   }
@@ -7073,7 +7049,12 @@ function renderAccidentsHistory(rows) {
       btn.className = "secondary-button delete-button";
       btn.textContent = "Remover";
       btn.addEventListener("click", async () => {
-        if (!confirm(`Tem certeza que deseja excluir o acidente ${row.accident_number_label}?`)) return;
+        const confirmed = await confirmDestructive({
+          title: "Excluir acidente",
+          body: `Tem certeza que deseja excluir o acidente ${row.accident_number_label}? O archive e vídeos serão apagados permanentemente.`,
+          confirmLabel: "Excluir acidente",
+        });
+        if (!confirmed) return;
         await fetch(`/api/admin/accidents/${row.id}`, { method: "DELETE", credentials: "include" });
         fetchAccidentsHistory();
       });
