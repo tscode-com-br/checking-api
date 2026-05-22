@@ -417,7 +417,6 @@ def register_web_user(
         placa=None,
         end_rua=None,
         zip=None,
-        cargo=None,
         email=payload.email,
         local=None,
         checkin=None,

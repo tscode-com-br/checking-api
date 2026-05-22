@@ -146,7 +146,6 @@ def _create_user(session: Session, *, chave: str, nome: str, projeto: str, addre
         placa=None,
         end_rua=address,
         zip=zip_code,
-        cargo=None,
         email=None,
         local=None,
         checkin=None,

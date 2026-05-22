@@ -1560,7 +1560,6 @@ input.inline, select.inline, textarea.inline {
 }
 
 .cadastro-users-table .user-end-rua.inline,
-.cadastro-users-table .user-cargo.inline,
 .cadastro-users-table .user-email.inline {
   white-space: nowrap;
   overflow: hidden;

@@ -78,7 +78,6 @@ def _create_user(session: Session, chave: str = "U001", projeto: str = "P83") ->
         placa=None,
         end_rua=None,
         zip=None,
-        cargo=None,
         email=None,
         local=None,
         checkin=None,

@@ -111,7 +111,6 @@ def _create_user(
         placa=None,
         end_rua=address,
         zip=zip_code,
-        cargo=None,
         email=None,
         local=None,
         checkin=None,

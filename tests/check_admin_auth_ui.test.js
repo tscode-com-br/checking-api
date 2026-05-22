@@ -87,7 +87,7 @@ test('administrators table renders editable profiles and request approval action
 
 test('pending and registered users tables use a checkbox project picker with plural membership payloads', () => {
   assert.match(adminHtml, /<tr><th>RFID<\/th><th>Nome<\/th><th>Chave<\/th><th>Projetos<\/th><th>Ações<\/th><\/tr>/);
-  assert.match(adminHtml, /<tr><th>RFID<\/th><th>Nome<\/th><th>Chave<\/th><th>Perfil<\/th><th>Projetos<\/th><th>Endereço<\/th><th>ZIP Code<\/th><th>Cargo<\/th><th>Email<\/th><th>Ações<\/th><\/tr>/);
+  assert.match(adminHtml, /<tr><th>RFID<\/th><th>Nome<\/th><th>Chave<\/th><th>Perfil<\/th><th>Projetos<\/th><th>Endereço<\/th><th>ZIP Code<\/th><th>Email<\/th><th>Ações<\/th><\/tr>/);
   assert.match(adminJs, /class="secondary-button membership-projects-button"[\s\S]*data-project-membership-toggle="\$\{escapeHtml\(projectMembershipKey\)\}"[\s\S]*>Select<\/button>/);
   assert.match(adminJs, /class="membership-projects-panel" hidden><\/div>/);
   assert.match(adminJs, /data-project-membership-back="\$\{escapeHtml\(editorKey\)\}">Back<\/button>/);

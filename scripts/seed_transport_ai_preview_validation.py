@@ -198,7 +198,6 @@ def _create_user(session, scenario: PreviewScenario) -> User:
         placa=None,
         end_rua=scenario.user_address,
         zip=scenario.user_zip,
-        cargo=None,
         email=None,
         local=None,
         checkin=None,

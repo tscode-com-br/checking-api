@@ -160,7 +160,6 @@ def ensure_default_admin(db: Session) -> User:
             placa=None,
             end_rua=None,
             zip=None,
-            cargo=None,
             email=None,
             local=None,
             checkin=None,

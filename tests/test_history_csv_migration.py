@@ -76,7 +76,7 @@ def test_history_csv_migration_imports_csv_and_preserves_newer_user_state(tmp_pa
             user_row = connection.execute(
                 sa.text(
                     """
-                    SELECT nome, projeto, cargo, email, local, checkin, time
+                    SELECT nome, projeto, email, local, checkin, time
                     FROM users
                     WHERE chave = 'CF10'
                     """
@@ -94,7 +94,6 @@ def test_history_csv_migration_imports_csv_and_preserves_newer_user_state(tmp_pa
             ).mappings().all()
 
         assert user_row["nome"] == "Adriano Jose da Silva"
-        assert user_row["cargo"] == "PCR NS Engenharia de Processamento"
         assert user_row["email"] == "adjose@petrobras.com.br"
         assert user_row["projeto"] == "P83"
         assert user_row["local"] == "main"

@@ -1729,7 +1729,6 @@ def request_admin_access_self_service(
                 placa=None,
                 end_rua=None,
                 zip=None,
-                cargo=None,
                 email=None,
                 local=None,
                 checkin=None,
@@ -2575,7 +2574,6 @@ def approve_administrator_request(
             placa=None,
             end_rua=None,
             zip=None,
-            cargo=None,
             email=None,
             local=None,
             checkin=None,
@@ -3412,7 +3410,6 @@ def list_users(
                 placa=row.placa,
                 end_rua=row.end_rua,
                 zip=row.zip,
-                cargo=row.cargo,
                 email=row.email,
             )
         )
@@ -3546,7 +3543,6 @@ def upsert_user(
             sync_user_vehicle_reference(user, linked_vehicle)
         user.end_rua = payload.end_rua
         user.zip = payload.zip
-        user.cargo = payload.cargo
         user.email = payload.email
         replace_user_project_memberships(db, user, requested_project_names)
         if (
@@ -3580,7 +3576,6 @@ def upsert_user(
             placa=linked_vehicle.placa if linked_vehicle is not None else None,
             end_rua=payload.end_rua,
             zip=payload.zip,
-            cargo=payload.cargo,
             email=payload.email,
             local=None,
             checkin=None,

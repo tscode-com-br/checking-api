@@ -171,7 +171,6 @@ def _build_transport_ai_openai_smoke_script() -> str:
                 placa=None,
                 end_rua="10 Bayfront Avenue",
                 zip="018956",
-                cargo=None,
                 email=None,
                 local=None,
                 checkin=None,

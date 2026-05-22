@@ -118,7 +118,6 @@ def ensure_web_user_exists(*, chave: str, projeto: str, nome: str) -> None:
                 placa=None,
                 end_rua=None,
                 zip=None,
-                cargo=None,
                 email=None,
                 local=None,
                 checkin=None,

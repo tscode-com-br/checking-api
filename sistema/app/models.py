@@ -74,7 +74,6 @@ class User(Base):
     placa: Mapped[str | None] = mapped_column(String(15), nullable=True)
     end_rua: Mapped[str | None] = mapped_column(String(255), nullable=True)
     zip: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    cargo: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     local: Mapped[str | None] = mapped_column(String(40), nullable=True)
     checkin: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

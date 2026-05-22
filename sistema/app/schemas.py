@@ -531,7 +531,6 @@ class AdminUserUpsert(BaseModel):
     placa: str | None = Field(default=None, max_length=PLATE_MAX_LENGTH)
     end_rua: str | None = Field(default=None, max_length=255)
     zip: str | None = Field(default=None, max_length=10)
-    cargo: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
@@ -594,11 +593,6 @@ class AdminUserUpsert(BaseModel):
     @classmethod
     def validate_zip(cls, value: str | None) -> str | None:
         return _normalize_optional_compact_text(value, "O ZIP code", max_length=10)
-
-    @field_validator("cargo", mode="before")
-    @classmethod
-    def validate_cargo(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, "O cargo", max_length=255)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -1284,7 +1278,6 @@ class AdminUserListRow(BaseModel):
     placa: Optional[str] = None
     end_rua: Optional[str] = None
     zip: Optional[str] = None
-    cargo: Optional[str] = None
     email: Optional[str] = None
 
 

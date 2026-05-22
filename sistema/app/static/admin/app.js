@@ -4599,7 +4599,6 @@ function makeRegisteredUserRow(user) {
     </td>
     <td><input class="inline user-end-rua" maxlength="255" value="${escapeHtml(user.end_rua ?? "")}" title="${escapeHtml(user.end_rua ?? "")}" disabled /></td>
     <td><input class="inline user-zip" maxlength="10" value="${escapeHtml(user.zip ?? "")}" title="${escapeHtml(user.zip ?? "")}" disabled /></td>
-    <td><input class="inline user-cargo" maxlength="255" value="${escapeHtml(user.cargo ?? "")}" title="${escapeHtml(user.cargo ?? "")}" disabled /></td>
     <td><input class="inline user-email" type="email" maxlength="255" value="${escapeHtml(user.email ?? "")}" title="${escapeHtml(user.email ?? "")}" spellcheck="false" disabled /></td>
     <td class="pending-actions user-actions">
       <button data-user-edit="${user.id}">Editar</button>
@@ -4760,7 +4759,6 @@ function setRegisteredUserEditingState(userId, editing) {
   const projectEditor = getProjectMembershipEditor("user", userId);
   const endRua = row.querySelector(".user-end-rua");
   const zip = row.querySelector(".user-zip");
-  const cargo = row.querySelector(".user-cargo");
   const email = row.querySelector(".user-email");
   const saveButton = row.querySelector(`[data-user-save="${userId}"]`);
   const editButton = row.querySelector(`[data-user-edit="${userId}"]`);
@@ -4773,7 +4771,6 @@ function setRegisteredUserEditingState(userId, editing) {
   syncProjectMembershipToggleState(projectEditor, editing);
   endRua.disabled = !editing;
   zip.disabled = !editing;
-  cargo.disabled = !editing;
   email.disabled = !editing;
   saveButton.disabled = !editing;
   editButton.disabled = editing;
@@ -5909,7 +5906,6 @@ async function saveRegisteredUser(userId) {
   const projetos = getProjectMembershipSelectionForSubmit("user", normalizedUserId);
   const endRua = row.querySelector(".user-end-rua").value.trim();
   const zip = row.querySelector(".user-zip").value.trim();
-  const cargo = row.querySelector(".user-cargo").value.trim();
   const email = row.querySelector(".user-email").value.trim().toLowerCase();
   if (!nome || chave.length !== 4) {
     setStatus("Preencha nome e chave de 4 caracteres", false);
@@ -5932,7 +5928,6 @@ async function saveRegisteredUser(userId) {
     projetos,
     end_rua: endRua || null,
     zip: zip || null,
-    cargo: cargo || null,
     email: email || null,
   });
   setStatus("Usuário salvo com sucesso", true);

@@ -85,7 +85,6 @@ def submit_provider_checking(
             placa=None,
             end_rua=None,
             zip=None,
-            cargo=None,
             email=None,
             local=None,
             checkin=None,

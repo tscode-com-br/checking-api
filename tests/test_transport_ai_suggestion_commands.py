@@ -174,7 +174,6 @@ def _build_transport_ai_suggestion_script(
                 placa=None,
                 end_rua="10 Bayfront Avenue",
                 zip="018956",
-                cargo=None,
                 email=None,
                 local=None,
                 checkin=None,
