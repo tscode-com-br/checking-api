@@ -20,6 +20,9 @@ htmlcov/
 # Deployment secrets
 deploy/keys/
 
+# Local DB backups (production pg_dumps are not committed)
+deploy/backups/
+
 # Separate Flutter repository and local artifacts
 checking_android_new/
 checking_kotlin/
