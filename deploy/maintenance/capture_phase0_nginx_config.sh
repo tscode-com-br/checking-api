@@ -391,7 +391,6 @@ else
 fi
 
 api_targets="$(targets_for_pattern "$evidence_dir/23_active_location_targets.tsv" '\\/api\\/?')"
-admin_targets="$(targets_for_pattern "$evidence_dir/23_active_location_targets.tsv" '\\/checking\\/admin')"
 user_targets="$(targets_for_pattern "$evidence_dir/23_active_location_targets.tsv" '\\/checking\\/user')"
 transport_targets="$(targets_for_pattern "$evidence_dir/23_active_location_targets.tsv" '\\/checking\\/transport')"
 generic_checking_targets="$(awk -F'[|][|][|]' '$1 ~ /^[[:space:]]*location[[:space:]]+\/checking\/?[[:space:]]*\{/ && $2 != "" { print $2 }' "$evidence_dir/23_active_location_targets.tsv" | sort -u | paste -sd',' -)"
@@ -402,7 +401,6 @@ if has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\
   has_8000=1
 fi
 if has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\.0\.0\.1:18080' \
-  && has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\.0\.0\.1:18081' \
   && has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\.0\.0\.1:18082' \
   && has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\.0\.0\.1:18083'; then
   has_split=1
@@ -414,7 +412,7 @@ if [[ $has_8000 -eq 1 ]] && has_line_pattern "$evidence_dir/22_active_relevant_l
 elif [[ $has_8000 -eq 1 ]]; then
   routing_answer='127.0.0.1:8000'
 elif [[ $has_split -eq 1 ]]; then
-  routing_answer='18080/18081/18082/18083'
+  routing_answer='18080/18082/18083'
 elif has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\.0\.0\.1:1808[0-3]'; then
   routing_answer='split parcial ou inconclusivo'
 fi
@@ -424,7 +422,7 @@ if ! grep -q 'tscode\.com\.br' "$evidence_dir/21_active_tscode_server_blocks.txt
 fi
 
 if [[ $has_8000 -eq 1 ]] && has_line_pattern "$evidence_dir/22_active_relevant_location_blocks.txt" '127\.0\.0\.1:1808[0-3]'; then
-  drifts+=("crítica: o edge ativo mistura upstream monolítico em 127.0.0.1:8000 com upstreams split 18080/18081/18082/18083")
+  drifts+=("crítica: o edge ativo mistura upstream monolítico em 127.0.0.1:8000 com upstreams split 18080/18082/18083")
 fi
 
 if [[ -n "$generic_checking_targets" ]] && [[ "$generic_checking_targets" == *'127.0.0.1:8000'* ]]; then
@@ -433,7 +431,6 @@ fi
 
 if [[ -n "$repo_config_path" ]]; then
   expected_api='127.0.0.1:18080'
-  expected_admin='127.0.0.1:18081/'
   expected_user='127.0.0.1:18082/'
   expected_transport='127.0.0.1:18083/'
 
@@ -441,12 +438,6 @@ if [[ -n "$repo_config_path" ]]; then
     drifts+=("crítica: nenhum upstream ativo foi encontrado para /api/")
   elif [[ ",$api_targets," != *",$expected_api,"* ]]; then
     drifts+=("crítica: /api/ não aponta para $expected_api; ativos observados: ${api_targets:-nenhum}")
-  fi
-
-  if [[ -z "$admin_targets" ]]; then
-    drifts+=("crítica: nenhum upstream ativo foi encontrado para /checking/admin")
-  elif [[ ",$admin_targets," != *",$expected_admin,"* ]]; then
-    drifts+=("crítica: /checking/admin não aponta para $expected_admin; ativos observados: ${admin_targets:-nenhum}")
   fi
 
   if [[ -z "$user_targets" ]]; then
@@ -465,9 +456,6 @@ if [[ -n "$repo_config_path" ]]; then
     drifts+=("importante: os blocos relevantes do edge ativo divergem do arquivo versionado; conferir 27_nginx_relevant_diff.txt")
   fi
 
-  if ! has_header_pattern "$evidence_dir/23_active_location_targets.tsv" '\\/checking\\/admin\\/[[:space:]]*\\{'; then
-    drifts+=("importante: bloco explícito para /checking/admin/ não foi encontrado no edge ativo")
-  fi
 
   if ! has_header_pattern "$evidence_dir/23_active_location_targets.tsv" '\\/checking\\/user\\/[[:space:]]*\\{'; then
     drifts+=("importante: bloco explícito para /checking/user/ não foi encontrado no edge ativo")
@@ -491,7 +479,6 @@ summary_file="$evidence_dir/99_nginx_summary.txt"
   printf 'Repo config path: %s\n' "${repo_config_path:-unavailable}"
   printf 'Routing answer: %s\n' "$routing_answer"
   printf 'Upstreams observed for /api/: %s\n' "${api_targets:-nenhum}"
-  printf 'Upstreams observed for /checking/admin: %s\n' "${admin_targets:-nenhum}"
   printf 'Upstreams observed for /checking/user: %s\n' "${user_targets:-nenhum}"
   printf 'Upstreams observed for /checking/transport: %s\n' "${transport_targets:-nenhum}"
   printf 'Upstreams observed for generic /checking/: %s\n' "${generic_checking_targets:-nenhum}"

@@ -4806,6 +4806,7 @@ function makeProjectRow(project) {
   const formsChecked = project.forms_enabled ? "checked" : "";
   const transportChecked = project.transport_enabled ? "checked" : "";
   const emergencyValue = escapeHtml(project.emergency_phone || "");
+  const inactivityValue = Number.isFinite(project.inactivity_days_threshold) ? project.inactivity_days_threshold : 60;
   tr.innerHTML = `
     <td>${escapeHtml(project.name)}</td>
     <td>${escapeHtml(project.country_name || "-")}</td>
@@ -4826,6 +4827,9 @@ function makeProjectRow(project) {
     </td>
     <td>
       <input type="tel" class="inline project-emergency-input" data-project-emergency-input="${project.id}" value="${emergencyValue}" maxlength="32" placeholder="—" />
+    </td>
+    <td>
+      <input type="number" class="inline project-inactivity-input" data-project-inactivity-input="${project.id}" value="${inactivityValue}" min="1" max="3650" style="width:5em" title="Dias de inatividade até descadastro automático" />
     </td>
     <td class="pending-actions user-actions">
       <button type="button" class="secondary-button" data-project-edit="${project.id}">Editar</button>
@@ -4893,6 +4897,16 @@ function bindProjectFlagHandlers() {
     if (emergencyInput) {
       const projectId = emergencyInput.dataset.projectEmergencyInput;
       await patchProjectFlag(projectId, { emergency_phone: emergencyInput.value });
+    }
+    const inactivityInput = evt.target.closest("[data-project-inactivity-input]");
+    if (inactivityInput) {
+      const projectId = inactivityInput.dataset.projectInactivityInput;
+      const value = Number.parseInt(inactivityInput.value, 10);
+      if (Number.isFinite(value) && value >= 1 && value <= 3650) {
+        await patchProjectFlag(projectId, { inactivity_days_threshold: value });
+      } else {
+        await loadProjects();  // recarrega para reverter valor inválido
+      }
     }
   }, true);  // useCapture para pegar blur
 }
@@ -5196,7 +5210,7 @@ async function loadProjects() {
 
   body.innerHTML = "";
   if (!rows.length) {
-    renderEmptyStateRow("projectsBody", 6, "Nenhum projeto cadastrado.");
+    renderEmptyStateRow("projectsBody", 10, "Nenhum projeto cadastrado.");
     return rows;
   }
 

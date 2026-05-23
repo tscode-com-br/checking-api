@@ -7,7 +7,6 @@ public_base_url="https://tscode.com.br"
 run_nginx_test="false"
 
 api_local_url="http://127.0.0.1:18080/api/health"
-admin_local_url="http://127.0.0.1:18081/"
 user_local_url="http://127.0.0.1:18082/"
 transport_local_url="http://127.0.0.1:18083/"
 
@@ -20,7 +19,6 @@ Options:
   --public-base-url <url>      Public base URL. Default: https://tscode.com.br.
   --nginx-test                 Run nginx -t before URL checks.
   --api-local-url <url>        Override local API health URL.
-  --admin-local-url <url>      Override local admin URL.
   --user-local-url <url>       Override local user URL.
   --transport-local-url <url>  Override local transport URL.
   --help                       Show this message.
@@ -65,10 +63,6 @@ while [ "$#" -gt 0 ]; do
       api_local_url="$2"
       shift 2
       ;;
-    --admin-local-url)
-      admin_local_url="$2"
-      shift 2
-      ;;
     --user-local-url)
       user_local_url="$2"
       shift 2
@@ -102,7 +96,6 @@ fi
 
 if [ "$mode" = "local" ] || [ "$mode" = "full" ]; then
   check_contains "Local API" "$api_local_url" '"status":"ok"'
-  check_contains "Local admin-web" "$admin_local_url" "Checking Admin"
   check_contains "Local user-web" "$user_local_url" 'id="checkForm"'
   check_contains "Local transport-web" "$transport_local_url" "Checking Transport"
 fi

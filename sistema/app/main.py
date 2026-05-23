@@ -26,10 +26,10 @@ from .services.event_archives import ensure_event_archives_dir
 from .services.project_catalog import seed_default_projects
 from .services.transport_ai_llm_settings import get_transport_ai_here_api_key_decrypted
 from .services.transport_ai_sanitization import sanitize_transport_ai_raw_value
+from .services.user_activity import apply_inactivity_descadastro, sync_user_inactivity
 
 
 STATIC_SITE_FLAG_BY_NAME = {
-    "admin": "serve_admin_site_in_api",
     "user": "serve_user_site_in_api",
     "transport": "serve_transport_site_in_api",
 }
@@ -59,7 +59,6 @@ CLIENT_SURFACE_BY_PREFIX = (
     ("/api/mobile", "mobile"),
     ("/api/provider", "provider"),
     ("/api/device", "device"),
-    ("/admin", "admin_static"),
     ("/user", "user_static"),
     ("/transport", "transport_static"),
     ("/assets", "assets"),
@@ -225,6 +224,19 @@ def _load_here_api_key_from_db() -> None:
         _STARTUP_LOGGER.warning("Failed to load HERE API key from database at startup.", exc_info=True)
 
 
+def _apply_startup_inactivity_descadastro() -> None:
+    from .database import SessionLocal
+    try:
+        with SessionLocal() as db:
+            sync_user_inactivity(db)
+            removed = apply_inactivity_descadastro(db)
+            if removed:
+                db.commit()
+                _STARTUP_LOGGER.info("Startup: memberships removidas por inatividade.")
+    except Exception:
+        _STARTUP_LOGGER.warning("Failed to apply inactivity descadastro at startup.", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_event_archives_dir()
@@ -233,6 +245,7 @@ async def lifespan(app: FastAPI):
     seed_default_projects()
     seed_default_admin()
     _load_here_api_key_from_db()
+    _apply_startup_inactivity_descadastro()
     start_realtime_brokers()
     try:
         yield
@@ -283,13 +296,11 @@ app.include_router(partner.router)
 static_dir = Path(__file__).resolve().parent / "static"
 assets_dir = Path(__file__).resolve().parents[2] / "assets"
 if static_dir.exists():
-    admin_dir = static_dir / "admin"
     check_dir = static_dir / "check"
     transport_dir = static_dir / "transport"
 
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    mount_static_site(app, site_name="admin", route_path="/admin", directory=admin_dir)
     mount_static_site(app, site_name="user", route_path="/user", directory=check_dir)
     mount_static_site(app, site_name="transport", route_path="/transport", directory=transport_dir)

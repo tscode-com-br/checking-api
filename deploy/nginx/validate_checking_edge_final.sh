@@ -16,7 +16,6 @@ Usage:
     [--repo-root <path>] \
     [--public-base-url <url>] \
     [--local-api-url <url>] \
-    [--local-admin-url <url>] \
     [--local-user-url <url>] \
     [--local-transport-url <url>] \
     [--public-curl-config <path>] \
@@ -112,7 +111,6 @@ http_config_target="/etc/nginx/conf.d/checkcheck-edge-http.conf"
 repo_root=""
 public_base_url="https://tscode.com.br"
 local_api_url="http://127.0.0.1:18080/api/health"
-local_admin_url="http://127.0.0.1:18081/"
 local_user_url="http://127.0.0.1:18082/"
 local_transport_url="http://127.0.0.1:18083/"
 local_curl_config=""
@@ -142,10 +140,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --local-api-url)
       local_api_url="$2"
-      shift 2
-      ;;
-    --local-admin-url)
-      local_admin_url="$2"
       shift 2
       ;;
     --local-user-url)
@@ -210,7 +204,6 @@ else
 fi
 
 local_api_status="$(capture_http_response "$evidence_dir/20_local_api_health.txt" local_api_health "$local_api_url" "$local_curl_config")"
-local_admin_status="$(capture_http_response "$evidence_dir/21_local_checking_admin.txt" local_checking_admin "$local_admin_url" "$local_curl_config")"
 local_user_status="$(capture_http_response "$evidence_dir/22_local_checking_user.txt" local_checking_user "$local_user_url" "$local_curl_config")"
 local_transport_status="$(capture_http_response "$evidence_dir/23_local_checking_transport.txt" local_checking_transport "$local_transport_url" "$local_curl_config")"
 
@@ -224,7 +217,6 @@ verify_local_status="$(capture_command "$evidence_dir/40_verify_local.txt" \
   --mode local \
   --nginx-test \
   --api-local-url "$local_api_url" \
-  --admin-local-url "$local_admin_url" \
   --user-local-url "$local_user_url" \
   --transport-local-url "$local_transport_url")"
 
@@ -232,7 +224,6 @@ verify_full_status="$(capture_command "$evidence_dir/41_verify_full.txt" \
   bash "$repo_root/deploy/nginx/verify_checking_edge_cutover.sh" \
   --mode full \
   --api-local-url "$local_api_url" \
-  --admin-local-url "$local_admin_url" \
   --user-local-url "$local_user_url" \
   --transport-local-url "$local_transport_url" \
   --public-base-url "$public_base_url")"
@@ -282,7 +273,6 @@ summary_file="$evidence_dir/99_edge_final_validation_summary.txt"
   printf 'reconciliation_capture=%s\n' "$reconciliation_status"
   printf '\nCurl exit codes:\n'
   printf 'local_api=%s\n' "$local_api_status"
-  printf 'local_admin=%s\n' "$local_admin_status"
   printf 'local_user=%s\n' "$local_user_status"
   printf 'local_transport=%s\n' "$local_transport_status"
   printf 'public_api=%s\n' "$public_api_status"
@@ -291,7 +281,6 @@ summary_file="$evidence_dir/99_edge_final_validation_summary.txt"
   printf 'public_transport=%s\n' "$public_transport_status"
   printf '\nHTTP status summary:\n'
   printf 'local_api_status=%s\n' "$(extract_http_status "$evidence_dir/20_local_api_health.txt")"
-  printf 'local_admin_status=%s\n' "$(extract_http_status "$evidence_dir/21_local_checking_admin.txt")"
   printf 'local_user_status=%s\n' "$(extract_http_status "$evidence_dir/22_local_checking_user.txt")"
   printf 'local_transport_status=%s\n' "$(extract_http_status "$evidence_dir/23_local_checking_transport.txt")"
   printf 'public_api_status=%s\n' "$(extract_http_status "$evidence_dir/30_public_api_health.txt")"
