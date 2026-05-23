@@ -17,10 +17,7 @@ services:
       - "${USER_WEB_PORT:-18082}:8080"
 
   transport-web:
-    image: ${CHECKCHECK_TRANSPORT_WEB_IMAGE:-checkcheck-transport-web:local}
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.transport-web
+    image: ${CHECKCHECK_TRANSPORT_WEB_IMAGE:-ghcr.io/tscode-com-br/checking-transport:main}
     restart: unless-stopped
     ports:
       - "${TRANSPORT_WEB_PORT:-18083}:8080"
