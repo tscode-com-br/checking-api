@@ -31,7 +31,9 @@
   const _origFetch = window.fetch;
   window.fetch = function(...args) {
     const url = String(typeof args[0] === "string" ? args[0] : args[0]?.url || "");
-    if (url.includes("/api/")) {
+    const init = args[1];
+    const isSilent = init && init.__silent === true;
+    if (url.includes("/api/") && !isSilent) {
       _pending++;
       if (_pending === 1) progressStart();
       return _origFetch.apply(this, args).finally(() => {
@@ -84,21 +86,6 @@
         window.v2Toast(text, isOk);
       }).observe(statusLine, { characterData: true, childList: true, subtree: true });
     }
-
-    // Row stagger animation — fires whenever a tbody gets new rows
-    function staggerRows(tbody) {
-      const rows = Array.from(tbody.children);
-      rows.forEach((row, i) => {
-        row.classList.remove("v2-row-enter");
-        row.style.setProperty("--row-i", String(Math.min(i, 30)));
-      });
-      requestAnimationFrame(() => rows.forEach((row) => row.classList.add("v2-row-enter")));
-    }
-    document.querySelectorAll("tbody").forEach((tbody) => {
-      new MutationObserver((muts) => {
-        if (muts.some((m) => m.addedNodes.length > 0)) staggerRows(tbody);
-      }).observe(tbody, { childList: true });
-    });
 
     // Modal card entrance animation
     document.querySelectorAll(".modal-backdrop").forEach((backdrop) => {
@@ -194,8 +181,12 @@ const saveProjectButton = document.getElementById("saveProjectButton");
 const cancelProjectEditButton = document.getElementById("cancelProjectEditButton");
 const addProjectButton = document.getElementById("addProjectButton");
 
+// Diff render cache for presence tables (checkin/checkout)
+// WeakMap<HTMLTableRowElement, string> — stores outerHTML to detect DOM changes
+const presenceRowHtmlCache = new WeakMap();
+
 const AUTO_REFRESH_MS = 5000;
-const REALTIME_DEBOUNCE_MS = 250;
+const REALTIME_DEBOUNCE_MS = 600;
 const ARCHIVE_PAGE_SIZE = 8;
 const DATABASE_EVENTS_PAGE_SIZE = 50;
 const DATABASE_EVENT_DEFAULT_SORT_KEY = "event_time";
@@ -2736,7 +2727,7 @@ function resetDatabaseEventFilters() {
   syncDatabaseEventFilterInputs();
 }
 
-async function loadDatabaseEvents() {
+async function loadDatabaseEvents({ silent = false } = {}) {
   if (!document.getElementById("databaseEventsBody")) {
     return;
   }
@@ -2747,7 +2738,8 @@ async function loadDatabaseEvents() {
   }
 
   const params = buildDatabaseEventsQueryParams();
-  const payload = await fetchJson(`/api/admin/database-events?${params.toString()}`);
+  const fetcher = silent ? fetchJsonSilent : fetchJson;
+  const payload = await fetcher(`/api/admin/database-events?${params.toString()}`);
   const rows = Array.isArray(payload?.items) ? payload.items : [];
 
   databaseEventsLoaded = true;
@@ -2853,6 +2845,14 @@ async function fetchJsonWithMeta(url, options = {}) {
   }
   const data = res.status === 204 ? null : await res.json();
   return { data, headers: res.headers };
+}
+
+async function fetchJsonSilent(url, options = {}) {
+  return fetchJson(url, { ...options, __silent: true });
+}
+
+async function fetchJsonWithMetaSilent(url, options = {}) {
+  return fetchJsonWithMeta(url, { ...options, __silent: true });
 }
 
 async function postJson(url, body) {
@@ -3733,8 +3733,59 @@ function renderPresenceTable(bodyId, rows, options = {}) {
     return;
   }
   const body = document.getElementById(bodyId);
-  body.innerHTML = "";
-  rows.forEach((row) => body.appendChild(buildPresenceRow(row, options)));
+  const responsiveVariant = options.responsiveVariant || "desktop";
+
+  // Diff render: reuse existing <tr> nodes when HTML is identical
+  // Key: row.chave (unique 4-char per user); stored as tr.dataset.rowKey
+  // Cache: WeakMap<HTMLTableRowElement, string> with outerHTML to capture class/dataset changes
+  const existingByKey = new Map();
+  Array.from(body.children).forEach((tr) => {
+    const key = tr.dataset.rowKey;
+    if (key) existingByKey.set(key, tr);
+  });
+
+  const newTrList = rows.map((row) => {
+    const key = String(row.chave || "").trim().toUpperCase();
+    const newHtml = (() => {
+      const tmp = buildPresenceRow(row, options);
+      tmp.dataset.rowKey = key;
+      tmp.dataset.responsiveVariant = responsiveVariant;
+      return tmp;
+    })();
+    const newOuterHtml = newHtml.outerHTML;
+
+    const existing = existingByKey.get(key);
+    if (existing) {
+      existingByKey.delete(key);
+      const cachedHtml = presenceRowHtmlCache.get(existing);
+      if (cachedHtml === newOuterHtml) {
+        // Identical — reuse as-is
+        return existing;
+      }
+      // Content changed — replace with new node
+      presenceRowHtmlCache.set(newHtml, newOuterHtml);
+      return newHtml;
+    }
+    presenceRowHtmlCache.set(newHtml, newOuterHtml);
+    return newHtml;
+  });
+
+  // Remove rows no longer in data
+  existingByKey.forEach((tr) => tr.remove());
+
+  // Reconcile DOM order without full rebuild
+  newTrList.forEach((tr, i) => {
+    const current = body.children[i];
+    if (current !== tr) {
+      body.insertBefore(tr, current || null);
+    }
+  });
+
+  // Remove stale nodes left over when a row's content changed (replaced by a new node)
+  while (body.children.length > newTrList.length) {
+    body.lastElementChild.remove();
+  }
+
   applyResponsiveLabels(bodyId);
   updateUserTitle(bodyId, rows.length, getPresenceTotalForTitle(bodyId));
 }
@@ -4671,10 +4722,11 @@ async function saveLocationSettings() {
   }
 }
 
-async function loadLocations() {
+async function loadLocations({ silent = false } = {}) {
+  const fetcher = silent ? fetchJsonSilent : fetchJson;
   const [locationsResponse, checkoutDistancesResponse] = await Promise.all([
-    fetchJson("/api/admin/locations"),
-    fetchJson("/api/admin/locations/auto-checkout-distances"),
+    fetcher("/api/admin/locations"),
+    fetcher("/api/admin/locations/auto-checkout-distances"),
   ]);
   locationAccuracyThresholdMeters = locationsResponse.location_accuracy_threshold_meters;
   mixedZoneIntervalMinutes = locationsResponse.mixed_zone_interval_minutes ?? mixedZoneIntervalMinutes;
@@ -4751,18 +4803,98 @@ function makeRegisteredUserRow(user) {
 
 function makeProjectRow(project) {
   const tr = document.createElement("tr");
+  const formsChecked = project.forms_enabled ? "checked" : "";
+  const transportChecked = project.transport_enabled ? "checked" : "";
+  const emergencyValue = escapeHtml(project.emergency_phone || "");
   tr.innerHTML = `
     <td>${escapeHtml(project.name)}</td>
     <td>${escapeHtml(project.country_name || "-")}</td>
     <td>${escapeHtml(project.address || "-")}</td>
     <td>${escapeHtml(project.zip_code || "-")}</td>
     <td>${escapeHtml(formatTimeZoneLabel(project.timezone_label))}</td>
+    <td>
+      <label class="toggle-switch" title="Habilitar/desabilitar envio ao Microsoft Forms">
+        <input type="checkbox" data-project-forms-toggle="${project.id}" data-project-name="${escapeHtml(project.name)}" ${formsChecked} />
+        <span class="toggle-slider"></span>
+      </label>
+    </td>
+    <td>
+      <label class="toggle-switch" title="Mostrar/ocultar botão de Transporte no Check Web">
+        <input type="checkbox" data-project-transport-toggle="${project.id}" data-project-name="${escapeHtml(project.name)}" ${transportChecked} />
+        <span class="toggle-slider"></span>
+      </label>
+    </td>
+    <td>
+      <input type="tel" class="inline project-emergency-input" data-project-emergency-input="${project.id}" value="${emergencyValue}" maxlength="32" placeholder="—" />
+    </td>
     <td class="pending-actions user-actions">
       <button type="button" class="secondary-button" data-project-edit="${project.id}">Editar</button>
       <button type="button" class="secondary-button" data-project-remove="${project.id}">Remover</button>
     </td>
   `;
   return tr;
+}
+
+async function patchProjectFlag(projectId, payload) {
+  try {
+    await putJson(`/api/admin/projects/${projectId}`, payload);
+    setStatus("Projeto atualizado.", true);
+  } catch (error) {
+    setStatus(error.message || "Falha ao atualizar projeto.", false);
+    await loadProjects();  // resync
+  }
+}
+
+function bindProjectFlagHandlers() {
+  const projectsBody = document.getElementById("projectsBody");
+  if (!projectsBody || projectsBody.dataset.flagHandlersBound === "true") return;
+  projectsBody.dataset.flagHandlersBound = "true";
+
+  projectsBody.addEventListener("change", async (evt) => {
+    const formsToggle = evt.target.closest("[data-project-forms-toggle]");
+    const transportToggle = evt.target.closest("[data-project-transport-toggle]");
+
+    if (formsToggle) {
+      const projectId = formsToggle.dataset.projectFormsToggle;
+      const projectName = formsToggle.dataset.projectName;
+      if (!formsToggle.checked) {
+        const ok = window.confirm(
+          `Tem certeza de que quer desligar o preenchimento do Microsoft Forms para o projeto ${projectName}? ` +
+          "Atividades dos usuarios continuam sendo registradas, mas o Forms deixa de ser enviado."
+        );
+        if (!ok) {
+          formsToggle.checked = true;
+          return;
+        }
+      }
+      await patchProjectFlag(projectId, { forms_enabled: formsToggle.checked });
+      return;
+    }
+
+    if (transportToggle) {
+      const projectId = transportToggle.dataset.projectTransportToggle;
+      const projectName = transportToggle.dataset.projectName;
+      if (!transportToggle.checked) {
+        const ok = window.confirm(
+          `Tem certeza de que quer ocultar o botao de Transporte para os usuarios do projeto ${projectName}?`
+        );
+        if (!ok) {
+          transportToggle.checked = true;
+          return;
+        }
+      }
+      await patchProjectFlag(projectId, { transport_enabled: transportToggle.checked });
+      return;
+    }
+  });
+
+  projectsBody.addEventListener("blur", async (evt) => {
+    const emergencyInput = evt.target.closest("[data-project-emergency-input]");
+    if (emergencyInput) {
+      const projectId = emergencyInput.dataset.projectEmergencyInput;
+      await patchProjectFlag(projectId, { emergency_phone: emergencyInput.value });
+    }
+  }, true);  // useCapture para pegar blur
 }
 
 function getAdministratorProjectNames(row) {
@@ -4976,8 +5108,9 @@ function readAdministratorProjects(id) {
   return projects;
 }
 
-async function loadCheckin() {
-  const { data, headers } = await fetchJsonWithMeta("/api/admin/checkin");
+async function loadCheckin({ silent = false } = {}) {
+  const fetcher = silent ? fetchJsonWithMetaSilent : fetchJsonWithMeta;
+  const { data, headers } = await fetcher("/api/admin/checkin");
   presenceTableStates.checkin.rawRows = Array.isArray(data) ? data : [];
   const totalInScope = Number.parseInt(headers.get("X-Total-In-Scope") || "", 10);
   if (Number.isFinite(totalInScope)) {
@@ -4987,8 +5120,9 @@ async function loadCheckin() {
   updateDashboardSummary();
 }
 
-async function loadCheckout() {
-  const { data, headers } = await fetchJsonWithMeta("/api/admin/checkout");
+async function loadCheckout({ silent = false } = {}) {
+  const fetcher = silent ? fetchJsonWithMetaSilent : fetchJsonWithMeta;
+  const { data, headers } = await fetcher("/api/admin/checkout");
   presenceTableStates.checkout.rawRows = Array.isArray(data) ? data : [];
   const totalInScope = Number.parseInt(headers.get("X-Total-In-Scope") || "", 10);
   if (Number.isFinite(totalInScope)) {
@@ -5008,8 +5142,9 @@ async function loadInactive() {
   updateDashboardSummary();
 }
 
-async function loadPending() {
-  const rows = await fetchJson("/api/admin/pending");
+async function loadPending({ silent = false } = {}) {
+  const fetcher = silent ? fetchJsonSilent : fetchJson;
+  const rows = await fetcher("/api/admin/pending");
   pendingUsersTotal = Array.isArray(rows) ? rows.length : 0;
   const body = document.getElementById("pendingBody");
   body.innerHTML = "";
@@ -5067,10 +5202,9 @@ async function loadProjects() {
 
   rows.forEach((project) => body.appendChild(makeProjectRow(project)));
   applyResponsiveLabels("projectsBody");
+  bindProjectFlagHandlers();
   return rows;
-}
-
-async function loadRegisteredUsers() {
+} {
   const rows = await fetchJson("/api/admin/users");
   registeredUsersTotal = rows.length;
   populateReportsSearchOptions(rows);
@@ -5677,20 +5811,20 @@ async function refreshAutomaticTables() {
   const jobs = [];
   const scrollSnapshot = capturePresencePageScroll();
   if (isAdminTabAllowed("checkin")) {
-    jobs.push(loadCheckin());
+    jobs.push(loadCheckin({ silent: true }));
   }
   if (isAdminTabAllowed("checkout")) {
-    jobs.push(loadCheckout());
+    jobs.push(loadCheckout({ silent: true }));
   }
   if (databaseEventsLoaded && isAdminTabAllowed("banco-dados")) {
-    jobs.push(loadDatabaseEvents());
+    jobs.push(loadDatabaseEvents({ silent: true }));
   }
   if (isAdminTabAllowed("cadastro") && !hasPendingEditInProgress()) {
     // Background refresh keeps the administrator grid stable. The grid depends on
     // the current project catalog and should only rerender in the explicit loaders.
     await loadProjects();
-    jobs.push(loadPending());
-    jobs.push(loadLocations());
+    jobs.push(loadPending({ silent: true }));
+    jobs.push(loadLocations({ silent: true }));
   }
   await Promise.all(jobs);
   restorePresencePageScroll(scrollSnapshot);
@@ -5734,6 +5868,7 @@ function startRealtimeUpdates() {
   eventStream.onmessage = (event) => {
     realtimeConnected = true;
     updateOperationalChrome();
+    if (document.hidden) return;
     try {
       const data = JSON.parse(event.data);
       if (data.reason && data.reason.startsWith("accident_")) {

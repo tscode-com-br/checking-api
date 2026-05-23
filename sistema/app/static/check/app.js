@@ -1386,7 +1386,7 @@
     applyTextContent(registrationLegendTitle, t('registration.sectionTitle'));
     applyTextContent(checkinActionLabel, t('registration.checkinLabel'));
     applyTextContent(checkoutActionLabel, t('registration.checkoutLabel'));
-    applyTextContent(transportActionLabel, t('registration.transportTestingLabel'));
+    applyTextContent(transportActionLabel, t('registration.transportLabel'));
     applyTextContent(informeLegend, t('registration.informeTitle'));
     applyTextContent(normalInformeLabel, t('registration.informeNormalLabel'));
     applyTextContent(retroativoInformeLabel, t('registration.informeRetroativoLabel'));
@@ -6741,6 +6741,22 @@
     });
   }
 
+  function applyTransportEnabledFlag(state) {
+    if (!transportButton) return;
+    const enabled = state?.transport_enabled !== false;
+    const choiceGrid = transportButton.closest('.choice-grid');
+    if (!choiceGrid) return;
+    if (enabled) {
+      transportButton.classList.remove('hidden');
+      choiceGrid.classList.remove('two-columns');
+      choiceGrid.classList.add('three-columns');
+    } else {
+      transportButton.classList.add('hidden');
+      choiceGrid.classList.remove('three-columns');
+      choiceGrid.classList.add('two-columns');
+    }
+  }
+
   function applyHistoryState(state) {
     latestHistoryState = state;
     if (state) {
@@ -6767,6 +6783,7 @@
     renderHistoryValue(lastCheckoutValue, state && state.last_checkout_at);
     syncLatestHistoryHighlight(state);
     applySuggestedActionFromHistory(state);
+    applyTransportEnabledFlag(state);
     renderTransportScreen();
     syncFormControlStates();
   }
