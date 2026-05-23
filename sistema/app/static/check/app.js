@@ -6749,7 +6749,15 @@
 
   function applyTransportEnabledFlag(state) {
     if (!transportButton) return;
-    const enabled = state?.transport_enabled !== false;
+    // O state vindo do POST /api/web/check (MobileSubmitResponse.state =
+    // MobileSyncStateResponse) NAO carrega o campo transport_enabled — so o GET
+    // /api/web/check/state (WebCheckHistoryResponse) traz. Se o campo nao vier,
+    // preserva a visibilidade atual em vez de re-mostrar o botao (caso contrario
+    // a falta do campo viraria 'undefined !== false === true' = mostrar).
+    if (state == null || typeof state.transport_enabled === 'undefined') {
+      return;
+    }
+    const enabled = state.transport_enabled !== false;
     const choiceGrid = transportButton.closest('.choice-grid');
     if (!choiceGrid) return;
     if (enabled) {
