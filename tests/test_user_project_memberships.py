@@ -154,3 +154,95 @@ def test_user_project_helpers_assign_active_project_without_removing_other_membe
         assert refreshed_user.projeto == "P80"
     finally:
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Migration 0067: usuario sem projeto vinculado e estado valido
+# ---------------------------------------------------------------------------
+
+
+def test_replace_memberships_accepts_empty_list_and_clears_projeto(tmp_path):
+    """Apos migration 0067: lista vazia remove todas memberships e zera user.projeto."""
+    engine, session_factory = _build_session_factory(tmp_path / "user_projects_empty.db")
+    try:
+        with session_factory() as session:
+            _create_project(session, "P80")
+            _create_project(session, "P83")
+            user = _create_user(session, chave="UP05", projeto="P83")
+
+            replace_user_project_memberships(session, user, ["P80", "P83"])
+            session.commit()
+
+            remaining = replace_user_project_memberships(session, user, [])
+            session.commit()
+
+            refreshed_user = session.get(User, user.id)
+            membership_rows = session.execute(
+                sa.select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+            ).scalars().all()
+
+        assert remaining == []
+        assert membership_rows == []
+        assert refreshed_user is not None
+        assert refreshed_user.projeto is None
+    finally:
+        engine.dispose()
+
+
+def test_resolve_active_project_returns_empty_when_no_memberships_and_no_legacy(tmp_path):
+    """resolve_user_active_project nao levanta mais excecao quando user nao tem nada."""
+    engine, session_factory = _build_session_factory(tmp_path / "user_projects_resolve.db")
+    try:
+        with session_factory() as session:
+            user = _create_user(session, chave="UP06", projeto="P83")
+            user.projeto = None
+            session.flush()
+            session.commit()
+
+        assert resolve_user_active_project(user, []) == ""
+        assert resolve_user_active_project(user, None) == ""
+    finally:
+        engine.dispose()
+
+
+def test_ensure_active_project_membership_returns_empty_for_user_without_projects(tmp_path):
+    """ensure_user_active_project_is_member retorna lista vazia sem erro quando user nao tem projetos."""
+    engine, session_factory = _build_session_factory(tmp_path / "user_projects_ensure.db")
+    try:
+        with session_factory() as session:
+            user = _create_user(session, chave="UP07", projeto="P83")
+            user.projeto = None
+            session.flush()
+            session.commit()
+
+            result = ensure_user_active_project_is_member(session, user)
+
+        assert result == []
+    finally:
+        engine.dispose()
+
+
+def test_remove_last_membership_keeps_user_without_projects(tmp_path):
+    """remove_user_project_membership permite remover a ultima membership do usuario."""
+    engine, session_factory = _build_session_factory(tmp_path / "user_projects_remove_last.db")
+    try:
+        with session_factory() as session:
+            _create_project(session, "P80")
+            user = _create_user(session, chave="UP08", projeto="P80")
+            replace_user_project_memberships(session, user, ["P80"])
+            session.commit()
+
+            remaining = remove_user_project_membership(session, user, "P80")
+            session.commit()
+
+            refreshed_user = session.get(User, user.id)
+            membership_rows = session.execute(
+                sa.select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+            ).scalars().all()
+
+        assert remaining == []
+        assert membership_rows == []
+        assert refreshed_user is not None
+        assert refreshed_user.projeto is None
+    finally:
+        engine.dispose()

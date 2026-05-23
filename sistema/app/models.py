@@ -71,7 +71,9 @@ class User(Base):
     perfil: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     admin_monitored_projects_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
-    projeto: Mapped[str] = mapped_column(String(120), nullable=False)
+    # projeto = nome do projeto ATIVO do usuario. NULL/vazio quando ele nao
+    # tem nenhum projeto vinculado (memberships zerados). Ver migration 0067.
+    projeto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     workplace: Mapped[str | None] = mapped_column(String(120), ForeignKey("workplaces.workplace"), nullable=True)
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
     placa: Mapped[str | None] = mapped_column(String(15), nullable=True)

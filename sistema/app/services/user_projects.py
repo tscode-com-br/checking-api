@@ -124,6 +124,11 @@ def resolve_user_active_project(
     user: User,
     project_names: Sequence[str] | None = None,
 ) -> str:
+    """Resolve o projeto ativo do usuario considerando suas memberships.
+
+    Retorna string vazia quando o usuario nao tem nenhum projeto vinculado e
+    nao havia projeto ativo legado — estado valido apos migration 0067.
+    """
     normalized_project_names = normalize_user_project_names(project_names or ())
     current_active_project = _normalize_optional_project_name(
         user.projeto,
@@ -131,9 +136,9 @@ def resolve_user_active_project(
     )
 
     if not normalized_project_names:
-        if current_active_project is None:
-            raise ValueError("O usuário precisa ter ao menos um projeto vinculado")
-        return current_active_project
+        # Sem memberships: usa o projeto ativo legado se existir; caso
+        # contrario, indica 'sem projeto' via string vazia.
+        return current_active_project or ""
 
     if current_active_project in set(normalized_project_names):
         return current_active_project
@@ -145,10 +150,26 @@ def replace_user_project_memberships(
     user: User,
     project_names: Iterable[str],
 ) -> list[str]:
+    """Substitui as memberships do usuario pela lista informada.
+
+    Permite lista vazia (apos migration 0067): deleta todas as memberships e
+    seta user.projeto = None. Esse estado representa 'usuario sem projeto',
+    valido para usuarios em pausa ou ainda nao alocados.
+    """
     _require_persisted_user(user)
     normalized_project_names = normalize_user_project_names(project_names)
+
     if not normalized_project_names:
-        raise ValueError("O usuário precisa permanecer vinculado a ao menos um projeto")
+        # Estado 'sem projeto': remove todas as memberships e zera o projeto ativo.
+        existing_memberships = db.execute(
+            select(UserProjectMembership)
+            .where(UserProjectMembership.user_id == user.id)
+        ).scalars().all()
+        for membership in existing_memberships:
+            db.delete(membership)
+        user.projeto = None
+        db.flush()
+        return []
 
     project_by_name = _require_projects_by_name(db, normalized_project_names)
     existing_memberships = db.execute(
@@ -229,8 +250,7 @@ def remove_user_project_membership(db: Session, user: User, project_name: str) -
     ]
     if len(next_project_names) == len(current_project_names):
         return ensure_user_active_project_is_member(db, user)
-    if not next_project_names:
-        raise ValueError("O usuário precisa permanecer vinculado a ao menos um projeto")
+    # Apos migration 0067, lista vazia e estado valido — remove ultima membership.
     return replace_user_project_memberships(db, user, next_project_names)
 
 
@@ -240,7 +260,12 @@ def user_belongs_to_project(db: Session, user: User, project_name: str) -> bool:
 
 
 def ensure_user_active_project_is_member(db: Session, user: User) -> list[str]:
+    """Re-materializa as memberships do usuario a partir dos nomes ja conhecidos.
+
+    Apos migration 0067, retorna lista vazia quando o usuario nao tem nenhum
+    projeto vinculado, em vez de levantar erro.
+    """
     current_project_names = list_user_project_names(db, user)
     if not current_project_names:
-        raise ValueError("O usuário precisa ter ao menos um projeto vinculado")
+        return []
     return replace_user_project_memberships(db, user, current_project_names)
