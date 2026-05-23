@@ -5204,7 +5204,9 @@ async function loadProjects() {
   applyResponsiveLabels("projectsBody");
   bindProjectFlagHandlers();
   return rows;
-} {
+}
+
+async function loadRegisteredUsers() {
   const rows = await fetchJson("/api/admin/users");
   registeredUsersTotal = rows.length;
   populateReportsSearchOptions(rows);
