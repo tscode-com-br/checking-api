@@ -100,6 +100,9 @@ def _build_project_row(row) -> ProjectRow:
         ),
         address=str(row.address or "").strip(),
         zip_code=str(row.zip_code or "").strip(),
+        forms_enabled=bool(row.forms_enabled),
+        transport_enabled=bool(row.transport_enabled),
+        emergency_phone=str(row.emergency_phone or "").strip(),
     )
 
 

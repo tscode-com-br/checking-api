@@ -135,6 +135,9 @@ def _build_project_row(project: Project) -> ProjectRow:
         ),
         address=str(project.address or "").strip(),
         zip_code=str(project.zip_code or "").strip(),
+        forms_enabled=bool(project.forms_enabled),
+        transport_enabled=bool(project.transport_enabled),
+        emergency_phone=str(project.emergency_phone or "").strip(),
     )
 
 
