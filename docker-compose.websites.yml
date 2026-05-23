@@ -8,10 +8,7 @@ services:
       - "${ADMIN2_WEB_PORT:-18084}:8080"
 
   user-web:
-    image: ${CHECKCHECK_USER_WEB_IMAGE:-checkcheck-user-web:local}
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.user-web
+    image: ${CHECKCHECK_USER_WEB_IMAGE:-ghcr.io/tscode-com-br/checking-webapp:main}
     restart: unless-stopped
     ports:
       - "${USER_WEB_PORT:-18082}:8080"
