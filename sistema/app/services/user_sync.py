@@ -9,10 +9,14 @@ from sqlalchemy.orm import Session, object_session
 from ..models import CheckEvent, Project, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
 from .checking_history import record_checking_history
-from .project_catalog import is_transport_enabled_for_project
+from .project_catalog import is_transport_enabled_for_any_project
 from .time_utils import now_sgt, resolve_system_timezone_name, resolve_timezone
 from .user_activity import mark_user_active
-from .user_projects import assign_user_active_project, ensure_user_active_project_is_member
+from .user_projects import (
+    assign_user_active_project,
+    ensure_user_active_project_is_member,
+    list_user_project_names,
+)
 
 APP_IMPORTED_USER_NAME = "Oriundo do Aplicativo"
 WEB_IMPORTED_USER_NAME = "Oriundo da Web"
@@ -838,7 +842,19 @@ def build_mobile_sync_state(db: Session, *, chave: str) -> MobileSyncStateRespon
 
 
 def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistoryResponse:
-    state, project_timezone_name = _build_mobile_sync_state_by_chave(db, chave=normalize_user_key(chave))
+    normalized_chave = normalize_user_key(chave)
+    state, project_timezone_name = _build_mobile_sync_state_by_chave(db, chave=normalized_chave)
+
+    # transport_enabled é o OR sobre todas as memberships do usuário:
+    # botão aparece se pelo menos um projeto do usuário está com transporte ligado.
+    user_project_names: list[str] = []
+    if state.found:
+        user = find_user_by_chave(db, normalized_chave)
+        if user is not None:
+            user_project_names = list_user_project_names(db, user)
+    if not user_project_names and state.projeto:
+        user_project_names = [state.projeto]
+
     return WebCheckHistoryResponse(
         found=state.found,
         chave=state.chave,
@@ -855,5 +871,5 @@ def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistory
         ),
         last_checkin_at=state.last_checkin_at,
         last_checkout_at=state.last_checkout_at,
-        transport_enabled=is_transport_enabled_for_project(db, projeto=state.projeto),
+        transport_enabled=is_transport_enabled_for_any_project(db, projetos=user_project_names),
     )

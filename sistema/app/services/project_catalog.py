@@ -324,3 +324,63 @@ def is_transport_enabled_for_project(db: Session, *, projeto: str | None) -> boo
         select(Project.transport_enabled).where(Project.name == normalized)
     ).scalar_one_or_none()
     return bool(row) if row is not None else True
+
+
+def _normalize_project_names_for_lookup(projetos):
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for projeto in projetos or ():
+        if projeto is None:
+            continue
+        normalized = str(projeto).strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def is_transport_enabled_for_any_project(db: Session, *, projetos) -> bool:
+    """Retorna True se ao menos um projeto da lista tem transport_enabled=True.
+
+    Semântica para o app: o botão 'Transporte' aparece se pelo menos um dos
+    projetos do usuário está com transporte ligado. Lista vazia → True
+    (compatível com o default das outras consultas). Projetos desconhecidos
+    são tratados como ligados (default ON).
+    """
+    normalized = _normalize_project_names_for_lookup(projetos)
+    if not normalized:
+        return True
+    rows = db.execute(
+        select(Project.name, Project.transport_enabled).where(Project.name.in_(normalized))
+    ).all()
+    known_by_name = {name: bool(flag) for name, flag in rows}
+    for project_name in normalized:
+        if project_name not in known_by_name:
+            return True
+        if known_by_name[project_name]:
+            return True
+    return False
+
+
+def list_transport_enabled_project_names(db: Session, *, projetos) -> set[str]:
+    """Retorna o subconjunto dos projetos passados em que transport_enabled=True.
+
+    Projetos desconhecidos são incluídos (default ON), preservando a semântica
+    de is_transport_enabled_for_project. Útil para o dashboard de transporte
+    filtrar a lista de projetos de cada request.
+    """
+    normalized = _normalize_project_names_for_lookup(projetos)
+    if not normalized:
+        return set()
+    rows = db.execute(
+        select(Project.name, Project.transport_enabled).where(Project.name.in_(normalized))
+    ).all()
+    known_by_name = {name: bool(flag) for name, flag in rows}
+    enabled: set[str] = set()
+    for project_name in normalized:
+        if project_name not in known_by_name:
+            enabled.add(project_name)
+        elif known_by_name[project_name]:
+            enabled.add(project_name)
+    return enabled

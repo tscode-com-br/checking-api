@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..models import TransportAssignment, TransportRequest, TransportVehicleSchedule, User, Vehicle, Workplace
 from ..schemas import ProjectRow, TransportDashboardResponse, TransportRequestRow, WorkplaceRow
 from .location_settings import get_transport_arrive_at_work_time, get_transport_work_to_home_time_for_date
-from .project_catalog import list_projects
+from .project_catalog import list_projects, list_transport_enabled_project_names
 from .time_utils import build_timezone_label, now_sgt
 from .user_projects import list_user_project_names_map
 
@@ -26,6 +26,9 @@ def _build_project_row(row) -> ProjectRow:
         ),
         address=str(row.address or "").strip(),
         zip_code=str(row.zip_code or "").strip(),
+        forms_enabled=bool(row.forms_enabled),
+        transport_enabled=bool(row.transport_enabled),
+        emergency_phone=str(row.emergency_phone or "").strip(),
     )
 
 
@@ -92,6 +95,20 @@ def build_transport_dashboard(
     ).all()
     project_names_by_user_id = list_user_project_names_map(db, [user for _, user in requests])
 
+    # Modificação 1 (Regras #1–#4): no dashboard, o usuário só aparece nas User Lists
+    # dos projetos em que está cadastrado e cujo transport_enabled está ligado.
+    # Coletamos os nomes de projetos que aparecem nesses requests (memberships +
+    # projeto ativo legado) e consultamos quais têm transport_enabled=True.
+    all_request_project_names: set[str] = set()
+    for _, user in requests:
+        if user.id is not None:
+            all_request_project_names.update(project_names_by_user_id.get(user.id, []))
+        if user.projeto:
+            all_request_project_names.add(user.projeto)
+    transport_enabled_project_names = list_transport_enabled_project_names(
+        db, projetos=all_request_project_names
+    )
+
     request_kind_by_id = {
         transport_request.id: transport_request.request_kind
         for transport_request, _ in requests
@@ -157,6 +174,15 @@ def build_transport_dashboard(
             if user.id is not None
             else ([user.projeto] if user.projeto else [])
         )
+        # Filtra para manter só projetos com transport_enabled=True. Se sobrar
+        # vazio, o usuário não aparece em nenhuma User List do dashboard.
+        request_projects = [
+            project_name
+            for project_name in request_projects
+            if str(project_name or "").strip().upper() in transport_enabled_project_names
+        ]
+        if not request_projects:
+            continue
 
         assigned_vehicle = None
         assignment_status = "pending"
