@@ -7,7 +7,7 @@ para uso por agentes de IA (Claude, Copilot, etc.) ao assistir no desenvolviment
 
 Sistema de check-in/check-out baseado em RFID com:
 - **Backend**: FastAPI + SQLAlchemy (SQLite em dev, PostgreSQL em produção)
-- **Frontend admin**: SPA em `/admin` (JS vanilla, SSE para atualizações em tempo real)
+- **Frontend admin**: SPA em `/admin2` (JS vanilla, SSE para atualizações em tempo real)
 - **Frontend check web**: SPA em `/check` (JS vanilla, SSE, i18n pt/en/zh/ms/id/tl)
 - **Firmware**: ESP32-S3 com 2 leitores RFID-RC522
 - **Deploy**: Docker Compose + GitHub Actions → DigitalOcean Droplet
@@ -37,7 +37,7 @@ sistema/app/
     email_templates.py          # Templates HTML dos emails
     object_storage.py           # Upload/download DO Spaces (S3)
   static/
-    admin/             # HTML/CSS/JS do painel admin
+    admin2/            # HTML/CSS/JS do painel admin
     check/             # HTML/CSS/JS do Check Web
       i18n-dictionaries.js   # Dicionários pt/en/zh/ms/id/tl
       i18n.js                # Função t() com fallback para pt

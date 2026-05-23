@@ -65,7 +65,7 @@ from ..services.location_matching import (
 from ..services.managed_locations import filter_locations_for_projects
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
-    get_mixed_zone_interval_minutes,
+    get_mixed_zone_interval_minutes_for_projects,
     get_minimum_checkout_distance_meters_for_project,
 )
 from ..services.passwords import hash_password, verify_password
@@ -758,7 +758,7 @@ def get_web_check_locations(request: Request, db: Session = Depends(get_db)) -> 
     return WebLocationOptionsResponse(
         items=items,
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
-        mixed_zone_interval_minutes=get_mixed_zone_interval_minutes(db),
+        mixed_zone_interval_minutes=get_mixed_zone_interval_minutes_for_projects(db, user_project_names),
     )
 
 

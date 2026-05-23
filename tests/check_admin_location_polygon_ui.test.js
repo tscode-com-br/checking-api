@@ -4,17 +4,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const adminHtml = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/index.html'),
+  path.join(__dirname, '../sistema/app/static/admin2/index.html'),
   'utf8'
 );
 
 const adminJs = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/app.js'),
+  path.join(__dirname, '../sistema/app/static/admin2/app.js'),
   'utf8'
 );
 
 const adminCss = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/styles.css'),
+  path.join(__dirname, '../sistema/app/static/admin2/styles.css'),
   'utf8'
 );
 

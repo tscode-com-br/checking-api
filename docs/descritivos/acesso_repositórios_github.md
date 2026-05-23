@@ -1,6 +1,6 @@
 # Acesso aos repositorios GitHub do projeto
 
-Status deste documento: reconciliado com a conta GitHub, com os remotes locais e com o fluxo operacional de commit/push apos a remodelagem de repositorios na conta em 2026-05-06.
+Status deste documento: reconciliado com a conta GitHub, com os remotes locais e com o fluxo operacional de commit/push apos a separacao da API em repositorio proprio em 2026-05-24.
 
 Este arquivo substitui o antigo guia `instrucoes_commit_push.md` e consolida quatro coisas diferentes que nao devem mais ser misturadas:
 
@@ -11,216 +11,272 @@ Este arquivo substitui o antigo guia `instrucoes_commit_push.md` e consolida qua
 
 ## 1. Realidade atual: workspace local versus conta GitHub
 
-Hoje o workspace ainda possui quatro pastas que sao repositorios Git locais. A conta GitHub `tscode-com-br` acessivel neste ambiente agora expõe seis repositorios confirmados, mas apenas dois deles ja estao ligados a remotes ativos no workspace atual.
+O workspace possui seis pastas que sao repositorios Git locais. A conta GitHub `tscode-com-br` expõe onze repositorios; seis deles ja estao conectados a remotes ativos neste workspace.
 
-| Escopo | Pasta local | Branch local confirmada | Remote local atual | Estado atual no GitHub | Impacto operacional |
+| Escopo | Pasta local | Branch local | Remotes ativos | Repo GitHub | Deploy automatico |
 | --- | --- | --- | --- | --- | --- |
-| Sistema principal | `c:\dev\projetos\checkcheck` | `main` | `origin = https://tscode-com-br@github.com/tscode-com-br/checking.git` | Existe | Dono atual da API, transport, admin, webapplication, docs do sistema, deploy e GitHub Actions de producao |
-| App Flutter | `c:\dev\projetos\checkcheck\checking_android_new` | `main` | `origin = https://github.com/tscode-com-br/checking_app_flutter.git` | Existe | Publica apenas o app Flutter |
-| Admin v2 (novo site) | `c:\dev\projetos\checkcheck\sistema\app\static\admin2` | `main` | `origin = https://github.com/tscode-com-br/checking-admin2.git` | Existe (privado) | Repositorio secundario do frontend redesenhado; push em `main` aciona deploy automatico do conteiner `admin2-web` via GitHub Actions proprio. **Caminho primario atual**: editar `deploy/docker/admin2-web/` no root `checking` e disparar manualmente `deploy-oceandrive-admin2-only.yml`. Ver secao 3.2. |
-| App Kotlin legado | `c:\dev\projetos\checkcheck\checking_kotlin` | `main` | `archived-origin = https://github.com/tscode-com-br/checking_app_kotlin.git` | Nao existe mais | Repo local-only; push foi neutralizado e o remote antigo ficou apenas como referencia historica |
-| App Kotlin novo | `c:\dev\projetos\checkcheck\checking_kotlin_new` | `web-parity-spa-baseline` | `archived-origin = https://github.com/tscode-com-br/checking_kotlin_new.git` | Nao existe mais | Repo local-only; push foi neutralizado e o remote antigo ficou apenas como referencia historica |
+| Infraestrutura / monorepo espelho | `c:\dev\projetos\checkcheck` | `main` | `origin = checking` | `tscode-com-br/checking` | `deploy-oceandrive.yml` na branch `main` do `origin`; guarda `if: github.repository == 'tscode-com-br/checking'` |
+| API (Sistema Principal) | `c:\dev\projetos\checkcheck` | `main` | `api = checking-api` | `tscode-com-br/checking-api` | `deploy.yml` na branch `main` do `api`; builda `ghcr.io/tscode-com-br/checking-api` e `checking-api-forms`; usa `docker-compose.api.yml` |
+| Admin v2 | `sistema\app\static\admin2` | `main` | `origin = checking-admin2` | `tscode-com-br/checking-admin2` (privado) | `deploy.yml` do sub-repo; push em `main` reinicia conteiner `admin2-web` |
+| Check Web | `sistema\app\static\check` | `main` | `origin = checking-webapp` | `tscode-com-br/checking-webapp` | `deploy.yml` do sub-repo; push em `main` reinicia conteiner `user-web` |
+| Transport | `sistema\app\static\transport` | `main` | `origin = checking-transport` | `tscode-com-br/checking-transport` | `deploy.yml` do sub-repo; push em `main` reinicia conteiner `transport-web` |
+| App Flutter | `checking_android_new` | `main` | `origin = checking_app_flutter` | `tscode-com-br/checking_app_flutter` | Build de APK/AAB via GitHub Actions do proprio repo |
+| App Kotlin legado | `checking_kotlin` | `main` | `archived-origin` (morto) | Nao existe mais | Local-only; sem deploy |
+| App Kotlin novo | `checking_kotlin_new` | `web-parity-spa-baseline` | `archived-origin` (morto) | Nao existe mais | Local-only; sem deploy |
 
-Repositorios que existem hoje no GitHub, mas ainda nao possuem pasta Git propria nem `origin` configurado neste workspace:
+Observacao sobre o workspace raiz: a pasta `c:\dev\projetos\checkcheck` e simultaneamente o repo de infraestrutura (`origin = checking`) **e** o repo da API (`api = checking-api`). Os dois remotes coexistem no mesmo diretorio Git local. O commit e unico; o destino do push depende de qual remote voce usa.
 
-| Escopo futuro | Repo GitHub | Estado visivel na auditoria | Ligacao local hoje | Impacto operacional hoje |
-| --- | --- | --- | --- | --- |
-| API particionada | `tscode-com-br/checking_api` | Existe; `defaultBranchRef` veio vazio na consulta atual | Nenhuma | Ainda nao recebe commit/push deste workspace por si so; enquanto o codigo estiver no root, o dono continua sendo `checkcheck` |
-| Transport particionado | `tscode-com-br/checking_transport` | Existe; `defaultBranchRef` veio vazio na consulta atual | Nenhuma | Ainda nao recebe commit/push deste workspace por si so; enquanto o codigo estiver no root, o dono continua sendo `checkcheck` |
-| Webapplication particionada | `tscode-com-br/checking_webapplication` | Existe; `defaultBranchRef` veio vazio na consulta atual | Nenhuma | Ainda nao recebe commit/push deste workspace por si so; enquanto o codigo estiver no root, o dono continua sendo `checkcheck` |
-| Admin particionado | `tscode-com-br/checking_admin` | Existe; `defaultBranchRef` veio vazio na consulta atual | Nenhuma | Ainda nao recebe commit/push deste workspace por si so; enquanto o codigo estiver no root, o dono continua sendo `checkcheck` |
+Repositorios que existem no GitHub, mas sem branch configurada (vazios/legado):
 
-Confirmacao feita neste ambiente:
+| Repo GitHub | Situacao |
+| --- | --- |
+| `tscode-com-br/checking_api` | Vazio (criado antes da separacao; substituido por `checking-api` com hifem) |
+| `tscode-com-br/checking_transport` | Vazio (substituido por `checking-transport` com hifem) |
+| `tscode-com-br/checking_webapplication` | Vazio (substituido por `checking-webapp`) |
+| `tscode-com-br/checking_admin` | Vazio (substituido por `checking-admin2`) |
 
-- `gh repo list tscode-com-br --limit 200` retornou `tscode-com-br/checking`, `tscode-com-br/checking_api`, `tscode-com-br/checking_transport`, `tscode-com-br/checking_webapplication`, `tscode-com-br/checking_admin` e `tscode-com-br/checking_app_flutter`;
-- o remote ativo do root continua apontando para `tscode-com-br/checking`;
-- o remote ativo do Flutter continua apontando para `tscode-com-br/checking_app_flutter`;
-- `gh repo view tscode-com-br/checking_app_kotlin` falhou porque o repositorio nao existe mais;
-- `gh repo view tscode-com-br/checking_kotlin_new` falhou porque o repositorio nao existe mais;
-- `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin` existem na conta GitHub, mas ainda nao aparecem como `origin` de nenhum repositorio local neste workspace;
-- na consulta atual via `gh repo list`, esses quatro repositorios novos vieram com `defaultBranchRef` vazio; trate-os como destinos ainda nao conectados e valide a branch inicial antes do primeiro push;
-- nos dois repositorios Kotlin locais, o `origin` morto foi renomeado para `archived-origin`;
-- as branches Kotlin locais ficaram sem upstream configurado para impedir `git push` acidental para destino inexistente.
+Esses quatro repos legados (com underscore) nao recebem push e nao acionam deploy. Ignore-os.
 
-### 1.1 Modificacoes mapeadas nesta revisao
+### 1.1 Modificacoes mapeadas nesta revisao (2026-05-24)
 
-1. a conta GitHub deixou de ter apenas dois repositorios relevantes e agora expõe sete repositorios confirmados, incluindo o novo `checking-admin2`;
-2. foram criados os repositorios `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin`;
-3. foi criado o repositorio `checking-admin2` (privado) para o frontend redesenhado do painel admin; a pasta Git correspondente e `sistema/app/static/admin2` dentro do root; o remote `origin` ja foi configurado e o primeiro push ja foi feito;
-4. **foi criado o caminho de deploy primario do admin2 no proprio root `checking`**: workflow `deploy-oceandrive-admin2-only.yml` acionado manualmente (`workflow_dispatch`) ou por chamada interna (`workflow_call`); constroi imagem Docker a partir de `deploy/docker/admin2-web/{index.html,app.js,styles.css}` e reinicia o conteiner `admin2-web`; esta e a fonte autoritativa atual dos arquivos estaticos do admin2;
-5. os remotes locais ativos do workspace agora sao tres: `checkcheck -> checking`, `checking_android_new -> checking_app_flutter` e `sistema/app/static/admin2 -> checking-admin2`;
-5. os repositorios Kotlin locais continuam em modo local-only, com `archived-origin` apontando para repositorios removidos da conta;
-6. o particionamento futuro ja esta preparado na conta GitHub, mas a separacao operacional real ainda nao aconteceu no workspace;
-7. o repositorio `checking-admin2` continua operacional como caminho secundario: possui `Dockerfile`, `nginx.conf` e `.github/workflows/deploy.yml` proprios; push em `main` dispara build e restart do conteiner `admin2-web`; manter em sincronia com `deploy/docker/admin2-web/` quando houver alteracoes.
+1. **API separada em repositorio proprio**: `tscode-com-br/checking-api` criado e conectado como remote `api` do workspace raiz; workflow `deploy.yml` criado no root com guarda `if: github.repository == 'tscode-com-br/checking-api'`; primeiro deploy completo validado (7m16s, todos os steps ✓).
+2. **Check Web e Transport conectados como sub-repos**: `sistema/app/static/check` agora tem `origin = checking-webapp`; `sistema/app/static/transport` tem `origin = checking-transport`; ambos possuem `deploy.yml` proprio.
+3. **`.gitignore` do root atualizado**: excluidas as tres pastas de sub-repos estaticos (`admin2/`, `check/`, `transport/` dentro de `sistema/app/static/`) para que nao entrem em commits do root nem do `checking-api`.
+4. **`deploy-oceandrive.yml` protegido**: adicionado `if: github.repository == 'tscode-com-br/checking'` para nao executar no `checking-api`.
 
 Consequencias praticas:
 
-- o repositorio principal continua sendo o unico dono do deploy de producao da API e dos websites;
-- os repositorios `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin` ainda nao isolam commit/push sozinhos, porque o codigo correspondente continua fisicamente dentro do root `checkcheck`;
-- enquanto API, transport, admin e webapplication continuarem dentro do root, o commit/push desses escopos ainda acontece em `checkcheck`;
-- o app Flutter continua com repositorio GitHub ativo proprio;
-- as pastas `checking_kotlin` e `checking_kotlin_new` continuam locais, mas hoje nao correspondem a repositorios existentes na conta GitHub;
-- os repositorios Kotlin ficaram sem `origin` ativo e sem upstream local, entao o estado padrao agora e local-only;
-- push a partir dos repositorios Kotlin nao deve ser assumido como valido sem antes criar ou redefinir um novo `origin` existente;
-- o root continua ignorando `checking_android_new/`, `checking_kotlin/` e `checking_kotlin_new/` no `.gitignore`;
-- alteracoes dos apps moveis nao devem entrar em commits do root.
+- mudancas no codigo Python (API, routers, services, models, alembic) devem ser commitadas no root e publicadas com `git push api main`; o push para `origin` e opcional (mantem espelho de infraestrutura sincronizado);
+- mudancas na infra (docker-compose, nginx, deploy scripts, Dockerfile) devem ser commitadas no root e publicadas com `git push origin main`;
+- mudancas no frontend Check Web devem ser commitadas em `sistema/app/static/check` e publicadas com `git push origin main` naquela pasta;
+- mudancas no frontend Transport devem ser commitadas em `sistema/app/static/transport` e publicadas com `git push origin main` naquela pasta;
+- mudancas no frontend Admin v2 devem ser commitadas em `sistema/app/static/admin2` e publicadas com `git push origin main` naquela pasta;
+- os sub-repos estaticos sao invisíveis ao root (`.gitignore`); nao misturar commits.
 
 ## 2. Regra de ouro
 
 Antes de qualquer commit ou push, responda primeiro:
 
-1. A mudanca pertence ao sistema principal?
-2. A mudanca pertence ao app Flutter?
-3. A mudanca pertence a uma pasta Kotlin que hoje esta apenas local?
-4. A mudanca pertence a um escopo que ja ganhou repo no GitHub, mas ainda nao foi extraido do root?
+1. A mudanca pertence ao codigo da API (Python, alembic, modelos, routers)?
+2. A mudanca pertence a um dos frontends estaticos (admin2, check, transport)?
+3. A mudanca pertence a infra/deploy (docker-compose, nginx, Dockerfiles, workflows)?
+4. A mudanca pertence ao app Flutter?
 
-Cada mudanca deve ser commitada apenas no repositorio dono do escopo local.
+Cada mudanca deve ser commitada apenas no repositorio dono do escopo.
 
-Regra operacional:
+Regra operacional por escopo:
 
-- sistema principal: commit e push em `checkcheck`, inclusive para API, transport, admin e webapplication enquanto esses escopos ainda estiverem fisicamente dentro do root;
-- Flutter: commit e push em `checking_android_new`;
-- Admin v2 (novo site): commit e push em `sistema/app/static/admin2`; o workflow de deploy e acionado automaticamente a cada push em `main`; ver secao 3.3 para detalhes;
-- `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin`: ainda nao sao repositorios locais ativos neste workspace; nao usar esses repos como destino de push de arquivos do root antes de extrair o codigo e criar/configurar a pasta Git correspondente;
-- Kotlin legado: commit local em `checking_kotlin`; o remote antigo ficou arquivado como `archived-origin` e um novo `origin` precisa ser criado antes de qualquer push;
-- Kotlin novo: commit local em `checking_kotlin_new`; o remote antigo ficou arquivado como `archived-origin` e um novo `origin` precisa ser criado antes de qualquer push;
+- **API (codigo Python, modelos, services, routers, alembic)**: commit no root (`c:\dev\projetos\checkcheck`) + `git push api main`; opcionalmente `git push origin main` para manter espelho `checking` em sincronia;
+- **Infra/deploy (docker-compose, nginx, Dockerfiles, workflows, scripts de deploy)**: commit no root + `git push origin main`; nao aciona deploy automatico — dispare manualmente se necessario via `gh workflow run`;
+- **Admin v2**: commit em `sistema\app\static\admin2` + `git push origin main` naquela pasta; deploy automatico acionado;
+- **Check Web**: commit em `sistema\app\static\check` + `git push origin main` naquela pasta; deploy automatico acionado;
+- **Transport**: commit em `sistema\app\static\transport` + `git push origin main` naquela pasta; deploy automatico acionado;
+- **Flutter**: commit em `checking_android_new` + `git push origin main` naquela pasta;
+- **Kotlin legado**: commit local em `checking_kotlin`; criar novo `origin` antes de qualquer push;
+- **Kotlin novo**: commit local em `checking_kotlin_new`; criar novo `origin` antes de qualquer push;
 - nao usar `git subtree`;
 - nao tentar publicar apps moveis a partir do root;
-- nao misturar arquivos de repositorios aninhados no stage do root.
+- nao misturar arquivos de sub-repos no stage do root.
 
 ## 3. Qual repo aciona producao
 
-### 3.1 Repositorio principal `checkcheck`
-
-Workflow relevante:
-
-- `.github/workflows/deploy-oceandrive.yml`
-
-Gatilhos atuais confirmados no arquivo:
-
-- `push` em `main`;
-- `workflow_dispatch` para fallback manual.
-
-Impacto:
-
-- push em `main` do root publica o codigo do sistema principal e dispara o workflow de deploy;
-- o mesmo workflow tambem pode ser executado manualmente pelo GitHub Actions;
-- este repositorio e o dono dos Actions Secrets operacionais do deploy.
-
-### 3.2 Repositorio `checking-admin2` e deploy do admin v2
-
-O admin v2 possui **dois caminhos de deploy**. O caminho primario atual usa o proprio root `checking`; o caminho secundario usa o repositorio `checking-admin2`.
-
-#### 3.2.a Caminho primario — root `checking` (operacional confirmado)
+### 3.1 API — repositorio `checking-api`
 
 Workflow:
 
-- `.github/workflows/deploy-oceandrive-admin2-only.yml` (no root `checking`)
+- `.github/workflows/deploy.yml` (no root workspace, guarda `if: github.repository == 'tscode-com-br/checking-api'`)
 
 Gatilho:
 
-- `workflow_dispatch` (manual, via GitHub Actions UI) ou `workflow_call` (chamado por outros workflows do root)
+- `push` em `main` via remote `api`
 
-Arquivos estaticos autoritativos para o build Docker:
+Imagens geradas:
 
-- `deploy/docker/admin2-web/index.html`
-- `deploy/docker/admin2-web/app.js`
-- `deploy/docker/admin2-web/styles.css`
+- `ghcr.io/tscode-com-br/checking-api:<sha>` e `:main`
+- `ghcr.io/tscode-com-br/checking-api-forms:<sha>` e `:main`
 
-Etapas do workflow:
+Compose file usado no servidor:
 
-1. build da imagem Docker `ghcr.io/tscode-com-br/checking-admin2:<sha>` e `:latest` a partir de `deploy/docker/Dockerfile.admin2-web`;
-2. push da imagem para o GHCR;
-3. SSH no droplet DigitalOcean: `docker compose ... pull admin2-web` seguido de `up -d --force-recreate admin2-web`;
-4. health check: requisicao HTTP para `http://127.0.0.1:18084/` aguardando HTTP 200.
+- `docker-compose.api.yml` (servicos: `db`, `api`, `forms-worker`)
 
-Fluxo de commit/push para alteracoes no admin v2 via caminho primario:
+Fluxo de commit/push para alteracoes na API:
 
 ```powershell
-# 1. Editar os arquivos em deploy/docker/admin2-web/
-# 2. Commitar no root checking
 Set-Location c:\dev\projetos\checkcheck
-git add deploy\docker\admin2-web\
-git commit -m "admin2: descricao da mudanca"
-git push origin main
+git add <arquivos-python-ou-alembic>
+git commit -m "feat: descricao da mudanca"
+git push api main
+# deploy automatico disparado em checking-api
 
-# 3. Disparar o deploy manualmente no GitHub Actions:
-#    https://github.com/tscode-com-br/checking/actions/workflows/deploy-oceandrive-admin2-only.yml
-# OU via CLI:
-gh workflow run deploy-oceandrive-admin2-only.yml --repo tscode-com-br/checking
+# Opcional: manter espelho de infraestrutura sincronizado
+git push origin main
 ```
 
-Sincronia com `sistema/app/static/admin2/`: os dois conjuntos de arquivos estaticos devem ser mantidos em sincronia manualmente quando houver alteracoes. O build Docker usa `deploy/docker/admin2-web/`; a pasta `sistema/app/static/admin2/` e o espelho para o caminho secundario.
+Para verificar o ultimo deploy da API:
 
-#### 3.2.b Caminho secundario — repositorio `checking-admin2`
+```powershell
+gh run list --repo tscode-com-br/checking-api --limit 5
+gh run view --repo tscode-com-br/checking-api <run-id>
+```
+
+### 3.2 Check Web — repositorio `checking-webapp`
 
 Workflow:
 
-- `.github/workflows/deploy.yml` (dentro da pasta `sistema/app/static/admin2`)
+- `.github/workflows/deploy.yml` (dentro de `sistema\app\static\check`)
+
+Gatilho:
+
+- `push` em `main` do repositorio `checking-webapp`
+
+Fluxo de commit/push:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\sistema\app\static\check
+git add .
+git commit -m "web: descricao da mudanca"
+git push origin main
+# deploy automatico disparado em checking-webapp
+```
+
+Para verificar:
+
+```powershell
+gh run list --repo tscode-com-br/checking-webapp --limit 5
+```
+
+### 3.3 Transport — repositorio `checking-transport`
+
+Workflow:
+
+- `.github/workflows/deploy.yml` (dentro de `sistema\app\static\transport`)
+
+Gatilho:
+
+- `push` em `main` do repositorio `checking-transport`
+
+Fluxo de commit/push:
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\sistema\app\static\transport
+git add .
+git commit -m "transport: descricao da mudanca"
+git push origin main
+# deploy automatico disparado em checking-transport
+```
+
+Para verificar:
+
+```powershell
+gh run list --repo tscode-com-br/checking-transport --limit 5
+```
+
+### 3.4 Admin v2 — repositorio `checking-admin2`
+
+Workflow:
+
+- `.github/workflows/deploy.yml` (dentro de `sistema\app\static\admin2`)
 
 Gatilho:
 
 - `push` em `main` do repositorio `checking-admin2`
 
-Etapas do workflow:
-
-1. build da imagem Docker e push para GHCR;
-2. SSH no droplet: restart do conteiner `admin2-web`;
-3. health check.
-
-Secrets necessarios (em https://github.com/tscode-com-br/checking-admin2/settings/secrets/actions):
-
-| Secret | Descricao |
-| --- | --- |
-| `OCEAN_HOST` | IP ou hostname do droplet DigitalOcean |
-| `OCEAN_USER` | Usuario SSH do droplet |
-| `OCEAN_SSH_KEY` | Chave privada SSH (mesmo valor do repo `checking`) |
-| `OCEAN_PORT` | Porta SSH; opcional, padrao `22` |
-| `OCEAN_APP_DIR` | Diretorio remoto da aplicacao, ex.: `/root/checkcheck` |
-
-Fluxo de commit/push para o caminho secundario:
+Fluxo de commit/push:
 
 ```powershell
 Set-Location c:\dev\projetos\checkcheck\sistema\app\static\admin2
 git add .
-git commit -m "descricao da mudanca"
+git commit -m "admin2: descricao da mudanca"
 git push origin main
-# deploy disparado automaticamente
+# deploy automatico disparado em checking-admin2
 ```
 
-Para verificar o ultimo deploy do admin2 (ambos os caminhos):
+Para verificar:
 
 ```powershell
-# Caminho primario (root checking):
-gh run list --repo tscode-com-br/checking --workflow deploy-oceandrive-admin2-only.yml --limit 5
-
-# Caminho secundario (checking-admin2):
 gh run list --repo tscode-com-br/checking-admin2 --limit 5
 ```
 
-### 3.3 Repositorios nao-produtivos e repositorios de particionamento futuro
+### 3.5 Infraestrutura — repositorio `checking`
 
-Estado atual na conta GitHub:
+O repositorio `checking` (remote `origin` do root) hospeda configuracoes de infraestrutura: docker-compose files, nginx, Dockerfiles, scripts de deploy e workflows secundarios para deploy individual de cada servico.
 
-- `checking_android_new` continua representado pelo repositorio `tscode-com-br/checking_app_flutter`;
-- `sistema/app/static/admin2` e representado pelo repositorio `tscode-com-br/checking-admin2`; ja possui deploy automatico proprio; nao deve ser commitado pelo root;
-- `checking_api`, `checking_transport`, `checking_webapplication` e `checking_admin` existem hoje na conta GitHub, mas ainda nao possuem checkout Git dedicado nem `origin` correspondente no workspace atual;
-- `checking_kotlin` e `checking_kotlin_new` nao possuem hoje repositorio correspondente confirmado na conta GitHub `tscode-com-br`;
-- nenhum desses repositorios fora do root faz deploy automatico da API ou dos websites da DigitalOcean.
+Workflows disponiveis (todos em `.github/workflows/`):
 
-## 4. Como confirmar pasta local, branch, remote e existencia no GitHub antes de publicar
+| Workflow | Gatilho | Efeito |
+| --- | --- | --- |
+| `deploy-oceandrive.yml` | `push main` ou `workflow_dispatch` | Deploy completo do stack legado (monolito) |
+| `deploy-oceandrive-api-only.yml` | `workflow_dispatch` | Reinicia apenas o servico `api` |
+| `deploy-oceandrive-admin2-only.yml` | `workflow_dispatch` | Reinicia apenas o conteiner `admin2-web` |
+| `deploy-oceandrive-user-only.yml` | `workflow_dispatch` | Reinicia apenas o conteiner `user-web` |
+| `deploy-oceandrive-transport-only.yml` | `workflow_dispatch` | Reinicia apenas o conteiner `transport-web` |
 
-### 4.1 Sistema principal
+Disparo manual via CLI:
+
+```powershell
+gh workflow run deploy-oceandrive-api-only.yml --repo tscode-com-br/checking
+gh workflow run deploy-oceandrive-admin2-only.yml --repo tscode-com-br/checking
+```
+
+Fluxo de commit/push para alteracoes de infraestrutura:
 
 ```powershell
 Set-Location c:\dev\projetos\checkcheck
-git branch --show-current
-git remote -v
+git add docker-compose*.yml deploy\ nginx\ .github\workflows\
+git commit -m "infra: descricao da mudanca"
+git push origin main
+```
+
+## 4. Como confirmar pasta local, branch, remote e existencia no GitHub antes de publicar
+
+### 4.1 API / Infraestrutura (workspace raiz)
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck
+git branch --show-current      # deve ser: main
+git remote -v                  # deve mostrar origin (checking) E api (checking-api)
 git status --short
+gh repo view tscode-com-br/checking-api
 gh repo view tscode-com-br/checking
 ```
 
-### 4.2 Flutter
+### 4.2 Check Web
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\sistema\app\static\check
+git branch --show-current      # deve ser: main
+git remote -v                  # deve mostrar: origin = checking-webapp
+git status --short
+gh repo view tscode-com-br/checking-webapp
+```
+
+### 4.3 Transport
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\sistema\app\static\transport
+git branch --show-current      # deve ser: main
+git remote -v                  # deve mostrar: origin = checking-transport
+git status --short
+gh repo view tscode-com-br/checking-transport
+```
+
+### 4.4 Admin v2
+
+```powershell
+Set-Location c:\dev\projetos\checkcheck\sistema\app\static\admin2
+git branch --show-current      # deve ser: main
+git remote -v                  # deve mostrar: origin = checking-admin2
+git log --oneline -5
+gh repo view tscode-com-br/checking-admin2
+```
+
+Obs.: a pasta `sistema/app/static/admin2` e um repositorio Git aninhado dentro do root. O `.gitignore` do root exclui essa pasta. Verifique:
+
+```powershell
+git -C c:\dev\projetos\checkcheck check-ignore -v sistema/app/static/admin2
+```
+
+### 4.5 Flutter
 
 ```powershell
 Set-Location c:\dev\projetos\checkcheck\checking_android_new
@@ -230,116 +286,57 @@ git status --short
 gh repo view tscode-com-br/checking_app_flutter
 ```
 
-### 4.3 Kotlin legado local
+### 4.6 Kotlin legado local
 
 ```powershell
 Set-Location c:\dev\projetos\checkcheck\checking_kotlin
 git branch -vv
 git remote -v
 git status --short
-gh repo view tscode-com-br/checking_app_kotlin
 ```
 
-Resultado esperado hoje para o ultimo comando:
-
-- falha informando que o repositorio nao existe mais.
-
-Resultado esperado hoje para o estado Git local:
+Resultado esperado:
 
 - aparece `archived-origin`, nao `origin`;
-- a branch `main` aparece sem `[remote/branch]` ao lado, porque o upstream foi removido.
+- a branch `main` aparece sem `[remote/branch]` ao lado;
+- `gh repo view tscode-com-br/checking_app_kotlin` falha — repositorio nao existe mais.
 
-### 4.4 Kotlin novo local
+### 4.7 Kotlin novo local
 
 ```powershell
 Set-Location c:\dev\projetos\checkcheck\checking_kotlin_new
 git branch -vv
 git remote -v
 git status --short
-gh repo view tscode-com-br/checking_kotlin_new
-```
-
-Resultado esperado hoje para o ultimo comando:
-
-- falha informando que o repositorio nao existe mais.
-
-Resultado esperado hoje para o estado Git local:
-
-- aparece `archived-origin`, nao `origin`;
-- a branch `web-parity-spa-baseline` aparece sem `[remote/branch]` ao lado, porque o upstream foi removido.
-
-Observacao importante para o Kotlin novo local:
-
-- a branch local confirmada e `web-parity-spa-baseline`;
-- nao assumir `main` sem verificar primeiro.
-
-### 4.5 Admin v2
-
-```powershell
-Set-Location c:\dev\projetos\checkcheck\sistema\app\static\admin2
-git branch --show-current
-git remote -v
-git log --oneline -5
-gh repo view tscode-com-br/checking-admin2
 ```
 
 Resultado esperado:
 
-- branch `main`;
-- remote `origin = https://github.com/tscode-com-br/checking-admin2.git`;
-- os arquivos na pasta sao `index.html`, `styles.css`, `app.js`, `Dockerfile`, `nginx.conf` e `.github/workflows/deploy.yml`;
-- `gh repo view` confirma repositorio privado existente.
-
-Obs.: a pasta `sistema/app/static/admin2` e um repositorio Git aninhado dentro do root `checkcheck`. O `.gitignore` do root deve ignorar essa pasta para evitar que os arquivos do admin2 entrem em commits do root. Verifique com:
-
-```powershell
-git -C c:\dev\projetos\checkcheck check-ignore -v sistema/app/static/admin2
-```
-
-Se nao estiver ignorada, adicione a linha `sistema/app/static/admin2/` ao `.gitignore` do root.
-
-### 4.6 Repositorios criados no GitHub para particionamento futuro
-
-```powershell
-gh repo view tscode-com-br/checking_api
-gh repo view tscode-com-br/checking_transport
-gh repo view tscode-com-br/checking_webapplication
-gh repo view tscode-com-br/checking_admin
-```
-
-Resultado esperado hoje:
-
-- os comandos acima devem confirmar que os repositorios existem na conta GitHub;
-- nenhum `git remote -v` do workspace atual aponta ainda para esses repositorios;
-- a existencia desses repositorios no GitHub nao muda automaticamente o dono dos arquivos atuais do root;
-- o primeiro push independente para qualquer um deles so deve acontecer depois de criar ou clonar a pasta Git dedicada e extrair o escopo correspondente do root.
+- aparece `archived-origin`, nao `origin`;
+- a branch local confirmada e `web-parity-spa-baseline`;
+- `gh repo view tscode-com-br/checking_kotlin_new` falha — repositorio nao existe mais.
 
 ## 5. Repositorios GitHub confirmados hoje
 
-Repositorios confirmados na conta `tscode-com-br` acessivel neste ambiente:
+Repositorios ativos (possuem branch `main` configurada):
 
-- `https://github.com/tscode-com-br/checking.git`
-- `https://github.com/tscode-com-br/checking_api.git`
-- `https://github.com/tscode-com-br/checking_transport.git`
-- `https://github.com/tscode-com-br/checking_webapplication.git`
-- `https://github.com/tscode-com-br/checking_admin.git`
-- `https://github.com/tscode-com-br/checking_app_flutter.git`
-- `https://github.com/tscode-com-br/checking-admin2.git` (privado; frontend redesenhado do painel admin)
+| Repo | Visibilidade | Ligacao local |
+| --- | --- | --- |
+| `tscode-com-br/checking` | publico | remote `origin` do root |
+| `tscode-com-br/checking-api` | publico | remote `api` do root |
+| `tscode-com-br/checking-webapp` | publico | remote `origin` de `sistema/app/static/check` |
+| `tscode-com-br/checking-admin2` | privado | remote `origin` de `sistema/app/static/admin2` |
+| `tscode-com-br/checking-transport` | publico | remote `origin` de `sistema/app/static/transport` |
+| `tscode-com-br/checking_app_flutter` | publico | remote `origin` de `checking_android_new` |
 
-Repositorios ja conectados a remotes ativos no workspace atual:
+Repositorios vazios / legados (sem branch; nao usar):
 
-- `checkcheck -> https://github.com/tscode-com-br/checking.git`
-- `checking_android_new -> https://github.com/tscode-com-br/checking_app_flutter.git`
-- `sistema/app/static/admin2 -> https://github.com/tscode-com-br/checking-admin2.git`
+- `tscode-com-br/checking_api` (substituido por `checking-api`)
+- `tscode-com-br/checking_transport` (substituido por `checking-transport`)
+- `tscode-com-br/checking_webapplication` (substituido por `checking-webapp`)
+- `tscode-com-br/checking_admin` (substituido por `checking-admin2`)
 
-Repositorios existentes no GitHub, mas ainda sem pasta Git propria conectada neste workspace:
-
-- `checking_api`
-- `checking_transport`
-- `checking_webapplication`
-- `checking_admin`
-
-Remotes ainda configurados localmente, mas sem repositorio correspondente hoje no GitHub:
+Remotes locais mortos (sem repo correspondente no GitHub):
 
 - `checking_kotlin: archived-origin = https://github.com/tscode-com-br/checking_app_kotlin.git`
 - `checking_kotlin_new: archived-origin = https://github.com/tscode-com-br/checking_kotlin_new.git`
@@ -347,17 +344,9 @@ Remotes ainda configurados localmente, mas sem repositorio correspondente hoje n
 Comando de auditoria rapida:
 
 ```powershell
-gh repo list tscode-com-br --limit 200
-```
-
-Para verificar o estado do deploy do admin2:
-
-```powershell
-# Caminho primario (root checking):
-gh run list --repo tscode-com-br/checking --workflow deploy-oceandrive-admin2-only.yml --limit 5
-
-# Caminho secundario (checking-admin2):
-gh run list --repo tscode-com-br/checking-admin2 --limit 5
+gh repo list tscode-com-br --limit 20 --json name,defaultBranchRef,isPrivate |
+  ConvertFrom-Json |
+  Format-Table name, @{n='branch';e={$_.defaultBranchRef.name}}, isPrivate -AutoSize
 ```
 
 Se um novo repositorio GitHub for criado para qualquer app Kotlin, a reativacao recomendada e:
@@ -375,12 +364,11 @@ Checklist minimo:
 
 1. pasta correta;
 2. branch correta;
-3. remote correto, ou ausencia deliberada de `origin` quando o repo estiver local-only;
-4. confirmacao de que o repositorio ainda existe no GitHub, quando houver intencao de push;
-5. confirmacao de que o codigo daquele escopo ja saiu do repo antigo e realmente passou a morar no repo que voce pretende publicar;
-6. stage apenas do escopo desejado;
-7. testes relevantes executados;
-8. ausencia de `.env`, chaves, bancos locais e artefatos de build no commit.
+3. remote correto e existente no GitHub;
+4. para o workspace raiz: identificar se o push vai para `origin` (infra) ou `api` (API) ou ambos;
+5. stage apenas do escopo desejado (nao misturar Python + frontend + infra num so commit);
+6. testes relevantes executados;
+7. ausencia de `.env`, chaves, bancos locais e artefatos de build no commit.
 
 Comandos uteis:
 
@@ -390,14 +378,14 @@ git branch -vv
 git remote -v
 git status --short
 git diff --cached --stat
-gh repo list tscode-com-br --limit 200
+gh repo list tscode-com-br --limit 20
 ```
 
 Regra adicional importante:
 
 - se o `gh repo view` do remote falhar, nao tente `git push` antes de criar um novo repositorio ou apontar o remote para um destino valido;
-- se existir apenas `archived-origin`, trate o repositorio como local-only ate a criacao de um novo `origin`.
-- se o repo existe no GitHub, mas ainda nao ha pasta Git dedicada para ele no workspace, trate o codigo atual como ainda pertencente ao repo antigo.
+- se existir apenas `archived-origin`, trate o repositorio como local-only ate a criacao de um novo `origin`;
+- os repos com underscore (`checking_api`, `checking_transport`, `checking_webapplication`, `checking_admin`) sao legados vazios — nao confundir com os repos ativos de mesmo escopo com hifem.
 
 ## 7. Como fazer commit e push em cada repositorio
 

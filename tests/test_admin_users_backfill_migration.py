@@ -84,8 +84,9 @@ def test_migration_creates_admin_users_for_admin_capable_users(tmp_path) -> None
     engine = sa.create_engine(database_url)
     with engine.begin() as connection:
         # Cast of test users: one non-admin, one perfil=1 (admin), one
-        # perfil=9 (super-admin), one perfil=21 (transport+admin), and one
-        # whose admin_users row already exists.
+        # perfil=9 (super-admin), one perfil=21 (legacy transport+admin
+        # encoding, pre-migration-0071 which normalises this to perfil=3), and
+        # one whose admin_users row already exists.
         _insert_user(connection, chave="REG1", nome="Regular User", perfil=0)
         _insert_user(connection, chave="AD01", nome="Plain Admin", perfil=1)
         _insert_user(connection, chave="SU09", nome="Super Admin", perfil=9)

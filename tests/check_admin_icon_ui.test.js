@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const adminHtml = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/index.html'),
+  path.join(__dirname, '../sistema/app/static/admin2/index.html'),
   'utf8'
 );
 

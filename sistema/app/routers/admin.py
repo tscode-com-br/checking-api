@@ -24,7 +24,6 @@ from ..models import (
     ManagedLocation,
     PendingRegistration,
     Project,
-    ProjectAutoCheckoutDistance,
     TransportAssignment,
     TransportRequest,
     Workplace,
@@ -93,9 +92,11 @@ from ..services.admin_auth import (
     add_profile_access,
     clear_admin_session,
     describe_user_profile,
+    digits_to_profile,
     get_admin_access_scope,
     get_admin_allowed_tabs,
     get_authenticated_admin_from_session,
+    get_user_profile_digits,
     hash_password,
     normalize_admin_key,
     normalize_user_profile,
@@ -137,7 +138,6 @@ from ..services.managed_locations import (
 from ..services.location_audit import audit_locations_from_db
 from ..services.location_settings import (
     get_location_accuracy_threshold_meters,
-    get_mixed_zone_interval_minutes,
     list_project_minimum_checkout_distance_rows,
     upsert_project_minimum_checkout_distance_rows,
     upsert_location_settings,
@@ -923,19 +923,12 @@ def build_location_settings_log_message(
     *,
     previous_accuracy_threshold_meters: int,
     current_accuracy_threshold_meters: int,
-    previous_mixed_zone_interval_minutes: int,
-    current_mixed_zone_interval_minutes: int,
 ) -> str:
     changes: list[str] = []
     if previous_accuracy_threshold_meters != current_accuracy_threshold_meters:
         changes.append(
             "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para "
             f"{format_quantity(current_accuracy_threshold_meters, 'metro', 'metros')}."
-        )
-    if previous_mixed_zone_interval_minutes != current_mixed_zone_interval_minutes:
-        changes.append(
-            "O intervalo de tempo para Zona Mista foi ajustado para "
-            f"{format_quantity(current_mixed_zone_interval_minutes, 'minuto', 'minutos')}."
         )
     if changes:
         return " ".join(changes)
@@ -1255,6 +1248,8 @@ def build_project_row(project: Project) -> ProjectRow:
         transport_enabled=bool(project.transport_enabled),
         emergency_phone=str(project.emergency_phone or "").strip(),
         inactivity_days_threshold=int(project.inactivity_days_threshold or 60),
+        mixed_zone_interval_minutes=int(project.mixed_zone_interval_minutes or 30),
+        minimum_checkout_distance_meters=int(project.minimum_checkout_distance_meters or 2000),
     )
 
 
@@ -1444,9 +1439,9 @@ def normalize_administrator_profile(value: int | str | None) -> int:
     if normalized == 9:
         return 9
 
-    digits = {character for character in str(normalized) if character.isdigit() and character != "0"}
+    digits = get_user_profile_digits(normalized)
     digits.add(ADMIN_ACCESS_DIGIT)
-    return int("".join(sorted(digits))) if digits else int(ADMIN_ACCESS_DIGIT)
+    return digits_to_profile(digits)
 
 
 def merge_user_profile_values(base_value: int | str | None, extra_value: int | str | None) -> int:
@@ -1455,12 +1450,8 @@ def merge_user_profile_values(base_value: int | str | None, extra_value: int | s
     if normalized_base == 9 or normalized_extra == 9:
         return 9
 
-    digits = {
-        character
-        for character in f"{normalized_base}{normalized_extra}"
-        if character.isdigit() and character != "0"
-    }
-    return int("".join(sorted(digits))) if digits else 0
+    digits = get_user_profile_digits(normalized_base) | get_user_profile_digits(normalized_extra)
+    return digits_to_profile(digits)
 
 
 def list_admin_rows(db: Session) -> list[AdminManagementRow]:
@@ -2266,6 +2257,8 @@ def create_admin_project(
         transport_enabled=payload.transport_enabled,
         emergency_phone=payload.emergency_phone,
         inactivity_days_threshold=payload.inactivity_days_threshold,
+        mixed_zone_interval_minutes=payload.mixed_zone_interval_minutes,
+        minimum_checkout_distance_meters=payload.minimum_checkout_distance_meters,
         **build_project_fields(
             country_code=payload.country_code,
             country_name=payload.country_name,
@@ -2325,7 +2318,6 @@ def update_admin_project(
     updated_user_links = 0
     updated_location_links = 0
     updated_admin_scopes = 0
-    recreated_minimum_checkout_distances = 0
 
     if "name" in update_data and payload.name is not None and payload.name != previous_name:
         existing_project = db.execute(
@@ -2362,37 +2354,7 @@ def update_admin_project(
             administrator.admin_monitored_projects_json = None
             updated_admin_scopes += 1
 
-        existing_distance_rows = db.execute(
-            select(ProjectAutoCheckoutDistance)
-            .where(ProjectAutoCheckoutDistance.project_name == previous_name)
-            .order_by(ProjectAutoCheckoutDistance.id)
-        ).scalars().all()
-        preserved_distance_rows = [
-            {
-                "minimum_checkout_distance_meters": row.minimum_checkout_distance_meters,
-                "created_at": row.created_at,
-            }
-            for row in existing_distance_rows
-        ]
-        for row in existing_distance_rows:
-            db.delete(row)
-        if existing_distance_rows:
-            db.flush()
-
         project.name = payload.name
-        if preserved_distance_rows:
-            db.flush()
-            current_time = now_sgt()
-            for row in preserved_distance_rows:
-                db.add(
-                    ProjectAutoCheckoutDistance(
-                        project_name=payload.name,
-                        minimum_checkout_distance_meters=row["minimum_checkout_distance_meters"],
-                        created_at=row["created_at"],
-                        updated_at=current_time,
-                    )
-                )
-            recreated_minimum_checkout_distances = len(preserved_distance_rows)
 
     if updated_country_fields:
         project.country_code = updated_country_fields["country_code"]
@@ -2410,6 +2372,10 @@ def update_admin_project(
         project.emergency_phone = payload.emergency_phone
     if "inactivity_days_threshold" in update_data and payload.inactivity_days_threshold is not None:
         project.inactivity_days_threshold = payload.inactivity_days_threshold
+    if "mixed_zone_interval_minutes" in update_data and payload.mixed_zone_interval_minutes is not None:
+        project.mixed_zone_interval_minutes = payload.mixed_zone_interval_minutes
+    if "minimum_checkout_distance_meters" in update_data and payload.minimum_checkout_distance_meters is not None:
+        project.minimum_checkout_distance_meters = payload.minimum_checkout_distance_meters
 
     log_event(
         db,
@@ -2429,8 +2395,7 @@ def update_admin_project(
             f"zip_code={previous_zip_code or '-'}->{project.zip_code or '-'}; "
             f"updated_user_links={updated_user_links}; "
             f"updated_location_links={updated_location_links}; "
-            f"updated_admin_scopes={updated_admin_scopes}; "
-            f"recreated_minimum_checkout_distances={recreated_minimum_checkout_distances}"
+            f"updated_admin_scopes={updated_admin_scopes}"
         ),
     )
     db.commit()
@@ -3108,7 +3073,6 @@ def list_locations(
     return AdminLocationsResponse(
         items=[build_location_row(row) for row in rows],
         location_accuracy_threshold_meters=get_location_accuracy_threshold_meters(db),
-        mixed_zone_interval_minutes=get_mixed_zone_interval_minutes(db),
     )
 
 
@@ -3364,17 +3328,13 @@ def update_location_settings(
     current_admin: User = Depends(require_full_admin_session),
 ) -> AdminLocationSettingsResponse:
     previous_accuracy_threshold_meters = get_location_accuracy_threshold_meters(db)
-    previous_mixed_zone_interval_minutes = get_mixed_zone_interval_minutes(db)
     settings = upsert_location_settings(
         db,
         accuracy_threshold_meters=payload.location_accuracy_threshold_meters,
-        mixed_zone_interval_minutes=payload.mixed_zone_interval_minutes,
     )
     log_message = build_location_settings_log_message(
         previous_accuracy_threshold_meters=previous_accuracy_threshold_meters,
         current_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
-        previous_mixed_zone_interval_minutes=previous_mixed_zone_interval_minutes,
-        current_mixed_zone_interval_minutes=settings.mixed_zone_interval_minutes,
     )
     log_event(
         db,
@@ -3387,9 +3347,7 @@ def update_location_settings(
         details=(
             f"updated_by={current_admin.chave}; "
             f"previous_location_accuracy_threshold_meters={previous_accuracy_threshold_meters}; "
-            f"location_accuracy_threshold_meters={settings.location_accuracy_threshold_meters}; "
-            f"previous_mixed_zone_interval_minutes={previous_mixed_zone_interval_minutes}; "
-            f"mixed_zone_interval_minutes={settings.mixed_zone_interval_minutes}"
+            f"location_accuracy_threshold_meters={settings.location_accuracy_threshold_meters}"
         ),
     )
     db.commit()
@@ -3398,7 +3356,6 @@ def update_location_settings(
         ok=True,
         message="Configuracoes de localizacao salvas com sucesso.",
         location_accuracy_threshold_meters=settings.location_accuracy_threshold_meters,
-        mixed_zone_interval_minutes=settings.mixed_zone_interval_minutes,
     )
 
 

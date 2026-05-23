@@ -4,17 +4,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const adminHtml = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/index.html'),
+  path.join(__dirname, '../sistema/app/static/admin2/index.html'),
   'utf8'
 );
 
 const adminCss = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/styles.css'),
+  path.join(__dirname, '../sistema/app/static/admin2/styles.css'),
   'utf8'
 );
 
 const adminJs = fs.readFileSync(
-  path.join(__dirname, '../sistema/app/static/admin/app.js'),
+  path.join(__dirname, '../sistema/app/static/admin2/app.js'),
   'utf8'
 );
 
@@ -23,7 +23,6 @@ test('cadastro tab groups each maintenance surface into explicit subsection pane
   assert.match(adminHtml, /data-cadastro-section="pendencias"/);
   assert.match(adminHtml, /data-cadastro-section="acidentes"/);
   assert.match(adminHtml, /data-cadastro-section="localizacoes"/);
-  assert.match(adminHtml, /data-cadastro-section="checkout-distance"/);
   assert.match(adminHtml, /data-cadastro-section="administradores"/);
   assert.match(adminHtml, /data-cadastro-section="projetos"/);
   assert.match(adminHtml, /data-cadastro-section="usuarios"/);
@@ -35,10 +34,6 @@ test('cadastro runtime converts top-level section titles into accessible collaps
   assert.match(adminJs, /function initializeCadastroSection\(section, index\) \{[\s\S]*toggle\.className = "cadastro-section-toggle";[\s\S]*toggle\.dataset\.cadastroToggle = sectionKey;[\s\S]*child\.setAttribute\("data-cadastro-header-action", ""\);[\s\S]*content\.className = "cadastro-section-content";[\s\S]*content\.dataset\.cadastroContent = sectionKey;[\s\S]*toggle\.setAttribute\("aria-controls", content\.id\);[\s\S]*setCadastroSectionCollapsed\(section, toggle, content, true\);[\s\S]*\}/);
   assert.match(adminJs, /function setupCadastroSectionPanels\(\) \{[\s\S]*document\.getElementById\("tab-cadastro"\)[\s\S]*initializeCadastroSection\(section, index\)[\s\S]*\}/);
   assert.match(adminJs, /function bindActions\(\) \{[\s\S]*setupCadastroSectionPanels\(\);/);
-});
-
-test('cadastro locations settings include a mixed-zone interval input before the accuracy threshold control', () => {
-  assert.match(adminHtml, /<div class="locations-settings-panel">[\s\S]*<label for="mixedZoneIntervalMinutes">Intervalo de Tempo para Zona Mista:<\/label>[\s\S]*<input id="mixedZoneIntervalMinutes" type="number" min="1" inputmode="numeric" value="20" \/>[\s\S]*<span>minutos<\/span>[\s\S]*<label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:<\/label>/);
 });
 
 test('cadastro mobile layout replaces the generic compressed table stack with padded section cards', () => {

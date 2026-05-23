@@ -14,6 +14,19 @@ from .time_utils import now_sgt
 ADMIN_ACCESS_DIGIT = "1"
 TRANSPORT_ACCESS_DIGIT = "2"
 FULL_ACCESS_DIGIT = "9"
+COMBINED_ADMIN_TRANSPORT_PROFILE = 3  # replaces legacy profile 12
+
+
+def digits_to_profile(digits: set[str]) -> int:
+    """Map a set of access digits to the canonical profile integer.
+
+    {"1","2"} → 3 (not 12), to avoid the ambiguous multi-digit encoding.
+    """
+    if not digits:
+        return 0
+    if digits == {ADMIN_ACCESS_DIGIT, TRANSPORT_ACCESS_DIGIT}:
+        return COMBINED_ADMIN_TRANSPORT_PROFILE
+    return int("".join(sorted(digits)))
 ADMIN_ACCESS_SCOPE_LIMITED = "limited"
 ADMIN_ACCESS_SCOPE_FULL = "full"
 LIMITED_ADMIN_TABS = ("checkin", "checkout")
@@ -42,6 +55,8 @@ def normalize_user_profile(value: int | str | None) -> int:
 
 def get_user_profile_digits(value: int | str | None) -> set[str]:
     normalized = normalize_user_profile(value)
+    if normalized == COMBINED_ADMIN_TRANSPORT_PROFILE:
+        return {ADMIN_ACCESS_DIGIT, TRANSPORT_ACCESS_DIGIT}
     if normalized <= 0:
         return set()
     return {character for character in str(normalized) if character.isdigit() and character != "0"}
@@ -74,7 +89,7 @@ def add_profile_access(value: int | str | None, required_digit: str) -> int:
     if FULL_ACCESS_DIGIT in digits or normalized_digit == FULL_ACCESS_DIGIT:
         return 9
     digits.add(normalized_digit)
-    return int("".join(sorted(digits))) if digits else 0
+    return digits_to_profile(digits)
 
 
 def remove_profile_access(value: int | str | None, removed_digit: str) -> int:
@@ -84,7 +99,7 @@ def remove_profile_access(value: int | str | None, removed_digit: str) -> int:
     if FULL_ACCESS_DIGIT in digits:
         return 0
     digits.discard(str(removed_digit))
-    return int("".join(sorted(digits))) if digits else 0
+    return digits_to_profile(digits)
 
 
 def user_has_admin_access(user: User | None) -> bool:

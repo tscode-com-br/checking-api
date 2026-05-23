@@ -880,6 +880,7 @@ tbody tr:hover {
   margin-top: 12px;
 }
 .locations-settings-panel {
+  margin-top: 2px;
   padding: 14px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -948,7 +949,7 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 /* ── Cadastro section ───────────────────────────────────────────────── */
 .cadastro-tab { gap: 18px; }
 .cadastro-tab.active { display: grid; }
-.cadastro-section-panel { display: grid; gap: 12px; }
+.cadastro-section-panel { display: grid; gap: 14px; }
 
 .cadastro-section-toggle {
   display: inline-flex;
@@ -964,8 +965,9 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
   color: var(--text);
   font: 700 inherit;
   text-align: left;
+  transition: font-size 0.15s ease;
 }
-.cadastro-section-toggle:hover { color: var(--primary); }
+button.cadastro-section-toggle:hover { background: transparent; color: var(--text); font-size: 2rem; font-weight: 700; }
 .cadastro-section-toggle:focus-visible { outline: 2px solid rgba(15,118,110,0.35); outline-offset: 4px; }
 .cadastro-section-toggle-label { min-width: 0; }
 .cadastro-section-toggle-indicator {
@@ -1044,7 +1046,6 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 
 .cadastro-table th, .cadastro-table td { white-space: nowrap; vertical-align: middle; }
 .cadastro-table th { font-size: 13px; }
-.cadastro-table th:hover { background: var(--surface-alt); font-weight: 700; font-size: calc(13px * 1.5); }
 .cadastro-table th:last-child, .cadastro-table td:last-child { width: 1%; }
 .cadastro-table input.inline, .cadastro-table select.inline { width: auto; }
 .cadastro-table .pending-actions { flex-wrap: nowrap; align-items: center; }
@@ -1067,7 +1068,6 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .cadastro-users-table .user-email { min-width: 200px; }
 
 .cadastro-users-table th { padding: 8px 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
-.cadastro-users-table th:hover { font-size: calc(12px * 1.5); }
 .cadastro-users-table td { padding: 7px 8px; font-size: 12px; vertical-align: middle; overflow: hidden; }
 .cadastro-users-table td:nth-child(5) { overflow: visible; }
 .cadastro-users-table .user-rfid.inline, .cadastro-users-table .user-chave.inline { min-width: 0; max-width: none; }
@@ -1107,14 +1107,40 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .cadastro-users-table .user-actions button[disabled] { display: none; }
 .cadastro-users-table .user-actions [data-user-remove]          { background: #b91c1c; }
 .cadastro-users-table .user-actions [data-user-password-reset]  { background: #1e293b; }
+/* narrow fixed columns so the table doesn't over-stretch */
+.cadastro-users-table th:nth-child(1), .cadastro-users-table td:nth-child(1) { width: 72px; }
+.cadastro-users-table th:nth-child(3), .cadastro-users-table td:nth-child(3) { width: 52px; }
+.cadastro-users-table th:nth-child(4), .cadastro-users-table td:nth-child(4) { width: 52px; }
+/* sticky Ações column so it stays in view during horizontal scroll */
+.cadastro-users-table th:last-child,
+.cadastro-users-table td:last-child {
+  position: sticky;
+  right: 0;
+  overflow: visible;
+  background: var(--surface);
+  box-shadow: -2px 0 6px rgba(0,0,0,0.06);
+  z-index: 2;
+}
+.cadastro-users-table .user-row:hover td:last-child { background: var(--surface-hover); }
+.cadastro-users-table .user-row.user-row-editing td:last-child { background: rgba(15,118,110,0.04); }
 
-.cadastro-locations-table { width: 100%; min-width: 1060px; table-layout: fixed; }
+.cadastro-locations-table { width: max-content; min-width: 0; table-layout: auto; }
 .cadastro-locations-table th, .cadastro-locations-table td { font-size: 12px; padding: 6px 8px; }
 .cadastro-locations-table th:nth-child(1), .cadastro-locations-table td:nth-child(1) { width: 200px; }
 .cadastro-locations-table th:nth-child(2), .cadastro-locations-table td:nth-child(2) { width: 180px; }
 .cadastro-locations-table th:nth-child(3), .cadastro-locations-table td:nth-child(3) { width: auto; }
 .cadastro-locations-table th:nth-child(4), .cadastro-locations-table td:nth-child(4) { width: 100px; }
 .cadastro-locations-table th:nth-child(5), .cadastro-locations-table td:nth-child(5) { width: 210px; }
+.cadastro-section-panel--locations .cadastro-grid-wrap { width: max-content; max-width: 100%; }
+.cadastro-grid-wrap > .cadastro-locations-table { border-collapse: collapse; border-spacing: 0; }
+.cadastro-grid-wrap > .cadastro-locations-table th,
+.cadastro-grid-wrap > .cadastro-locations-table td {
+  border: 1px solid var(--border);
+}
+.cadastro-grid-wrap > .cadastro-locations-table thead th { border-top: none; }
+.cadastro-grid-wrap > .cadastro-locations-table tr > :first-child { border-left: none; }
+.cadastro-grid-wrap > .cadastro-locations-table tr > :last-child { border-right: none; }
+.cadastro-grid-wrap > .cadastro-locations-table tbody tr:last-child > td { border-bottom: none; }
 .cadastro-locations-table .inline { width: 100%; min-width: 0; max-width: 100%; padding: 5px 7px; font-size: inherit; }
 .cadastro-locations-table .location-coordinates-cell,
 .cadastro-locations-table .location-coordinate-input,
@@ -1153,12 +1179,21 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .admin-project-option input { margin-top: 2px; flex: 0 0 auto; }
 .admin-project-option span { color: var(--text); font-size: 12px; font-weight: 600; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .admin-projects-cell-readonly { display: flex; align-items: center; min-height: 100%; }
+.location-projects-panel {
+  box-sizing: border-box; max-width: 100%;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface); box-shadow: var(--shadow-sm);
+  max-height: 220px; overflow-y: auto;
+}
 
-.membership-projects-cell { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.membership-projects-cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .membership-projects-button { align-self: flex-start; min-width: 86px; }
 .membership-projects-button[aria-expanded="true"] { background: var(--primary); color: #ffffff; }
-.cadastro-users-table .membership-projects-button:disabled { display: none; }
-.membership-projects-summary { color: var(--text-muted); font-size: 11px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word; }
+.cadastro-users-table .membership-projects-button:disabled { opacity: 0.45; cursor: default; }
+.membership-projects-summary { display: flex; flex-wrap: wrap; gap: 4px; min-width: 120px; max-width: 220px; }
+.user-project-chip { display: inline-block; font-size: 10px; font-weight: 600; background: var(--primary-light); color: var(--primary); border-radius: 4px; padding: 2px 6px; white-space: nowrap; }
+.membership-no-projects { color: var(--text-faint); font-size: 11px; font-style: italic; }
 .membership-projects-panel {
   display: flex; flex-direction: column; gap: 10px; padding: 10px;
   border: 1px solid var(--border); border-radius: var(--radius-md);
@@ -1225,6 +1260,7 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
 .location-cell-text { font-size: 12px; line-height: 1.35; }
 .location-coordinates-cell { display: flex; flex-direction: column; gap: 4px; }
 .location-coordinate-input { font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+.location-actions { position: relative; z-index: 1; }
 .location-row .location-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .location-row .location-actions button { font-size: 12px; padding: 5px 10px; min-width: 84px; }
 .location-row .location-actions [data-location-remove] { background: #b91c1c; }
@@ -1344,10 +1380,6 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
   .top-notification-item { font-size: 12px; padding: 5px 10px; }
 }
 
-/* ── Checkout distance ───────────────────────────────────────────────── */
-.cadastro-project-checkout-distance-table { width: 100%; }
-.cadastro-project-checkout-distance-table td:nth-child(2) input { width: 100px; text-align: right; }
-
 /* ── Responsive (mobile) ─────────────────────────────────────────────── */
 @media (max-width: 700px) {
   .header-row { padding: 0 14px; min-height: 52px; }
@@ -1383,6 +1415,80 @@ input.inline, select.inline, textarea.inline { width: 100%; padding: 4px 6px; }
     letter-spacing: 0.04em;
     color: var(--text-muted);
     margin-bottom: 2px;
+  }
+}
+
+/* ── Cadastro mobile layout ──────────────────────────────────────────── */
+@media (max-width: 800px) {
+  .cadastro-section-panel {
+    padding: 14px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .cadastro-section-panel .project-editor-panel {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .cadastro-table td {
+    display: grid;
+    gap: 6px;
+    padding: 12px;
+    text-align: left;
+    white-space: normal;
+  }
+  .cadastro-table td::before {
+    content: attr(data-label);
+    position: static;
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  .cadastro-table .pending-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+    gap: 6px;
+  }
+  .cadastro-table .pending-actions button,
+  .cadastro-users-table .user-actions button,
+  .location-actions button,
+  .project-editor-actions button,
+  .locations-settings-actions button {
+    width: 100%;
+    min-height: 44px;
+  }
+  .cadastro-users-table .user-actions {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .membership-projects-button {
+    width: 100%;
+  }
+  .membership-projects-panel {
+    max-height: none;
+  }
+  .membership-projects-panel-footer {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .membership-projects-panel-footer button {
+    width: 100%;
+    min-height: 44px;
+  }
+  .admin-projects-panel {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+  .location-projects-panel {
+    max-height: none;
   }
 }
 

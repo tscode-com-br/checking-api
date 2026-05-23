@@ -197,11 +197,11 @@ Campos que controlam o estado na tabela accidents:
 │ Endpoint                                         │ Autenticação                 │ Requisito de perfil                │
 ├──────────────────────────────────────────────────┼──────────────────────────────┼────────────────────────────────────┤
 │ GET  /admin/accidents/active                     │ require_admin_session        │ Qualquer admin autenticado         │
-│                                                  │                              │ (perfil=0, 1, 9, 12, etc.)        │
+│                                                  │                              │ (perfil=0, 1, 3, 9, etc.)         │
 ├──────────────────────────────────────────────────┼──────────────────────────────┼────────────────────────────────────┤
 │ POST /admin/accidents/open                       │ require_full_admin_session   │ Precisa ter dígito "1" OU "9"     │
 │ POST /admin/accidents/close                      │                              │ no perfil (full admin ou super)    │
-│ GET  /admin/accidents                            │                              │ Ex.: perfil=1, 9, 12, 19          │
+│ GET  /admin/accidents                            │                              │ Ex.: perfil=1, 3, 9                │
 │ GET  /admin/accidents/{id}/archive               │                              │                                    │
 │ GET  /admin/accidents/wizard/projects            │                              │                                    │
 │ GET  /admin/accidents/wizard/locations           │                              │                                    │
@@ -215,17 +215,17 @@ Campos que controlam o estado na tabela accidents:
 │ POST /check/accident/video                       │                              │                                    │
 └──────────────────────────────────────────────────┴──────────────────────────────┴────────────────────────────────────┘
 
-Sistema de perfil (dígitos compostos):
+Sistema de perfil (valores canônicos):
   perfil=0   → Acesso limitado (somente checkin/checkout)
-  perfil=1   → Full admin (dígito "1")
-  perfil=2   → Transport access (dígito "2")
-  perfil=9   → Super-admin: FULL_ACCESS_DIGIT, passa todas as verificações
-  perfil=12  → Full admin + Transport
-  perfil=9   → Super-admin (passa require_full_admin_session implicitamente)
+  perfil=1   → Full admin
+  perfil=2   → Transport access
+  perfil=3   → Full admin + Transport (substitui o legado perfil=12)
+  perfil=9   → Super-admin: passa todas as verificações
 
   Regra: user_profile_has_access(perfil, "X") retorna True se:
-    • dígito "9" (FULL_ACCESS_DIGIT) está em str(perfil), OU
-    • dígito "X" está em str(perfil)
+    • perfil=9 (FULL_ACCESS_DIGIT), OU
+    • dígito "X" está nos access digits do perfil
+    • (perfil=3 é mapeado internamente para dígitos {"1","2"})
 ```
 
 ---

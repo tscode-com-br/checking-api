@@ -629,7 +629,6 @@ class LocationRow(BaseModel):
 class AdminLocationsResponse(BaseModel):
     items: list[LocationRow]
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
-    mixed_zone_interval_minutes: int = Field(ge=1)
 
 
 class AdminProjectMinimumCheckoutDistanceRow(BaseModel):
@@ -785,7 +784,6 @@ class AdminLocationUpsert(BaseModel):
 
 class AdminLocationSettingsUpdate(BaseModel):
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
-    mixed_zone_interval_minutes: int | None = Field(default=None, ge=1)
 
 
 class AdminLoginRequest(BaseModel):
@@ -1093,6 +1091,8 @@ class ProjectRow(BaseModel):
     transport_enabled: bool
     emergency_phone: str
     inactivity_days_threshold: int = 60
+    mixed_zone_interval_minutes: int = 30
+    minimum_checkout_distance_meters: int = 2000
 
 
 class ProjectCreate(BaseModel):
@@ -1106,6 +1106,8 @@ class ProjectCreate(BaseModel):
     transport_enabled: bool = True
     emergency_phone: str = Field(default="", max_length=32)
     inactivity_days_threshold: int = Field(default=60, ge=1, le=3650)
+    mixed_zone_interval_minutes: int = Field(default=30, ge=1, le=1440)
+    minimum_checkout_distance_meters: int = Field(default=2000, ge=1, le=999999)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1167,6 +1169,8 @@ class ProjectUpdate(BaseModel):
     transport_enabled: bool | None = None
     emergency_phone: str | None = Field(default=None, max_length=32)
     inactivity_days_threshold: int | None = Field(default=None, ge=1, le=3650)
+    mixed_zone_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
+    minimum_checkout_distance_meters: int | None = Field(default=None, ge=1, le=999999)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1223,7 +1227,6 @@ class ProjectUpdate(BaseModel):
 
 class AdminLocationSettingsResponse(AdminActionResponse):
     location_accuracy_threshold_meters: int = Field(ge=1, le=9999)
-    mixed_zone_interval_minutes: int = Field(ge=1)
 
 
 class UserRow(BaseModel):

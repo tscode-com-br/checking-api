@@ -22,6 +22,8 @@ class Project(Base):
     transport_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
     emergency_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
     inactivity_days_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default=text("60"))
+    mixed_zone_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30, server_default=text("30"))
+    minimum_checkout_distance_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=2000, server_default=text("2000"))
 
 
 class ProjectAutoCheckoutDistance(Base):
@@ -338,7 +340,6 @@ class MobileAppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     location_update_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     location_accuracy_threshold_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
-    mixed_zone_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     transport_arrive_at_work_time: Mapped[str] = mapped_column(String(5), nullable=False, default="07:45")
     transport_work_to_home_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:45")
     transport_last_update_time: Mapped[str] = mapped_column(String(5), nullable=False, default="16:00")

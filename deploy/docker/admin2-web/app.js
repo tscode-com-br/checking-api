@@ -223,9 +223,7 @@ let eventArchivesTotalSizeBytes = 0;
 let nextLocationDraftId = 1;
 let nextLocationCoordinateDraftId = 1;
 let locationRows = [];
-let projectMinimumCheckoutDistanceRows = [];
 let locationAccuracyThresholdMeters = 30;
-let mixedZoneIntervalMinutes = 20;
 let locationSettingsDirty = false;
 let pendingUsersTotal = 0;
 let administratorsTotal = 0;
@@ -392,8 +390,12 @@ function setStoredProjectMembershipSelection(editor, projectNames) {
   const summary = editor.querySelector(".membership-projects-summary");
   if (summary instanceof HTMLElement) {
     const summaryText = formatProjectMembershipSummary(normalizedProjectNames);
-    summary.textContent = summaryText;
     summary.title = summaryText;
+    if (normalizedProjectNames.length) {
+      summary.innerHTML = normalizedProjectNames.map((p) => `<span class="user-project-chip">${escapeHtml(p)}</span>`).join("");
+    } else {
+      summary.innerHTML = `<span class="membership-no-projects">Nenhum projeto</span>`;
+    }
   }
   return normalizedProjectNames;
 }
@@ -605,7 +607,10 @@ function getProjectMembershipSelectionForSubmit(kind, rowId) {
 
 function makeProjectMembershipCell({ kind, rowId, selectedProjects }) {
   const projectMembershipKey = getProjectMembershipEditorKey(kind, rowId);
-  const summary = formatProjectMembershipSummary(selectedProjects);
+  const summaryText = formatProjectMembershipSummary(selectedProjects);
+  const chipsHtml = selectedProjects.length
+    ? normalizeProjectNames(selectedProjects).map((p) => `<span class="user-project-chip">${escapeHtml(p)}</span>`).join("")
+    : `<span class="membership-no-projects">Nenhum projeto</span>`;
   return `
     <div
       class="membership-projects-cell"
@@ -620,7 +625,7 @@ function makeProjectMembershipCell({ kind, rowId, selectedProjects }) {
         disabled
         title="${escapeHtml(getProjectMembershipDisabledTitle(kind))}"
       >Selecionar</button>
-      <span class="membership-projects-summary" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span>
+      <span class="membership-projects-summary" title="${escapeHtml(summaryText)}">${chipsHtml}</span>
       <div class="membership-projects-panel" hidden></div>
     </div>
   `;
@@ -3955,10 +3960,6 @@ function getLocationAccuracyThresholdInput() {
   return document.getElementById("locationAccuracyThresholdMeters");
 }
 
-function getMixedZoneIntervalInput() {
-  return document.getElementById("mixedZoneIntervalMinutes");
-}
-
 function getLocationSettingsSaveButton() {
   return document.getElementById("saveLocationSettingsButton");
 }
@@ -3985,8 +3986,8 @@ function normalizeMixedZoneIntervalMinutes(value) {
   }
 
   const minutes = Number(normalized);
-  if (!Number.isInteger(minutes) || minutes < 1) {
-    throw new Error("O intervalo de tempo para Zona Mista deve ser um inteiro maior que zero em minutos.");
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    throw new Error("O intervalo de tempo para Zona Mista deve ser um inteiro entre 1 e 1440 minutos.");
   }
   return String(minutes);
 }
@@ -4351,53 +4352,12 @@ function renderLocations() {
   addButton.disabled = hasBlankLocationRow();
 }
 
-function makeProjectMinimumCheckoutDistanceRow(row) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td>${escapeHtml(row.projectName)}</td>
-    <td>
-      <input
-        class="inline project-minimum-checkout-distance-input"
-        type="number"
-        min="1"
-        max="999999"
-        inputmode="numeric"
-        data-project-name="${escapeHtml(row.projectName)}"
-        value="${escapeHtml(String(row.minimumCheckoutDistanceMeters))}"
-      />
-    </td>
-  `;
-  return tr;
-}
-
-function renderProjectMinimumCheckoutDistanceRows() {
-  const body = document.getElementById("projectMinimumCheckoutDistancesBody");
-  if (!body) {
-    return;
-  }
-
-  body.innerHTML = "";
-  if (!projectMinimumCheckoutDistanceRows.length) {
-    renderEmptyStateRow("projectMinimumCheckoutDistancesBody", 2, "Nenhum projeto cadastrado.");
-    return;
-  }
-
-  projectMinimumCheckoutDistanceRows.forEach((row) => body.appendChild(makeProjectMinimumCheckoutDistanceRow(row)));
-  applyResponsiveLabels("projectMinimumCheckoutDistancesBody");
-}
-
 function renderLocationSettings() {
   const accuracyInput = getLocationAccuracyThresholdInput();
   if (accuracyInput) {
     const normalizedAccuracy = String(locationAccuracyThresholdMeters);
     accuracyInput.value = normalizedAccuracy;
     accuracyInput.dataset.persistedValue = normalizedAccuracy;
-  }
-  const mixedZoneInput = getMixedZoneIntervalInput();
-  if (mixedZoneInput) {
-    const normalizedMixedZoneInterval = String(mixedZoneIntervalMinutes);
-    mixedZoneInput.value = normalizedMixedZoneInterval;
-    mixedZoneInput.dataset.persistedValue = normalizedMixedZoneInterval;
   }
   locationSettingsDirty = false;
   updateLocationSettingsSaveButton();
@@ -4412,37 +4372,15 @@ function updateLocationSettingsSaveButton() {
 
 function haveLocationSettingsChanged() {
   const accuracyInput = getLocationAccuracyThresholdInput();
-  const mixedZoneInput = getMixedZoneIntervalInput();
-  if (!accuracyInput && !mixedZoneInput) {
+  if (!accuracyInput) {
     return false;
   }
 
-  let changed = false;
-
-  if (accuracyInput) {
-    const persistedAccuracy = accuracyInput.dataset.persistedValue ?? String(locationAccuracyThresholdMeters);
-
-    try {
-      changed = normalizeLocationAccuracyThreshold(accuracyInput.value) !== persistedAccuracy;
-    } catch {
-      changed = String(accuracyInput.value ?? "").trim() !== persistedAccuracy;
-    }
-  }
-
-  if (changed) {
-    return true;
-  }
-
-  if (!mixedZoneInput) {
-    return false;
-  }
-
-  const persistedMixedZoneInterval = mixedZoneInput.dataset.persistedValue ?? String(mixedZoneIntervalMinutes);
-
+  const persistedAccuracy = accuracyInput.dataset.persistedValue ?? String(locationAccuracyThresholdMeters);
   try {
-    return normalizeMixedZoneIntervalMinutes(mixedZoneInput.value) !== persistedMixedZoneInterval;
+    return normalizeLocationAccuracyThreshold(accuracyInput.value) !== persistedAccuracy;
   } catch {
-    return String(mixedZoneInput.value ?? "").trim() !== persistedMixedZoneInterval;
+    return String(accuracyInput.value ?? "").trim() !== persistedAccuracy;
   }
 }
 
@@ -4677,39 +4615,30 @@ async function removeLocationRow(rowId) {
 
 async function saveLocationSettings() {
   const accuracyInput = getLocationAccuracyThresholdInput();
-  const mixedZoneInput = getMixedZoneIntervalInput();
   const saveButton = getLocationSettingsSaveButton();
-  if (!accuracyInput || !mixedZoneInput) {
+  if (!accuracyInput) {
     locationSettingsDirty = false;
     updateLocationSettingsSaveButton();
     return;
   }
 
   const normalizedAccuracy = normalizeLocationAccuracyThreshold(accuracyInput.value);
-  const normalizedMixedZoneInterval = normalizeMixedZoneIntervalMinutes(mixedZoneInput.value);
   accuracyInput.value = normalizedAccuracy;
-  mixedZoneInput.value = normalizedMixedZoneInterval;
-  if (
-    normalizedAccuracy === String(locationAccuracyThresholdMeters)
-    && normalizedMixedZoneInterval === String(mixedZoneIntervalMinutes)
-  ) {
+  if (normalizedAccuracy === String(locationAccuracyThresholdMeters)) {
     locationSettingsDirty = false;
     updateLocationSettingsSaveButton();
     return;
   }
 
   accuracyInput.disabled = true;
-  mixedZoneInput.disabled = true;
   if (saveButton) {
     saveButton.disabled = true;
   }
   try {
     const response = await postJson("/api/admin/locations/settings", {
       location_accuracy_threshold_meters: Number(normalizedAccuracy),
-      mixed_zone_interval_minutes: Number(normalizedMixedZoneInterval),
     });
     locationAccuracyThresholdMeters = response.location_accuracy_threshold_meters;
-    mixedZoneIntervalMinutes = response.mixed_zone_interval_minutes;
     renderLocationSettings();
     setStatus(response.message, true);
   } catch (error) {
@@ -4717,19 +4646,14 @@ async function saveLocationSettings() {
     throw error;
   } finally {
     accuracyInput.disabled = false;
-    mixedZoneInput.disabled = false;
     updateLocationSettingsSaveButton();
   }
 }
 
 async function loadLocations({ silent = false } = {}) {
   const fetcher = silent ? fetchJsonSilent : fetchJson;
-  const [locationsResponse, checkoutDistancesResponse] = await Promise.all([
-    fetcher("/api/admin/locations"),
-    fetcher("/api/admin/locations/auto-checkout-distances"),
-  ]);
+  const locationsResponse = await fetcher("/api/admin/locations");
   locationAccuracyThresholdMeters = locationsResponse.location_accuracy_threshold_meters;
-  mixedZoneIntervalMinutes = locationsResponse.mixed_zone_interval_minutes ?? mixedZoneIntervalMinutes;
   locationRows = locationsResponse.items.map((row) =>
     createLocationRow({
       id: row.id,
@@ -4743,13 +4667,8 @@ async function loadLocations({ silent = false } = {}) {
       isEditing: false,
     })
   );
-  projectMinimumCheckoutDistanceRows = (checkoutDistancesResponse.items || []).map((row) => ({
-    projectName: row.project_name,
-    minimumCheckoutDistanceMeters: row.minimum_checkout_distance_meters,
-  }));
   renderLocations();
   renderLocationSettings();
-  renderProjectMinimumCheckoutDistanceRows();
   updateDashboardSummary();
 }
 
@@ -4779,10 +4698,10 @@ function makeRegisteredUserRow(user) {
   tr.className = "user-row";
   tr.dataset.userId = String(user.id);
   tr.innerHTML = `
-    <td><input class="inline user-rfid" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" title="${escapeHtml(user.rfid ?? "")}" disabled /></td>
+    <td><input class="inline user-rfid" size="10" maxlength="64" value="${escapeHtml(user.rfid ?? "")}" title="${escapeHtml(user.rfid ?? "")}" disabled /></td>
     <td><input class="inline user-nome" maxlength="180" value="${escapeHtml(user.nome)}" title="${escapeHtml(user.nome)}" disabled /></td>
-    <td><input class="inline user-chave" maxlength="4" value="${escapeHtml(user.chave)}" title="${escapeHtml(user.chave)}" disabled /></td>
-    <td><input class="inline user-perfil" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" title="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
+    <td><input class="inline user-chave" size="4" maxlength="4" value="${escapeHtml(user.chave)}" title="${escapeHtml(user.chave)}" disabled /></td>
+    <td><input class="inline user-perfil" size="4" type="number" min="0" max="999" value="${escapeHtml(user.perfil ?? 0)}" title="${escapeHtml(user.perfil ?? 0)}" disabled /></td>
     <td>
       ${makeProjectMembershipCell({ kind: "user", rowId: user.id, selectedProjects })}
     </td>
@@ -4807,6 +4726,8 @@ function makeProjectRow(project) {
   const transportChecked = project.transport_enabled ? "checked" : "";
   const emergencyValue = escapeHtml(project.emergency_phone || "");
   const inactivityValue = Number.isFinite(project.inactivity_days_threshold) ? project.inactivity_days_threshold : 60;
+  const mixedZoneValue = Number.isFinite(project.mixed_zone_interval_minutes) ? project.mixed_zone_interval_minutes : 30;
+  const checkoutDistanceValue = Number.isFinite(project.minimum_checkout_distance_meters) ? project.minimum_checkout_distance_meters : 2000;
   tr.innerHTML = `
     <td>${escapeHtml(project.name)}</td>
     <td>${escapeHtml(project.country_name || "-")}</td>
@@ -4830,6 +4751,12 @@ function makeProjectRow(project) {
     </td>
     <td>
       <input type="number" class="inline project-inactivity-input" data-project-inactivity-input="${project.id}" value="${inactivityValue}" min="1" max="3650" style="width:5em" title="Dias de inatividade até descadastro automático" />
+    </td>
+    <td>
+      <input type="number" class="inline project-mixed-zone-input" data-project-mixed-zone-input="${project.id}" value="${mixedZoneValue}" min="1" max="1440" style="width:5em" title="Intervalo de tempo para Zona Mista (minutos)" />
+    </td>
+    <td>
+      <input type="number" class="inline project-checkout-distance-input" data-project-checkout-distance-input="${project.id}" value="${checkoutDistanceValue}" min="1" max="999999" style="width:5em" title="Distância mínima para check-out automático (metros)" />
     </td>
     <td class="pending-actions user-actions">
       <button type="button" class="secondary-button" data-project-edit="${project.id}">Editar</button>
@@ -4906,6 +4833,26 @@ function bindProjectFlagHandlers() {
         await patchProjectFlag(projectId, { inactivity_days_threshold: value });
       } else {
         await loadProjects();  // recarrega para reverter valor inválido
+      }
+    }
+    const mixedZoneInput = evt.target.closest("[data-project-mixed-zone-input]");
+    if (mixedZoneInput) {
+      const projectId = mixedZoneInput.dataset.projectMixedZoneInput;
+      const value = Number.parseInt(mixedZoneInput.value, 10);
+      if (Number.isFinite(value) && value >= 1 && value <= 1440) {
+        await patchProjectFlag(projectId, { mixed_zone_interval_minutes: value });
+      } else {
+        await loadProjects();
+      }
+    }
+    const checkoutDistanceInput = evt.target.closest("[data-project-checkout-distance-input]");
+    if (checkoutDistanceInput) {
+      const projectId = checkoutDistanceInput.dataset.projectCheckoutDistanceInput;
+      const value = Number.parseInt(checkoutDistanceInput.value, 10);
+      if (Number.isFinite(value) && value >= 1 && value <= 999999) {
+        await patchProjectFlag(projectId, { minimum_checkout_distance_meters: value });
+      } else {
+        await loadProjects();
       }
     }
   }, true);  // useCapture para pegar blur
@@ -5210,7 +5157,7 @@ async function loadProjects() {
 
   body.innerHTML = "";
   if (!rows.length) {
-    renderEmptyStateRow("projectsBody", 10, "Nenhum projeto cadastrado.");
+    renderEmptyStateRow("projectsBody", 12, "Nenhum projeto cadastrado.");
     return rows;
   }
 
@@ -6804,7 +6751,6 @@ function bindActions() {
     saveLocationSettings().catch((error) => setStatus(error.message, false));
   });
   bindLocationSettingsInput("locationAccuracyThresholdMeters");
-  bindLocationSettingsInput("mixedZoneIntervalMinutes");
 
   document.getElementById("locationsBody").addEventListener("click", (event) => {
     const body = event.currentTarget;

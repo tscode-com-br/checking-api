@@ -65,7 +65,6 @@ from sistema.app.models import (
     FormsSubmission,
     ManagedLocation,
     Project,
-    ProjectAutoCheckoutDistance,
     TransportCurrencyOption,
     TransportAssignment,
     TransportRequest,
@@ -700,12 +699,12 @@ def test_admin_update_profile_route_persists_real_memberships_and_audit_details(
         ).scalar_one()
 
     assert refreshed_admin is not None
-    assert refreshed_admin.perfil == 12
+    assert refreshed_admin.perfil == 3
     assert refreshed_projects == ["P80", "P83"]
     assert refreshed_admin.admin_monitored_projects_json is None
     assert audit_event.message == "Administrator configuration updated"
     assert "old_profile=1" in audit_event.details
-    assert "new_profile=12" in audit_event.details
+    assert "new_profile=3" in audit_event.details
     assert 'old_projects=["P80"]' in audit_event.details
     assert 'new_projects=["P80","P83"]' in audit_event.details
     assert "old_active_project=P80" in audit_event.details
@@ -760,7 +759,7 @@ def test_admin_update_profile_route_preserves_existing_memberships_when_projects
 
     assert refreshed_admin is not None
     assert latest_audit_event is not None
-    assert refreshed_admin.perfil == 12
+    assert refreshed_admin.perfil == 3
     assert refreshed_projects == ["P80", "P82"]
     assert refreshed_admin.admin_monitored_projects_json is None
     assert 'old_projects=["P80","P82"]' in latest_audit_event.details
@@ -884,7 +883,7 @@ def test_admin_approval_preserves_existing_seed_project_and_transport_password_r
         approved_projects = list_user_project_names(db, approved_admin)
 
     assert approved_admin is not None
-    assert approved_admin.perfil == 12
+    assert approved_admin.perfil == 3
     assert approved_admin.admin_monitored_projects_json is None
     assert approved_projects == ["P80"]
     assert approved_admin.senha is not None
@@ -1986,12 +1985,6 @@ def cleanup_transport_planning_fixture_bundle(db, fixture_bundle: dict[str, obje
         for vehicle_row in db.execute(select(Vehicle).where(Vehicle.id.in_(vehicle_ids))).scalars().all():
             db.delete(vehicle_row)
 
-    if project_names:
-        for distance_row in db.execute(
-            select(ProjectAutoCheckoutDistance).where(ProjectAutoCheckoutDistance.project_name.in_(project_names))
-        ).scalars().all():
-            db.delete(distance_row)
-
     if project_ids:
         for project_row in db.execute(select(Project).where(Project.id.in_(project_ids))).scalars().all():
             db.delete(project_row)
@@ -2490,6 +2483,7 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
                 "timezone_name": "Asia/Singapore",
                 "address": "Old Address 98",
                 "zip_code": "100098",
+                "minimum_checkout_distance_meters": 4321,
             },
         )
         assert created.status_code == 200, created.text
@@ -2533,14 +2527,7 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
                         inactivity_days=0,
                         admin_monitored_projects_json=dump_admin_monitored_projects(["P80", source_project_name]),
                     ),
-                    ProjectAutoCheckoutDistance(
-                        project_name=source_project_name,
-                        minimum_checkout_distance_meters=4321,
-                        created_at=now_sgt(),
-                        updated_at=now_sgt(),
-                    ),
-                ]
-            )
+                ]            )
             db.flush()
             ensure_user_active_project_is_member(db, linked_user)
             add_user_project_membership(db, linked_user, "P80")
@@ -2623,23 +2610,16 @@ def test_admin_project_update_renames_live_links_and_exposes_transport_project_p
         legacy_project = db.execute(select(Project).where(Project.name == source_project_name)).scalar_one_or_none()
         renamed_user = find_user_by_chave(db, linked_user_key)
         scoped_admin = find_user_by_chave(db, scoped_admin_key)
-        minimum_checkout_distance = db.execute(
-            select(ProjectAutoCheckoutDistance).where(ProjectAutoCheckoutDistance.project_name == target_project_name)
-        ).scalar_one()
-        legacy_distance = db.execute(
-            select(ProjectAutoCheckoutDistance).where(ProjectAutoCheckoutDistance.project_name == source_project_name)
-        ).scalar_one_or_none()
 
     assert renamed_project is not None
     assert renamed_project.name == target_project_name
+    assert renamed_project.minimum_checkout_distance_meters == 4321
     assert renamed_project.address == "New Address 99"
     assert renamed_project.zip_code == "500099"
     assert legacy_project is None
     assert renamed_user.projeto == target_project_name
     assert list_user_project_names(db, renamed_user) == ["P80", target_project_name]
     assert scoped_admin.admin_monitored_projects_json is None
-    assert minimum_checkout_distance.minimum_checkout_distance_meters == 4321
-    assert legacy_distance is None
 
 
 def test_admin_project_create_accepts_custom_country_and_timezone_pair():
@@ -19173,7 +19153,7 @@ def test_admin_self_service_request_uses_registered_transport_user_and_keeps_rev
         approved_row = next(
             row for row in admins_response.json() if row["chave"] == "RK12" and row["row_type"] == "admin"
         )
-        assert approved_row["perfil"] == 12
+        assert approved_row["perfil"] == 3
         assert approved_row["can_revoke"] is True
         profile_update_response = client.post(
             f"/api/admin/administrators/{approved_row['id']}/profile",
@@ -19187,13 +19167,13 @@ def test_admin_self_service_request_uses_registered_transport_user_and_keeps_rev
         refreshed_row = next(
             row for row in refreshed_admins_response.json() if row["chave"] == "RK12" and row["row_type"] == "admin"
         )
-        assert refreshed_row["perfil"] == 12
+        assert refreshed_row["perfil"] == 3
         assert refreshed_row["can_revoke"] is True
 
         with SessionLocal() as db:
             user = db.execute(select(User).where(User.chave == "RK12")).scalar_one_or_none()
             assert user is not None
-            assert user.perfil == 12
+            assert user.perfil == 3
             assert user.senha is not None
             assert verify_password("rk1234", user.senha) is True
 
@@ -19709,7 +19689,6 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
             "/api/admin/locations/settings",
             json={
                 "location_accuracy_threshold_meters": 30,
-                "mixed_zone_interval_minutes": 20,
             },
         )
         assert reset_location_settings.status_code == 200
@@ -19729,7 +19708,6 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
         assert locations.json()["location_accuracy_threshold_meters"] == 30
-        assert locations.json()["mixed_zone_interval_minutes"] == 20
         base_p80 = next(row for row in locations.json()["items"] if row["local"] == "Base P80")
         assert base_p80["coordinates"] == build_rectangle_coordinates(1.255936, 103.611066)
         assert base_p80["projects"] == ["P80", "P82"]
@@ -19739,13 +19717,11 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
             "/api/admin/locations/settings",
             json={
                 "location_accuracy_threshold_meters": 45,
-                "mixed_zone_interval_minutes": 35,
             },
         )
         assert update_location_settings.status_code == 200
         assert update_location_settings.json()["ok"] is True
         assert update_location_settings.json()["location_accuracy_threshold_meters"] == 45
-        assert update_location_settings.json()["mixed_zone_interval_minutes"] == 35
 
         events = client.get("/api/admin/events")
         assert events.status_code == 200
@@ -19756,8 +19732,7 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
         )
         assert location_settings_event["chave"] == ADMIN_LOGIN_CHAVE
         assert location_settings_event["message"] == (
-            "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para 45 metros. "
-            "O intervalo de tempo para Zona Mista foi ajustado para 35 minutos."
+            "O valor do erro máximo para considerar a coordenada do usuário foi ajustado para 45 metros."
         )
 
         update_location = client.post(
@@ -19775,7 +19750,6 @@ def test_admin_locations_crud_and_mobile_catalog_sync():
 
         updated_locations = client.get("/api/admin/locations")
         assert updated_locations.status_code == 200
-        assert updated_locations.json()["mixed_zone_interval_minutes"] == 35
         updated_base_p80 = next(row for row in updated_locations.json()["items"] if row["local"] == "Base P80")
         assert updated_base_p80["coordinates"] == build_rectangle_coordinates(
             1.255936,
@@ -19911,7 +19885,7 @@ def test_admin_locations_list_contract_preserves_expected_shape():
         locations = client.get("/api/admin/locations")
         assert locations.status_code == 200
         payload = locations.json()
-        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters", "mixed_zone_interval_minutes"}
+        assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters"}
 
         location_row = next(row for row in payload["items"] if row["local"] == "Contract Base P98")
         assert set(location_row.keys()) == {
@@ -19940,7 +19914,6 @@ def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture
             "/api/admin/locations/settings",
             json={
                 "location_accuracy_threshold_meters": 25,
-                "mixed_zone_interval_minutes": 35,
             },
         )
         assert update_location_settings.status_code == 200
@@ -19965,7 +19938,7 @@ def test_web_locations_catalog_includes_accuracy_threshold_for_lifecycle_capture
         payload = locations.json()
         assert set(payload.keys()) == {"items", "location_accuracy_threshold_meters", "mixed_zone_interval_minutes"}
         assert payload["location_accuracy_threshold_meters"] == 25
-        assert payload["mixed_zone_interval_minutes"] == 35
+        assert payload["mixed_zone_interval_minutes"] == 30
         assert "Web Catalog Base P82" in payload["items"]
 
 

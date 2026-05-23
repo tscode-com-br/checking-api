@@ -6,14 +6,14 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import MobileAppSettings, ProjectAutoCheckoutDistance, TransportCurrencyOption, TransportDailySetting, Workplace
-from .project_catalog import list_project_names, normalize_project_name
+from ..models import MobileAppSettings, Project, TransportCurrencyOption, TransportDailySetting, Workplace
+from .project_catalog import normalize_project_name
 from .time_utils import now_sgt
 
 
 DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS = 30
-DEFAULT_MIXED_ZONE_INTERVAL_MINUTES = 20
+DEFAULT_MIXED_ZONE_INTERVAL_MINUTES = 30
 DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS = 2000
 DEFAULT_TRANSPORT_ARRIVE_AT_WORK_TIME = "07:45"
 DEFAULT_TRANSPORT_WORK_TO_HOME_TIME = "16:45"
@@ -102,7 +102,6 @@ def _get_or_create_mobile_app_settings(db: Session) -> MobileAppSettings:
             id=1,
             location_update_interval_seconds=DEFAULT_LOCATION_UPDATE_INTERVAL_SECONDS,
             location_accuracy_threshold_meters=DEFAULT_LOCATION_ACCURACY_THRESHOLD_METERS,
-            mixed_zone_interval_minutes=DEFAULT_MIXED_ZONE_INTERVAL_MINUTES,
             transport_arrive_at_work_time=DEFAULT_TRANSPORT_ARRIVE_AT_WORK_TIME,
             transport_work_to_home_time=DEFAULT_TRANSPORT_WORK_TO_HOME_TIME,
             transport_last_update_time=DEFAULT_TRANSPORT_LAST_UPDATE_TIME,
@@ -129,11 +128,42 @@ def get_location_accuracy_threshold_meters(db: Session) -> int:
     return settings.location_accuracy_threshold_meters
 
 
-def get_mixed_zone_interval_minutes(db: Session) -> int:
-    settings = db.get(MobileAppSettings, 1)
-    if settings is None:
+def get_mixed_zone_interval_minutes_for_projects(
+    db: Session,
+    project_names: Sequence[str] | None,
+) -> int:
+    if not project_names:
         return DEFAULT_MIXED_ZONE_INTERVAL_MINUTES
-    return settings.mixed_zone_interval_minutes
+
+    normalized_names: list[str] = []
+    for project_name in project_names:
+        try:
+            normalized_names.append(normalize_project_name(project_name))
+        except ValueError:
+            continue
+    if not normalized_names:
+        return DEFAULT_MIXED_ZONE_INTERVAL_MINUTES
+
+    values = db.execute(
+        select(Project.mixed_zone_interval_minutes).where(Project.name.in_(normalized_names))
+    ).scalars().all()
+    if not values:
+        return DEFAULT_MIXED_ZONE_INTERVAL_MINUTES
+    return max(int(value) for value in values if value is not None)
+
+
+def set_project_mixed_zone_interval_minutes(
+    db: Session,
+    *,
+    project_id: int,
+    mixed_zone_interval_minutes: int,
+) -> Project | None:
+    project = db.get(Project, project_id)
+    if project is None:
+        return None
+    project.mixed_zone_interval_minutes = mixed_zone_interval_minutes
+    db.flush()
+    return project
 
 
 def get_minimum_checkout_distance_meters_for_project(
@@ -148,78 +178,65 @@ def get_minimum_checkout_distance_meters_for_project(
     except ValueError:
         return DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS
 
-    configured_distance = db.execute(
-        select(ProjectAutoCheckoutDistance).where(
-            ProjectAutoCheckoutDistance.project_name == normalized_project_name
-        )
+    project = db.execute(
+        select(Project).where(Project.name == normalized_project_name)
     ).scalar_one_or_none()
-    if configured_distance is None:
+    if project is None:
         return DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS
 
-    return configured_distance.minimum_checkout_distance_meters
+    return int(project.minimum_checkout_distance_meters or DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS)
 
 
 def list_project_minimum_checkout_distance_rows(db: Session) -> list[ProjectMinimumCheckoutDistanceRow]:
-    project_names = list_project_names(db)
-    if not project_names:
-        return []
-
-    configured_distances = {
-        row.project_name: row.minimum_checkout_distance_meters
-        for row in db.execute(
-            select(ProjectAutoCheckoutDistance).order_by(ProjectAutoCheckoutDistance.project_name)
-        ).scalars().all()
-    }
+    projects = db.execute(
+        select(Project).order_by(Project.name)
+    ).scalars().all()
     return [
         ProjectMinimumCheckoutDistanceRow(
-            project_name=project_name,
-            minimum_checkout_distance_meters=configured_distances.get(
-                project_name,
-                DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS,
-            ),
+            project_name=project.name,
+            minimum_checkout_distance_meters=int(project.minimum_checkout_distance_meters or DEFAULT_MINIMUM_CHECKOUT_DISTANCE_METERS),
         )
-        for project_name in project_names
+        for project in projects
     ]
 
 
 def upsert_project_minimum_checkout_distance_rows(
     db: Session,
     items: Sequence[tuple[str, int]],
-) -> list[ProjectAutoCheckoutDistance]:
+) -> list[Project]:
     if not items:
         return []
 
-    timestamp = now_sgt()
     project_names = [project_name for project_name, _distance in items]
-    existing_rows = {
-        row.project_name: row
-        for row in db.execute(
-            select(ProjectAutoCheckoutDistance).where(
-                ProjectAutoCheckoutDistance.project_name.in_(project_names)
-            )
+    projects = {
+        project.name: project
+        for project in db.execute(
+            select(Project).where(Project.name.in_(project_names))
         ).scalars().all()
     }
-    persisted_rows: list[ProjectAutoCheckoutDistance] = []
-
+    updated: list[Project] = []
     for project_name, minimum_checkout_distance_meters in items:
-        existing_row = existing_rows.get(project_name)
-        if existing_row is None:
-            existing_row = ProjectAutoCheckoutDistance(
-                project_name=project_name,
-                minimum_checkout_distance_meters=minimum_checkout_distance_meters,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-            db.add(existing_row)
-            existing_rows[project_name] = existing_row
-        else:
-            existing_row.minimum_checkout_distance_meters = minimum_checkout_distance_meters
-            existing_row.updated_at = timestamp
-
-        persisted_rows.append(existing_row)
+        project = projects.get(project_name)
+        if project is not None:
+            project.minimum_checkout_distance_meters = minimum_checkout_distance_meters
+            updated.append(project)
 
     db.flush()
-    return persisted_rows
+    return updated
+
+
+def set_project_minimum_checkout_distance_meters(
+    db: Session,
+    *,
+    project_id: int,
+    minimum_checkout_distance_meters: int,
+) -> Project | None:
+    project = db.get(Project, project_id)
+    if project is None:
+        return None
+    project.minimum_checkout_distance_meters = minimum_checkout_distance_meters
+    db.flush()
+    return project
 
 
 def get_transport_work_to_home_time(db: Session) -> str:
@@ -413,14 +430,11 @@ def upsert_location_settings(
     db: Session,
     *,
     accuracy_threshold_meters: int,
-    mixed_zone_interval_minutes: int | None = None,
 ) -> MobileAppSettings:
     settings = _get_or_create_mobile_app_settings(db)
     timestamp = now_sgt()
 
     settings.location_accuracy_threshold_meters = accuracy_threshold_meters
-    if mixed_zone_interval_minutes is not None:
-        settings.mixed_zone_interval_minutes = mixed_zone_interval_minutes
     settings.updated_at = timestamp
     db.flush()
     return settings

@@ -422,13 +422,6 @@
             </div>
             <div class="locations-settings-panel">
               <div class="locations-settings-row">
-                <label for="mixedZoneIntervalMinutes">Intervalo de Tempo para Zona Mista:</label>
-                <div class="locations-settings-input-group">
-                  <input id="mixedZoneIntervalMinutes" type="number" min="1" inputmode="numeric" value="20" />
-                  <span>minutos</span>
-                </div>
-              </div>
-              <div class="locations-settings-row">
                 <label for="locationAccuracyThresholdMeters">Erro máximo para considerar a coordenada do usuário:</label>
                 <div class="locations-settings-input-group">
                   <input id="locationAccuracyThresholdMeters" type="number" min="1" max="9999" inputmode="numeric" value="30" />
@@ -438,23 +431,6 @@
               <div class="locations-settings-actions">
                 <button id="saveLocationSettingsButton" type="button" disabled>Salvar</button>
               </div>
-            </div>
-          </article>
-
-          <article class="cadastro-section-panel cadastro-section-panel--distances" data-cadastro-section="checkout-distance">
-            <div class="section-header">
-              <h2>Distância mínima para check-out automático</h2>
-            </div>
-            <div class="table-wrap cadastro-grid-wrap">
-              <table class="responsive-table cadastro-table cadastro-project-checkout-distance-table">
-                <thead>
-                  <tr><th>Projeto</th><th>Distância mínima em metros</th></tr>
-                </thead>
-                <tbody id="projectMinimumCheckoutDistancesBody"></tbody>
-              </table>
-            </div>
-            <div class="locations-settings-actions">
-              <button id="saveProjectMinimumCheckoutDistancesButton" type="button" disabled>Salvar</button>
             </div>
           </article>
 
@@ -520,7 +496,7 @@
             <div class="table-wrap cadastro-grid-wrap">
               <table class="responsive-table cadastro-table cadastro-projects-table">
                 <thead>
-                  <tr><th>Nome do Projeto</th><th>País</th><th>Endereço</th><th>ZIP Code</th><th>Fuso horário</th><th>Forms</th><th>Transporte</th><th>Emergência</th><th>Ações</th></tr>
+                  <tr><th>Projeto</th><th>País</th><th>Endereço</th><th>ZIP Code</th><th>Fuso horário</th><th>Forms</th><th>Transporte</th><th>Emergência</th><th>Inatividade</th><th>Intervalo de Tempo<br>Zona Mista</th><th>Distância Mínima<br>para Check-Out</th><th>Ações</th></tr>
                 </thead>
                 <tbody id="projectsBody"></tbody>
               </table>
