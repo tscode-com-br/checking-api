@@ -298,7 +298,7 @@
         automaticUpdatesCompletedWithActivity: 'Atualizações concluídas com {activity} realizado.',
         automaticUpdatesCompletedWithoutActivity: 'Atualizações concluídas sem atividades realizadas.',
         automaticUpdatesFailed: 'Não foi possível concluir as atualizações automáticas neste momento.',
-        automaticActivitiesDisabled: 'Atividades automáticas desabilitadas.',
+        automaticActivitiesDisabled: 'O modo 100% manual foi ativado.',
         operationFailed: 'Não foi possível concluir a operação.',
       },
       manual: {
@@ -787,7 +787,7 @@
         automaticUpdatesCompletedWithActivity: 'Updates completed with {activity} performed.',
         automaticUpdatesCompletedWithoutActivity: 'Updates completed with no activities performed.',
         automaticUpdatesFailed: 'Could not complete the automatic updates right now.',
-        automaticActivitiesDisabled: 'Automatic activities disabled.',
+        automaticActivitiesDisabled: '100% manual mode is now active.',
         operationFailed: 'Could not complete the operation.',
       },
       manual: {
@@ -1237,7 +1237,7 @@
         automaticUpdatesCompletedWithActivity: '更新已完成，并执行了 {activity}。',
         automaticUpdatesCompletedWithoutActivity: '更新已完成，没有执行任何活动。',
         automaticUpdatesFailed: '当前无法完成自动更新。',
-        automaticActivitiesDisabled: '自动活动已禁用。',
+        automaticActivitiesDisabled: '已启用 100% 手动模式。',
         operationFailed: '无法完成该操作。',
       },
       manual: {
@@ -1531,7 +1531,7 @@
         automaticUpdatesCompletedWithActivity: 'Kemas kini selesai dengan {activity} dilakukan.',
         automaticUpdatesCompletedWithoutActivity: 'Kemas kini selesai tanpa sebarang aktiviti dilakukan.',
         automaticUpdatesFailed: 'Tidak dapat menyelesaikan kemas kini automatik sekarang.',
-        automaticActivitiesDisabled: 'Aktiviti automatik dinyahdayakan.',
+        automaticActivitiesDisabled: 'Mod 100% manual telah diaktifkan.',
         operationFailed: 'Tidak dapat menyelesaikan operasi.',
       },
       manual: {
@@ -1825,7 +1825,7 @@
         automaticUpdatesCompletedWithActivity: 'Pembaruan selesai dengan {activity} dilakukan.',
         automaticUpdatesCompletedWithoutActivity: 'Pembaruan selesai tanpa aktivitas yang dilakukan.',
         automaticUpdatesFailed: 'Tidak dapat menyelesaikan pembaruan otomatis sekarang.',
-        automaticActivitiesDisabled: 'Aktivitas otomatis dinonaktifkan.',
+        automaticActivitiesDisabled: 'Mode 100% manual telah diaktifkan.',
         operationFailed: 'Tidak dapat menyelesaikan operasi.',
       },
       manual: {
@@ -2119,7 +2119,7 @@
         automaticUpdatesCompletedWithActivity: 'Tapos ang mga update at naisagawa ang {activity}.',
         automaticUpdatesCompletedWithoutActivity: 'Tapos ang mga update nang walang naisagawang aktibidad.',
         automaticUpdatesFailed: 'Hindi makumpleto ang mga awtomatikong update sa ngayon.',
-        automaticActivitiesDisabled: 'Na-disable ang mga awtomatikong aktibidad.',
+        automaticActivitiesDisabled: 'Aktibado na ang 100% manual mode.',
         operationFailed: 'Hindi makumpleto ang operasyon.',
       },
       manual: {

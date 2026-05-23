@@ -6581,6 +6581,12 @@
       throw new Error(t('auth.enterPasswordPrompt'));
     }
 
+    // Em modo 100% manual (toggle off), o submit não dispara GPS.
+    // A coordenada só vem do refresh manual quando o usuário clicar nele.
+    if (!isAutomaticActivitiesEnabled()) {
+      return;
+    }
+
     if (locationRequestPromise) {
       await locationRequestPromise;
       return;
@@ -6939,18 +6945,23 @@
         cacheWindowMs: lifecycleDataReuseWindowMs,
       });
 
-      setSequenceStatus(
-        typeof t === 'function'
-          ? t('status.updatingLocationSequence')
-          : 'Atualizando a localização.....'
-      );
-      const locationPayload = await updateLocationForLifecycleSequence({
-        triggerSource: settings.triggerSource,
-        forceRefresh: settings.forceRefresh,
-        suppressNotification: settings.suppressNotification,
-        showDetectingState: settings.showDetectingState,
-        cacheWindowMs: settings.locationCacheWindowMs ?? lifecycleDataReuseWindowMs,
-      });
+      // Em modo 100% manual (toggle off), o app não busca GPS automaticamente.
+      // Histórico continua sendo atualizado; localização só via refresh manual.
+      let locationPayload = null;
+      if (isAutomaticActivitiesEnabled()) {
+        setSequenceStatus(
+          typeof t === 'function'
+            ? t('status.updatingLocationSequence')
+            : 'Atualizando a localização.....'
+        );
+        locationPayload = await updateLocationForLifecycleSequence({
+          triggerSource: settings.triggerSource,
+          forceRefresh: settings.forceRefresh,
+          suppressNotification: settings.suppressNotification,
+          showDetectingState: settings.showDetectingState,
+          cacheWindowMs: settings.locationCacheWindowMs ?? lifecycleDataReuseWindowMs,
+        });
+      }
 
       if (isAutomaticActivitiesEnabled()) {
         setSequenceStatus(
@@ -7013,6 +7024,12 @@
   }
 
   function requestLifecycleUpdateFromUi(triggerSource) {
+    // Em modo 100% manual (toggle off), eventos de visibilidade/foco/pageshow
+    // não disparam lifecycle update (que envolveria refresh de GPS).
+    if (!isAutomaticActivitiesEnabled()) {
+      return;
+    }
+
     const nextTriggerSource = typeof triggerSource === 'string' && triggerSource
       ? triggerSource
       : 'visibility';
@@ -7467,7 +7484,19 @@
   if (projectMembershipButton) {
     projectMembershipButton.addEventListener('click', (event) => {
       event.preventDefault();
-      setProjectMembershipPanelOpen(projectMembershipPanel && projectMembershipPanel.hidden);
+      event.stopPropagation();
+      if (!projectMembershipPanel) {
+        return;
+      }
+      const isPanelCurrentlyOpen = !projectMembershipPanel.hidden;
+      if (isPanelCurrentlyOpen) {
+        setProjectMembershipPanelOpen(false);
+        return;
+      }
+      // Antes de abrir: re-sincroniza opções para garantir que os checkboxes
+      // estejam populados mesmo se o estado anterior ficou inconsistente.
+      syncProjectMembershipControls();
+      setProjectMembershipPanelOpen(true);
     });
   }
 
@@ -7500,14 +7529,8 @@
         return;
       }
 
-      if (gpsLocationPermissionGranted && isApplicationUnlocked()) {
-        void runLifecycleUpdateSequence({
-          ignoreCooldown: true,
-          triggerSource: 'automatic_activities_disable',
-        });
-        return;
-      }
-
+      // Modo 100% manual: nenhum GPS é buscado automaticamente.
+      // Localização só atualiza via refresh manual.
       setStatus(t('status.automaticActivitiesDisabled'), 'success');
     });
   }
