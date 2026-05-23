@@ -282,6 +282,7 @@
   let recentLocationResolutionChave = '';
   let availableLocations = [];
   let locationAccuracyThresholdMeters = null;
+  let lastDisplayedAccuracyMeters = null;
   let mixedZoneIntervalMinutes = DEFAULT_MIXED_ZONE_INTERVAL_MINUTES;
   let gpsLocationPermissionGranted = false;
   let lastKnownLocationPermissionState = null;
@@ -1390,6 +1391,11 @@
     applyTextContent(informeLegend, t('registration.informeTitle'));
     applyTextContent(normalInformeLabel, t('registration.informeNormalLabel'));
     applyTextContent(retroativoInformeLabel, t('registration.informeRetroativoLabel'));
+    if (submitButton) {
+      submitButton.textContent = submitInProgress
+        ? `${t('registration.submitButton')}...`
+        : t('registration.submitButton');
+    }
     applyTextContent(projectFieldLabel, t('projects.label'));
     applyTextContent(projectMembershipLink, t('projects.changeButton'));
     applyTextContent(locationFieldLabel, t('location.title'));
@@ -1506,6 +1512,10 @@
       syncPasswordDialogPresentation();
       syncProjectMembershipControls();
       syncManualLocationControl();
+      refreshLocationAccuracyDisplay();
+      if (window.AccidentMode && typeof window.AccidentMode.refreshLabels === 'function') {
+        window.AccidentMode.refreshLabels();
+      }
       if (latestHistoryState) {
         applyHistoryState(latestHistoryState);
       } else {
@@ -1689,6 +1699,19 @@
 
       if (control === submitButton) {
         control.disabled = dialogOpen || lockActive || !unlocked || submitInProgress || (automaticActivitiesEnabled && !manualOverrideActive);
+        return;
+      }
+
+      if (control === automaticActivitiesToggle) {
+        // Bloqueia o toggle 'Atividades Automaticas' quando o usuario nao esta
+        // vinculado a nenhum projeto. So aplica apos o carregamento das memberships
+        // para evitar disable momentaneo durante o load inicial.
+        const userProjectsResolved = !userProjectsLoading && !projectCatalogLoading;
+        const hasNoUserProjects = userProjectsResolved && lastCommittedUserProjectValues.length === 0;
+        control.disabled = dialogOpen || lockActive || !unlocked || hasNoUserProjects;
+        if (hasNoUserProjects && control.checked) {
+          control.checked = false;
+        }
         return;
       }
 
@@ -2940,10 +2963,9 @@
     syncFormControlStates();
     void queryLocationPermissionState();
     realignViewport();
-    if (settingsLanguageSelect && typeof settingsLanguageSelect.focus === 'function') {
-      settingsLanguageSelect.focus();
-      return;
-    }
+    // Nao focar o <select> de idioma — em alguns browsers (incl. mobile),
+    // focus() em <select> expande a dropdown automaticamente. Foca o
+    // botao 'Voltar' (acessivel, nao expande nada).
     if (settingsDialogBackButton && typeof settingsDialogBackButton.focus === 'function') {
       settingsDialogBackButton.focus();
     }
@@ -5981,6 +6003,19 @@
     return noActivityResult;
   }
 
+  function refreshLocationAccuracyDisplay() {
+    if (!locationAccuracy) return;
+    // So re-renderiza se houver valor numerico cacheado; caso contrario
+    // mantem o conteudo atual (e.g., '--' ou texto de captura em andamento).
+    if (typeof lastDisplayedAccuracyMeters !== 'number' || !Number.isFinite(lastDisplayedAccuracyMeters)) {
+      return;
+    }
+    locationAccuracy.textContent = buildAccuracyText(
+      lastDisplayedAccuracyMeters,
+      locationAccuracyThresholdMeters
+    );
+  }
+
   function buildAccuracyText(accuracyMeters, thresholdMeters) {
     if (typeof accuracyMeters !== 'number' || !Number.isFinite(accuracyMeters)) {
       return thresholdMeters
@@ -6296,6 +6331,9 @@
       no_known_locations: 'error',
     };
     setLocationAccuracyThresholdMeters(payload.accuracy_threshold_meters);
+    lastDisplayedAccuracyMeters = typeof payload.accuracy_meters === 'number' && Number.isFinite(payload.accuracy_meters)
+      ? payload.accuracy_meters
+      : null;
     const accuracyText = buildAccuracyText(payload.accuracy_meters, payload.accuracy_threshold_meters);
     const locationMessage = payload.status === 'matched'
       ? ''

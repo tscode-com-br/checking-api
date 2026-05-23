@@ -951,6 +951,12 @@
           checkSuccessAlt: 'Successful check-in or check-out state in Checking Web.',
         },
       },
+      accident: {
+        button: {
+          report: 'Report Accident',
+          reported: 'Accident Reported',
+        },
+      },
       support: {
         phoneNumber: '5521992174446',
         messageTemplate: 'I need help with the Web application. My key is {chave}.',
@@ -1244,6 +1250,12 @@
         heading: 'Checking Web 使用手册',
         introPrimary: '此页面是“设置 > 关于”使用的稳定手册入口。',
         introSecondary: '包含截图的完整手册将在后续实现阶段添加。',
+      },
+      accident: {
+        button: {
+          report: '报告事故',
+          reported: '事故已报告',
+        },
       },
       support: {
         phoneNumber: '5521992174446',
@@ -1539,6 +1551,12 @@
         introPrimary: 'Halaman ini ialah titik masuk manual yang stabil yang digunakan oleh Tetapan > Perihal.',
         introSecondary: 'Manual penuh dengan tangkapan skrin akan ditambah dalam fasa pelaksanaan seterusnya.',
       },
+      accident: {
+        button: {
+          report: 'Laporkan Kemalangan',
+          reported: 'Kemalangan Dilaporkan',
+        },
+      },
       support: {
         phoneNumber: '5521992174446',
         messageTemplate: 'Saya perlukan bantuan dengan aplikasi Web. Kunci saya ialah {chave}.',
@@ -1833,6 +1851,12 @@
         introPrimary: 'Halaman ini adalah titik masuk manual yang stabil yang digunakan oleh Pengaturan > Tentang.',
         introSecondary: 'Manual lengkap dengan tangkapan layar akan ditambahkan pada fase implementasi berikutnya.',
       },
+      accident: {
+        button: {
+          report: 'Laporkan Kecelakaan',
+          reported: 'Kecelakaan Dilaporkan',
+        },
+      },
       support: {
         phoneNumber: '5521992174446',
         messageTemplate: 'Saya membutuhkan bantuan dengan aplikasi Web. Kunci saya adalah {chave}.',
@@ -2126,6 +2150,12 @@
         heading: 'Manwal ng Checking Web',
         introPrimary: 'Ang pahinang ito ang matatag na entry point ng manual na ginagamit ng Settings > Tungkol Dito.',
         introSecondary: 'Idadagdag ang kumpletong manual na may mga screenshot sa susunod na yugto ng implementasyon.',
+      },
+      accident: {
+        button: {
+          report: 'Iulat ang Aksidente',
+          reported: 'Naiulat na ang Aksidente',
+        },
       },
       support: {
         phoneNumber: '5521992174446',

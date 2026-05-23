@@ -8,6 +8,36 @@
   let wizardData = {};
 
   // ---------------------------------------------------------------------------
+  // i18n helper — usa window.CheckingWebI18n.t quando disponivel; cai no
+  // fallback portugues caso o modulo ainda nao tenha carregado.
+  // ---------------------------------------------------------------------------
+
+  function tt(key, fallback) {
+    const i18n = window.CheckingWebI18n;
+    if (i18n && typeof i18n.t === "function") {
+      try {
+        const result = i18n.t(key);
+        if (typeof result === "string" && result && result !== key) {
+          return result;
+        }
+      } catch (_) {
+        // fallthrough to fallback
+      }
+    }
+    return fallback;
+  }
+
+  function applyReportButtonLabel() {
+    const btn = document.getElementById("accidentReportButton");
+    if (!btn) return;
+    const label = btn.querySelector(".accident-report-button-label");
+    if (!label) return;
+    label.textContent = state.is_active
+      ? tt("accident.button.reported", "Acidente Reportado")
+      : tt("accident.button.report", "Reportar Acidente");
+  }
+
+  // ---------------------------------------------------------------------------
   // State refresh
   // ---------------------------------------------------------------------------
 
@@ -88,8 +118,7 @@
     if (!btn) return;
     btn.hidden = false;
     btn.setAttribute("aria-pressed", s.is_active ? "true" : "false");
-    const label = btn.querySelector(".accident-report-button-label");
-    if (label) label.textContent = s.is_active ? "Acidente Reportado" : "Reportar Acidente";
+    applyReportButtonLabel();
   }
 
   // ---------------------------------------------------------------------------
@@ -494,5 +523,8 @@
       applyTheme(false);
       state = { is_active: false, accident: null, current_user_report: null };
     },
+    // Re-aplica os labels do botao 'Reportar Acidente' / 'Acidente Reportado'
+    // sem alterar visibilidade. Chamado por app.js apos mudanca de idioma.
+    refreshLabels: function () { applyReportButtonLabel(); },
   };
 })();

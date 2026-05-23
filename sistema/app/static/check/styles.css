@@ -655,6 +655,13 @@ header {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  /* Reforça herança de fonte: alguns browsers, ao ver appearance:none, descartam
+     o font: inherit herdado de .check-field select e voltam ao font-family de UA. */
+  font-family: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   padding-right: 36px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23475569' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -1041,14 +1048,17 @@ header {
 .accident-report-button {
   display: block;
   width: 100%;
+  min-height: var(--control-height);
   margin-top: 8px;
-  padding: 14px 16px;
+  padding: 0 16px;
   background: #c8222a;
   color: #fff;
   border: 2px solid transparent;
-  border-radius: 12px;
-  font-weight: 700;
-  font-size: 1rem;
+  border-radius: var(--control-radius);
+  font: inherit;
+  font-size: clamp(0.84rem, 1vw, 0.94rem);
+  font-weight: 800;
+  letter-spacing: 0.03em;
   cursor: pointer;
   transition: box-shadow 0.2s, transform 0.1s;
 }
