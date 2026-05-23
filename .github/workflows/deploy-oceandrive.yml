@@ -340,6 +340,13 @@ jobs:
         env:
           OCEAN_NGINX_SERVER_CONFIG: ${{ secrets.OCEAN_NGINX_SERVER_CONFIG }}
         if: env.OCEAN_NGINX_SERVER_CONFIG != ''
+        # continue-on-error: during the hybrid state where some edge containers (18080/18082/18083)
+        # are not yet deployed, the HTTPS block still has legacy routes (/api/ → :8000,
+        # /checking/ → :8000) that conflict with the full edge routes file. The script restores
+        # the backup on nginx -t failure so the running config is never corrupted. Once the full
+        # edge deployment is complete (all edge containers running), remove this flag and
+        # manually clean the HTTPS block legacy routes before re-enabling strict mode.
+        continue-on-error: true
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.OCEAN_HOST }}

@@ -88,6 +88,7 @@ replace_managed_block() {
       in_server = 0
       depth = 0
       inserted = 0
+      is_https_block = 0
     }
 
     {
@@ -99,9 +100,14 @@ replace_managed_block() {
 
       if (!in_server && line ~ /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/) {
         in_server = 1
+        is_https_block = 0
       }
 
-      if (in_server && !inserted && closes > 0 && depth + opens - closes == 0) {
+      if (in_server && line ~ /listen[[:space:]].*443.*ssl/) {
+        is_https_block = 1
+      }
+
+      if (in_server && is_https_block && !inserted && closes > 0 && depth + opens - closes == 0) {
         emit_block()
         inserted = 1
       }
@@ -110,6 +116,11 @@ replace_managed_block() {
 
       if (in_server) {
         depth += opens - closes
+        if (depth <= 0) {
+          in_server = 0
+          depth = 0
+          is_https_block = 0
+        }
       }
     }
 
