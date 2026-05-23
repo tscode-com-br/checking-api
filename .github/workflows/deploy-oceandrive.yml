@@ -21,6 +21,9 @@ permissions:
 
 jobs:
   deploy:
+    # Este workflow é exclusivo do repo checking (monorepo/infraestrutura).
+    # O deploy da API isolada é feito via deploy.yml no repo checking-api.
+    if: github.repository == 'tscode-com-br/checking'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

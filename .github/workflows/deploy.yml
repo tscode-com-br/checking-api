@@ -1,0 +1,232 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    # Este workflow é exclusivo do repo checking-api.
+    # No repo checking (monorepo), o deploy é feito via deploy-oceandrive.yml.
+    if: github.repository == 'tscode-com-br/checking-api'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      API_IMAGE: ghcr.io/tscode-com-br/checking-api
+      FORMS_IMAGE: ghcr.io/tscode-com-br/checking-api-forms
+      OCEAN_PORT: ${{ secrets.OCEAN_PORT != '' && secrets.OCEAN_PORT || '22' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate deploy secrets
+        id: validate_secrets
+        env:
+          OCEAN_HOST: ${{ secrets.OCEAN_HOST }}
+          OCEAN_USER: ${{ secrets.OCEAN_USER }}
+          OCEAN_SSH_KEY: ${{ secrets.OCEAN_SSH_KEY }}
+          OCEAN_APP_DIR: ${{ secrets.OCEAN_APP_DIR }}
+        run: |
+          set -e
+          missing=""
+          test -n "$OCEAN_HOST"    || missing="$missing OCEAN_HOST"
+          test -n "$OCEAN_USER"    || missing="$missing OCEAN_USER"
+          test -n "$OCEAN_SSH_KEY" || missing="$missing OCEAN_SSH_KEY"
+          test -n "$OCEAN_APP_DIR" || missing="$missing OCEAN_APP_DIR"
+          if [ -n "$missing" ]; then
+            echo "::warning::Deploy secrets not configured — images will be built but server deploy will be skipped. Missing:$missing"
+            echo "can_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push API image
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$API_IMAGE:main" || true
+          docker build \
+            --pull \
+            --cache-from "$API_IMAGE:main" \
+            -f deploy/docker/Dockerfile.api \
+            -t "$API_IMAGE:${{ github.sha }}" \
+            -t "$API_IMAGE:main" \
+            .
+          docker push "$API_IMAGE:${{ github.sha }}"
+          docker push "$API_IMAGE:main"
+          docker logout ghcr.io || true
+
+      - name: Build and push forms-worker image
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$FORMS_IMAGE:main" || true
+          docker build \
+            --pull \
+            --target forms-worker-runtime \
+            --cache-from "$FORMS_IMAGE:main" \
+            -t "$FORMS_IMAGE:${{ github.sha }}" \
+            -t "$FORMS_IMAGE:main" \
+            .
+          docker push "$FORMS_IMAGE:${{ github.sha }}"
+          docker push "$FORMS_IMAGE:main"
+          docker logout ghcr.io || true
+
+      - name: Resolve SSH verification settings
+        if: steps.validate_secrets.outputs.can_deploy == 'true'
+        id: ssh_verification
+        env:
+          OCEAN_HOST: ${{ secrets.OCEAN_HOST }}
+          OCEAN_HOST_FINGERPRINT: ${{ secrets.OCEAN_HOST_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OCEAN_HOST_FINGERPRINT" ] || [ "$OCEAN_HOST_FINGERPRINT" = "__UNSET__" ]; then
+            echo "::warning::OCEAN_HOST_FINGERPRINT nao configurado; fingerprint sera verificado em tempo de execucao."
+            echo "fingerprint=" >> "$GITHUB_OUTPUT"
+            echo "strict_hostkeys_checking=true" >> "$GITHUB_OUTPUT"
+            echo "rsh=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          key="$(ssh-keyscan -T 10 -p "$OCEAN_PORT" "$OCEAN_HOST" 2>/dev/null | sed '/^#/d')"
+          if [ -z "$key" ]; then
+            echo "Nao foi possivel obter a host key SSH de $OCEAN_HOST:$OCEAN_PORT"
+            exit 1
+          fi
+
+          fingerprints="$(printf '%s\n' "$key" | ssh-keygen -lf - -E sha256 | awk '{print $2}')"
+          if ! printf '%s\n' "$fingerprints" | grep -Fxq "$OCEAN_HOST_FINGERPRINT"; then
+            echo "Fingerprint SSH inesperado para $OCEAN_HOST:$OCEAN_PORT"
+            printf '%s\n' "$fingerprints"
+            exit 1
+          fi
+
+          known_hosts_path="$GITHUB_WORKSPACE/.github/ocean_known_hosts"
+          printf '%s\n' "$key" > "$known_hosts_path"
+          chmod 600 "$known_hosts_path"
+          echo "fingerprint=$OCEAN_HOST_FINGERPRINT" >> "$GITHUB_OUTPUT"
+          echo "strict_hostkeys_checking=false" >> "$GITHUB_OUTPUT"
+          echo "rsh=-o UserKnownHostsFile=/github/workspace/.github/ocean_known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure remote app directory exists
+        if: steps.validate_secrets.outputs.can_deploy == 'true'
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 2m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            mkdir -p ${{ secrets.OCEAN_APP_DIR }}
+
+      - name: Sync project to server
+        if: steps.validate_secrets.outputs.can_deploy == 'true'
+        uses: burnett01/rsync-deployments@dc0d5d44c4728aad3f02154a87309809e62a960f # 8.0.4
+        with:
+          switches: >-
+            -avzr --delete
+            --exclude ".git/"
+            --exclude ".github/"
+            --exclude ".venv/"
+            --exclude ".pytest_cache/"
+            --exclude "*.db"
+            --exclude "deploy/keys/"
+            --exclude ".env"
+            --exclude "sistema/app/static/admin2/"
+            --exclude "sistema/app/static/check/"
+            --exclude "sistema/app/static/transport/"
+          path: ./
+          remote_path: ${{ secrets.OCEAN_APP_DIR }}
+          remote_host: ${{ secrets.OCEAN_HOST }}
+          remote_user: ${{ secrets.OCEAN_USER }}
+          remote_key: ${{ secrets.OCEAN_SSH_KEY }}
+          remote_port: ${{ env.OCEAN_PORT }}
+          strict_hostkeys_checking: ${{ steps.ssh_verification.outputs.strict_hostkeys_checking }}
+          rsh: ${{ steps.ssh_verification.outputs.rsh }}
+
+      - name: Pull and restart API services
+        if: steps.validate_secrets.outputs.can_deploy == 'true'
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 15m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ secrets.OCEAN_APP_DIR }}
+            if [ ! -f .env ]; then
+              echo "Arquivo .env nao encontrado em ${{ secrets.OCEAN_APP_DIR }}"
+              exit 1
+            fi
+            API_IMAGE='ghcr.io/tscode-com-br/checking-api:${{ github.sha }}'
+            FORMS_IMAGE='ghcr.io/tscode-com-br/checking-api-forms:${{ github.sha }}'
+            TEMP_DOCKER_CONFIG="$(mktemp -d)"
+            cleanup() { rm -rf "$TEMP_DOCKER_CONFIG"; }
+            trap cleanup EXIT
+            export DOCKER_CONFIG="$TEMP_DOCKER_CONFIG"
+            printf '%s\n' '${{ github.sha }}' > .deploy-release-api
+            docker compose -f docker-compose.api.yml up -d db
+            printf '%s' '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            CHECKCHECK_API_IMAGE="$API_IMAGE" docker compose -f docker-compose.api.yml pull api
+            CHECKCHECK_FORMS_WORKER_IMAGE="$FORMS_IMAGE" docker compose -f docker-compose.api.yml pull forms-worker
+            docker logout ghcr.io || true
+            CHECKCHECK_API_IMAGE="$API_IMAGE" \
+            CHECKCHECK_FORMS_WORKER_IMAGE="$FORMS_IMAGE" \
+            docker compose -f docker-compose.api.yml up -d --no-build --force-recreate api forms-worker
+
+      - name: Validate API health
+        if: steps.validate_secrets.outputs.can_deploy == 'true'
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.OCEAN_HOST }}
+          username: ${{ secrets.OCEAN_USER }}
+          key: ${{ secrets.OCEAN_SSH_KEY }}
+          port: ${{ env.OCEAN_PORT }}
+          timeout: 60s
+          command_timeout: 5m
+          fingerprint: ${{ steps.ssh_verification.outputs.fingerprint }}
+          script: |
+            set -e
+            cd ${{ secrets.OCEAN_APP_DIR }}
+            bash deploy/smoke/validate_target.sh \
+              --label "API" \
+              --compose-file docker-compose.api.yml \
+              --service api \
+              --url http://127.0.0.1:18080/api/health
+
+            attempt=1
+            max_attempts=15
+            sleep_seconds=6
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if docker compose -f docker-compose.api.yml exec -T forms-worker \
+                   python -m sistema.app.forms_worker_healthcheck >/dev/null 2>&1; then
+                echo "[validate-forms-worker-health] healthy on attempt $attempt"
+                docker compose -f docker-compose.api.yml exec -T forms-worker \
+                  python -m sistema.app.forms_worker_healthcheck || true
+                exit 0
+              fi
+              sleep "$sleep_seconds"
+              attempt=$((attempt + 1))
+            done
+
+            echo "forms-worker healthcheck did not become healthy within $((max_attempts * sleep_seconds))s"
+            docker compose -f docker-compose.api.yml ps forms-worker || true
+            docker compose -f docker-compose.api.yml logs --tail=200 forms-worker || true
+            exit 1

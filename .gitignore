@@ -23,6 +23,11 @@ deploy/keys/
 # Local DB backups (production pg_dumps are not committed)
 deploy/backups/
 
+# Separate website repositories (each has their own .git)
+sistema/app/static/admin2/
+sistema/app/static/check/
+sistema/app/static/transport/
+
 # Separate Flutter repository and local artifacts
 checking_android_new/
 checking_kotlin/
