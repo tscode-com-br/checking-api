@@ -15,13 +15,10 @@ PRE_SUBMIT_SUCCESS_CHECK_MS = 500
 STEP_CONFIRM_TIMEOUT_SECONDS = 10
 FIELD_SEARCH_RETRY_INTERVAL_SECONDS = 1.0
 FIELD_SEARCH_CANDIDATE_TIMEOUT_MS = 250
-URL_LOAD_SETTLE_SECONDS = 3.0
 STEP_DISCOVERY_SETTLE_SECONDS = 0.5
-AFTER_CHECKOUT_DISCOVERY_SETTLE_SECONDS = 2.0
 AFTER_FILL_SETTLE_SECONDS = 1.0
 AFTER_SELECTION_SETTLE_SECONDS = 1.0
 PRE_SUBMIT_SETTLE_SECONDS = 1.0
-POST_SUBMIT_SETTLE_SECONDS = 5.0
 KNOWN_SELECTOR_PREFIXES = ("css=", "xpath=", "text=", "role=", "label=")
 
 
@@ -257,7 +254,7 @@ class FormsWorker:
                 page.goto(settings.forms_url, timeout=settings.forms_timeout_seconds * 1000)
                 self._audit(audit_events, "opened", "Microsoft Forms opened")
                 self._emit_status(status_callback, "URL Carregada")
-                self._pause(page, URL_LOAD_SETTLE_SECONDS)
+                self._pause(page, settings.forms_settle_url_load_seconds)
 
                 digitar_chave_locator = self._locate_step(
                     page,
@@ -294,7 +291,7 @@ class FormsWorker:
                     botao_checkout,
                     "botao_checkout",
                 )
-                self._pause(page, AFTER_CHECKOUT_DISCOVERY_SETTLE_SECONDS)
+                self._pause(page, settings.forms_settle_after_checkout_discovery_seconds)
                 self._emit_status(status_callback, "Preenchendo...")
 
                 self._fill_locator(digitar_chave_locator, chave, "digitar_chave")
@@ -339,7 +336,7 @@ class FormsWorker:
                 submit_started_at = monotonic()
                 self._click_locator(self._locate_step(page, botao_enviar, "botao_enviar"))
                 completed_steps.append("botao_enviar:clicked")
-                self._pause(page, POST_SUBMIT_SETTLE_SECONDS)
+                self._pause(page, settings.forms_settle_post_submit_seconds)
                 success_locator = self._wait_for_step(page, sucesso, "sucesso", SUCCESS_SEARCH_TIMEOUT_SECONDS)
                 completed_steps.append("sucesso:visible")
                 self._emit_status(status_callback, "Enviado")

@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     forms_worker_health_update_seconds: int = 5
     forms_worker_health_stale_seconds: int = 20
     forms_worker_unhealthy_consecutive_errors: int = 3
+    forms_settle_url_load_seconds: float = 1.0
+    forms_settle_after_checkout_discovery_seconds: float = 1.0
+    forms_settle_post_submit_seconds: float = 1.0
+    forms_worker_concurrency: int = 3
+    forms_worker_idle_poll_seconds: float = 0.25
     openai_api_key: str | None = None
     openai_model: str = "gpt-5-2025-08-07"
     openai_temperature: float | None = 0

@@ -6,7 +6,6 @@ import os
 import threading
 from datetime import datetime
 from pathlib import Path
-from time import sleep
 from typing import Any
 
 from sqlalchemy import func, select, update
@@ -228,7 +227,7 @@ def _build_observed_worker_snapshot(
         "enabled": enabled,
         "running": running,
         "status": status,
-        "poll_interval_seconds": FORMS_QUEUE_POLL_SECONDS,
+        "poll_interval_seconds": settings.forms_worker_idle_poll_seconds,
         "thread_name": raw_snapshot.get("thread_name"),
         "process_id": raw_snapshot.get("process_id"),
         "started_at": raw_snapshot.get("started_at"),
@@ -242,6 +241,8 @@ def _build_observed_worker_snapshot(
         "current_backoff_seconds": float(raw_snapshot.get("current_backoff_seconds") or 0),
         "restart_count": int(raw_snapshot.get("restart_count") or 0),
         "last_error": raw_snapshot.get("last_error"),
+        "concurrency": int(raw_snapshot.get("concurrency") or settings.forms_worker_concurrency),
+        "consumer_threads_alive": int(raw_snapshot.get("consumer_threads_alive") or 0),
     }
 
 
@@ -664,123 +665,183 @@ def _process_submission(submission_id: int) -> None:
 class FormsSubmissionWorker:
     def __init__(self) -> None:
         self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._consumer_threads: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._status = "stopped"
         self._started_at: datetime | None = None
-        self._last_loop_started_at: datetime | None = None
-        self._last_loop_completed_at: datetime | None = None
-        self._last_loop_processed_count = 0
-        self._consecutive_error_count = 0
-        self._current_backoff_seconds = 0.0
         self._start_count = 0
-        self._last_error: str | None = None
+        self._per_thread: dict[int, dict] = {}
+        self._supervisor_backoff_seconds = 0.0
 
     def start(self) -> None:
+        """Idempotente. Spawna threads consumidoras faltantes até atingir concurrency."""
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
+            if self._stop_event.is_set():
+                self._stop_event = threading.Event()
+            target_count = max(int(settings.forms_worker_concurrency), 1)
+            alive = [t for t in self._consumer_threads if t.is_alive()]
+            self._consumer_threads = alive
+            if len(alive) >= target_count:
                 return
-            self._stop_event = threading.Event()
-            self._start_count += 1
-            self._status = "starting"
-            self._started_at = now_sgt()
-            self._last_loop_started_at = None
-            self._last_loop_completed_at = None
-            self._last_loop_processed_count = 0
-            self._consecutive_error_count = 0
-            self._current_backoff_seconds = 0.0
-            self._last_error = None
-            self._thread = threading.Thread(target=self._run, name="forms-submission-worker", daemon=True)
-            self._thread.start()
-            thread_name = self._thread.name
+            if not alive:
+                self._started_at = now_sgt()
+                self._per_thread = {}
+                self._start_count += 1
+                self._status = "starting"
+            for _ in range(target_count - len(alive)):
+                thread_index = len(self._consumer_threads)
+                t = threading.Thread(
+                    target=self._run_consumer,
+                    name=f"forms-submission-worker-{thread_index}",
+                    daemon=True,
+                )
+                self._consumer_threads.append(t)
+                t.start()
         _log_forms_queue_event(
             "forms_queue_worker_started",
-            poll_interval_seconds=FORMS_QUEUE_POLL_SECONDS,
-            thread_name=thread_name,
+            poll_interval_seconds=settings.forms_worker_idle_poll_seconds,
+            concurrency=target_count,
         )
 
     def stop(self) -> None:
         with self._lock:
-            thread = self._thread
-            if thread is None:
-                self._status = "stopped"
-                self._current_backoff_seconds = 0.0
-                return
             self._stop_event.set()
-        thread.join(timeout=2)
+            threads = list(self._consumer_threads)
+        for t in threads:
+            t.join(timeout=2)
         with self._lock:
+            self._consumer_threads = []
             self._status = "stopped"
-            self._thread = None
-            self._current_backoff_seconds = 0.0
-            last_error = self._last_error
-        _log_forms_queue_event("forms_queue_worker_stopped", last_error=last_error)
+        _log_forms_queue_event("forms_queue_worker_stopped")
 
     def stop_requested(self) -> bool:
         return self._stop_event.is_set()
 
+    def has_alive_consumers(self) -> bool:
+        """API pública usada pelo supervisor (substitui leitura direta de _thread)."""
+        with self._lock:
+            return any(t.is_alive() for t in self._consumer_threads)
+
+    def consumer_threads_alive_count(self) -> int:
+        with self._lock:
+            return sum(1 for t in self._consumer_threads if t.is_alive())
+
     def mark_supervisor_restart_wait(self, *, backoff_seconds: float) -> None:
         with self._lock:
             self._status = "restarting"
-            self._current_backoff_seconds = backoff_seconds
+            self._supervisor_backoff_seconds = backoff_seconds
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
-            thread = self._thread
-            running = thread is not None and thread.is_alive()
+            alive_count = sum(1 for t in self._consumer_threads if t.is_alive())
+            states = list(self._per_thread.values())
+            running = alive_count > 0
+            if self._status == "restarting":
+                aggregated_status = "restarting"
+            elif any(s.get("status") == "degraded" for s in states):
+                aggregated_status = "degraded"
+            elif alive_count == 0:
+                aggregated_status = "stopped"
+            elif any(s.get("status") == "running" for s in states):
+                aggregated_status = "running"
+            else:
+                aggregated_status = "idle"
+            last_loop_started_at = max(
+                (s.get("last_loop_started_at") for s in states if s.get("last_loop_started_at")),
+                default=None,
+            )
+            last_loop_completed_at = max(
+                (s.get("last_loop_completed_at") for s in states if s.get("last_loop_completed_at")),
+                default=None,
+            )
+            processed_total = sum(int(s.get("processed_total") or 0) for s in states)
+            max_consecutive_errors = max((int(s.get("consecutive_errors") or 0) for s in states), default=0)
+            max_backoff = max((float(s.get("current_backoff_seconds") or 0) for s in states), default=0.0)
+            last_error = next(
+                (s.get("last_error") for s in states if s.get("last_error")),
+                None,
+            )
+            primary_thread_name = (
+                self._consumer_threads[0].name
+                if self._consumer_threads and self._consumer_threads[0].is_alive()
+                else None
+            )
             return {
                 "running": running,
-                "status": self._status,
-                "thread_name": thread.name if thread is not None else None,
+                "status": aggregated_status,
+                "thread_name": primary_thread_name,
                 "started_at": self._started_at,
-                "last_loop_started_at": self._last_loop_started_at,
-                "last_loop_completed_at": self._last_loop_completed_at,
-                "last_loop_processed_count": self._last_loop_processed_count,
-                "consecutive_error_count": self._consecutive_error_count,
-                "current_backoff_seconds": self._current_backoff_seconds,
+                "last_loop_started_at": last_loop_started_at,
+                "last_loop_completed_at": last_loop_completed_at,
+                "last_loop_processed_count": processed_total,
+                "consecutive_error_count": max_consecutive_errors,
+                "current_backoff_seconds": max(max_backoff, self._supervisor_backoff_seconds),
                 "restart_count": max(self._start_count - 1, 0),
-                "last_error": self._last_error,
+                "last_error": last_error,
+                "concurrency": int(settings.forms_worker_concurrency),
+                "consumer_threads_alive": alive_count,
             }
 
-    def _run(self) -> None:
+    def _run_consumer(self) -> None:
+        """Loop por thread consumidora — self-watchdog, nunca sai voluntariamente."""
+        thread_id = threading.get_ident()
+        thread_name = threading.current_thread().name
+        with self._lock:
+            self._per_thread[thread_id] = {
+                "thread_name": thread_name,
+                "status": "running",
+                "last_loop_started_at": None,
+                "last_loop_completed_at": None,
+                "processed_total": 0,
+                "consecutive_errors": 0,
+                "current_backoff_seconds": 0.0,
+                "last_error": None,
+            }
+
         while not self._stop_event.is_set():
             with self._lock:
-                self._status = "running"
-                self._last_loop_started_at = now_sgt()
+                state = self._per_thread[thread_id]
+                state["status"] = "running"
+                state["last_loop_started_at"] = now_sgt()
+
             try:
-                processed = process_forms_submission_queue_once(max_items=10)
+                submission_id = _reserve_next_submission_id()
+                if submission_id is None:
+                    processed = 0
+                else:
+                    _process_submission(submission_id)
+                    processed = 1
             except Exception as exc:
                 backoff_seconds = _compute_exponential_backoff_seconds(
                     base_seconds=FORMS_WORKER_ERROR_BACKOFF_BASE_SECONDS,
                     max_seconds=FORMS_WORKER_ERROR_BACKOFF_MAX_SECONDS,
-                    attempt=self._consecutive_error_count + 1,
+                    attempt=state["consecutive_errors"] + 1,
                 )
                 with self._lock:
-                    self._status = "degraded"
-                    self._last_loop_completed_at = now_sgt()
-                    self._last_loop_processed_count = 0
-                    self._consecutive_error_count += 1
-                    self._current_backoff_seconds = backoff_seconds
-                    self._last_error = str(exc)[:1000]
+                    state["status"] = "degraded"
+                    state["last_loop_completed_at"] = now_sgt()
+                    state["consecutive_errors"] += 1
+                    state["current_backoff_seconds"] = backoff_seconds
+                    state["last_error"] = str(exc)[:1000]
                 _log_forms_queue_event(
-                    "forms_queue_worker_error",
+                    "forms_queue_consumer_error",
                     backoff_seconds=backoff_seconds,
-                    consecutive_error_count=self._consecutive_error_count,
+                    consecutive_error_count=state["consecutive_errors"],
                     error=str(exc)[:1000],
+                    thread_name=thread_name,
                 )
                 self._stop_event.wait(backoff_seconds)
                 continue
 
             with self._lock:
-                self._status = "idle" if processed == 0 else "running"
-                self._last_loop_completed_at = now_sgt()
-                self._last_loop_processed_count = processed
-                self._consecutive_error_count = 0
-                self._current_backoff_seconds = 0.0
-                self._last_error = None
+                state["status"] = "idle" if processed == 0 else "running"
+                state["last_loop_completed_at"] = now_sgt()
+                state["processed_total"] += processed
+                state["consecutive_errors"] = 0
+                state["current_backoff_seconds"] = 0.0
+                state["last_error"] = None
             if processed == 0:
-                self._stop_event.wait(FORMS_QUEUE_POLL_SECONDS)
-            else:
-                sleep(0)
+                self._stop_event.wait(settings.forms_worker_idle_poll_seconds)
 
 
 forms_submission_worker = FormsSubmissionWorker()
@@ -808,8 +869,7 @@ def run_forms_submission_worker_forever() -> None:
                 }
             )
 
-            thread = forms_submission_worker._thread
-            if thread is not None and thread.is_alive():
+            if forms_submission_worker.has_alive_consumers():
                 if forms_submission_worker._stop_event.wait(settings.forms_worker_health_update_seconds):
                     break
                 continue
