@@ -1092,6 +1092,7 @@ class ProjectRow(BaseModel):
     forms_enabled: bool
     transport_enabled: bool
     emergency_phone: str
+    inactivity_days_threshold: int = 60
 
 
 class ProjectCreate(BaseModel):
@@ -1104,6 +1105,7 @@ class ProjectCreate(BaseModel):
     forms_enabled: bool = True
     transport_enabled: bool = True
     emergency_phone: str = Field(default="", max_length=32)
+    inactivity_days_threshold: int = Field(default=60, ge=1, le=3650)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1164,6 +1166,7 @@ class ProjectUpdate(BaseModel):
     forms_enabled: bool | None = None
     transport_enabled: bool | None = None
     emergency_phone: str | None = Field(default=None, max_length=32)
+    inactivity_days_threshold: int | None = Field(default=None, ge=1, le=3650)
 
     @field_validator("name", mode="before")
     @classmethod

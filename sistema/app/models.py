@@ -21,6 +21,7 @@ class Project(Base):
     forms_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
     transport_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
     emergency_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    inactivity_days_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default=text("60"))
 
 
 class ProjectAutoCheckoutDistance(Base):

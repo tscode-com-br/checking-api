@@ -156,6 +156,7 @@ from ..services.transport_vehicle_base import (
     sync_user_vehicle_reference,
 )
 from ..services.user_activity import (
+    apply_inactivity_descadastro,
     calculate_inactivity_days,
     has_exceeded_continuous_inactivity_window,
     is_user_inactive,
@@ -1253,6 +1254,7 @@ def build_project_row(project: Project) -> ProjectRow:
         forms_enabled=bool(project.forms_enabled),
         transport_enabled=bool(project.transport_enabled),
         emergency_phone=str(project.emergency_phone or "").strip(),
+        inactivity_days_threshold=int(project.inactivity_days_threshold or 60),
     )
 
 
@@ -2263,6 +2265,7 @@ def create_admin_project(
         forms_enabled=payload.forms_enabled,
         transport_enabled=payload.transport_enabled,
         emergency_phone=payload.emergency_phone,
+        inactivity_days_threshold=payload.inactivity_days_threshold,
         **build_project_fields(
             country_code=payload.country_code,
             country_name=payload.country_name,
@@ -2405,6 +2408,8 @@ def update_admin_project(
         project.transport_enabled = payload.transport_enabled
     if "emergency_phone" in update_data and payload.emergency_phone is not None:
         project.emergency_phone = payload.emergency_phone
+    if "inactivity_days_threshold" in update_data and payload.inactivity_days_threshold is not None:
+        project.inactivity_days_threshold = payload.inactivity_days_threshold
 
     log_event(
         db,
@@ -2897,8 +2902,13 @@ def list_checkin(
     current_admin: User = Depends(require_admin_session),
 ) -> list[UserRow]:
     reference_time = now_sgt()
-    if sync_user_inactivity(db, reference_time=reference_time):
+    synced = sync_user_inactivity(db, reference_time=reference_time)
+    descadastrado = apply_inactivity_descadastro(db)
+    if synced or descadastrado:
         db.commit()
+    if descadastrado:
+        notify_admin_views("register")
+        notify_web_check_data_changed("inactivity_descadastro")
     return build_presence_rows(db, action="checkin", current_admin=current_admin, reference_time=reference_time)
 
 
@@ -2908,8 +2918,13 @@ def list_checkout(
     current_admin: User = Depends(require_admin_session),
 ) -> list[UserRow]:
     reference_time = now_sgt()
-    if sync_user_inactivity(db, reference_time=reference_time):
+    synced = sync_user_inactivity(db, reference_time=reference_time)
+    descadastrado = apply_inactivity_descadastro(db)
+    if synced or descadastrado:
         db.commit()
+    if descadastrado:
+        notify_admin_views("register")
+        notify_web_check_data_changed("inactivity_descadastro")
     return build_presence_rows(db, action="checkout", current_admin=current_admin, reference_time=reference_time)
 
 
@@ -3004,8 +3019,13 @@ def clear_provider_forms(db: Session = Depends(get_db)) -> AdminActionResponse:
 @router.get("/missing-checkout", response_model=list[UserRow], dependencies=[Depends(require_full_admin_session)])
 def list_missing_checkout(db: Session = Depends(get_db)) -> list[UserRow]:
     reference_time = now_sgt()
-    if sync_user_inactivity(db, reference_time=reference_time):
+    synced = sync_user_inactivity(db, reference_time=reference_time)
+    descadastrado = apply_inactivity_descadastro(db)
+    if synced or descadastrado:
         db.commit()
+    if descadastrado:
+        notify_admin_views("register")
+        notify_web_check_data_changed("inactivity_descadastro")
     return build_missing_checkout_rows(db, reference_time=reference_time)
 
 
@@ -3015,8 +3035,13 @@ def list_inactive(
     current_admin: User = Depends(require_full_admin_session),
 ) -> list[InactiveUserRow]:
     reference_time = now_sgt()
-    if sync_user_inactivity(db, reference_time=reference_time):
+    synced = sync_user_inactivity(db, reference_time=reference_time)
+    descadastrado = apply_inactivity_descadastro(db)
+    if synced or descadastrado:
         db.commit()
+    if descadastrado:
+        notify_admin_views("register")
+        notify_web_check_data_changed("inactivity_descadastro")
     return build_inactive_rows(db, current_admin=current_admin, reference_time=reference_time)
 
 

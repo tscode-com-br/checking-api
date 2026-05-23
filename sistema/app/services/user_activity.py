@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import User
+from ..models import Project, User, UserProjectMembership
 from .time_utils import now_sgt, resolve_timezone
 
 
@@ -69,3 +70,50 @@ def sync_user_inactivity(db: Session, *, reference_time=None) -> bool:
         db.flush()
 
     return changed
+
+
+def apply_inactivity_descadastro(db: Session, *, reference_time=None) -> bool:
+    """Remove memberships de usuários que excederam o limite de inatividade por projeto.
+
+    Para cada UserProjectMembership, verifica se user.inactivity_days >=
+    project.inactivity_days_threshold. Se sim, remove aquela membership,
+    mantendo as demais cujo limite ainda não foi atingido.
+
+    Deve ser chamado após sync_user_inactivity para garantir que inactivity_days
+    está atualizado.
+
+    Returns True se houve alguma remoção.
+    """
+    from .user_projects import replace_user_project_memberships  # evita import circular
+
+    rows = db.execute(
+        select(UserProjectMembership, User, Project)
+        .join(User, UserProjectMembership.user_id == User.id)
+        .join(Project, UserProjectMembership.project_id == Project.id)
+        .where(User.inactivity_days > 0)
+    ).all()
+
+    if not rows:
+        return False
+
+    all_project_names: dict[int, list[str]] = defaultdict(list)
+    projects_to_remove: dict[int, set[str]] = defaultdict(set)
+    users_map: dict[int, User] = {}
+
+    for membership, user, project in rows:
+        users_map[user.id] = user
+        all_project_names[user.id].append(project.name)
+        if user.inactivity_days >= project.inactivity_days_threshold:
+            projects_to_remove[user.id].add(project.name)
+
+    if not projects_to_remove:
+        return False
+
+    for user_id, remove_set in projects_to_remove.items():
+        user = users_map[user_id]
+        next_names = [
+            name for name in all_project_names[user_id] if name not in remove_set
+        ]
+        replace_user_project_memberships(db, user, next_names)
+
+    return True
