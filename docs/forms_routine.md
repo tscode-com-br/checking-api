@@ -443,9 +443,18 @@ Em `forms_queue.py`:
 4. o item vai para `success` ou `failed`;
 5. a API grava um `CheckEvent` final com o resultado.
 
-### 9.3 Lote por loop
+### 9.3 Modelo de concorrencia do worker
 
-O worker processa em lotes de ate 10 itens por passada (`process_forms_submission_queue_once(max_items=10)`).
+O `FormsSubmissionWorker` roda um **pool de threads consumidoras** (padrao: 3, configuravel via `FORMS_WORKER_CONCURRENCY`). Cada thread executa um loop self-watchdog:
+
+1. chama `_reserve_next_submission_id()` — claim atomico de um item `pending` para `processing`;
+2. se houver item: chama `_process_submission(submission_id)` — processamento completo (1 item por iteracao, nao em lote);
+3. se nao houver item: aguarda `settings.forms_worker_idle_poll_seconds` (padrao 0,25 s);
+4. em caso de excecao: aplica backoff exponencial per-thread (outras threads continuam drenando).
+
+O metodo `process_forms_submission_queue_once(max_items=10)` continua existindo para uso direto por testes e scripts, mas o worker em producao nao o usa diretamente — ele chama `_reserve_next_submission_id` e `_process_submission` um item por vez.
+
+O snapshot do worker expoe `concurrency` (numero alvo de threads) e `consumer_threads_alive` (threads vivas no momento).
 
 ### 9.4 Diagnostico e observabilidade
 
@@ -707,6 +716,12 @@ Essa e uma limitacao atual da observabilidade, porque a fila persiste `device_id
 ### 13.4 Modo automatico sempre manda `normal`
 
 Mesmo que o usuario tenha selecionado `retroativo` na UI, qualquer submit automatico do web envia `informe=normal`. Isso nao e um bug de transporte; e o comportamento atual implementado no front.
+
+### 13.5 Worker multi-thread: falha em uma thread nao bloqueia as outras
+
+Com o pool de 3 threads consumidoras, cada thread tem backoff independente. Se uma thread encontrar um item corrompido ou um erro de conexao com o Forms, ela entra em backoff exponencial (1 s → 15 s) enquanto as outras duas continuam drenando a fila normalmente.
+
+O supervisor monitora `has_alive_consumers()`. Se **nenhuma** thread estiver viva (crash total do pool), o supervisor aguarda o backoff configurado e chama `worker.start()` para recriar o pool. O diagnostico em `GET /api/admin/forms/queue/diagnostics` exibe `worker.consumer_threads_alive` para inspecao rapida.
 
 ## 14. Como inspecionar rapidamente em homologacao/producao
 

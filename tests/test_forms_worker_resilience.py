@@ -209,3 +209,111 @@ def test_forms_worker_reports_not_found_when_project_selector_never_appears(tmp_
     assert result["error_code"] == "forms_step_timeout"
     assert result["failed_step"] == "botao_projeto_P80"
     assert status_updates == ["URL Carregada", "Preenchendo...", "Nao Encontrado"]
+
+
+def test_settle_values_come_from_settings(tmp_path, monkeypatch):
+    """Verifica que os pauses obedecem aos settings, não a constantes hardcoded."""
+    from sistema.app.core.config import settings
+
+    monkeypatch.setattr(settings, "forms_settle_url_load_seconds", 0.5)
+    monkeypatch.setattr(settings, "forms_settle_after_checkout_discovery_seconds", 0.5)
+    monkeypatch.setattr(settings, "forms_settle_post_submit_seconds", 0.5)
+
+    _write_xpath_files(tmp_path)
+
+    waits: list[int] = []
+    send_selector = "xpath=//botao_enviar"
+    success_selector = "xpath=//sucesso"
+
+    class FakeLocator:
+        def __init__(self, page, selector: str):
+            self.page = page
+            self.selector = selector
+
+        def fill(self, value: str) -> None:
+            self.page.filled[self.selector] = value
+
+        def click(self) -> None:
+            self.page.clicked.append(self.selector)
+            self.page.checked.add(self.selector)
+            if self.selector == send_selector:
+                self.page.success_visible = True
+
+        def input_value(self) -> str:
+            return self.page.filled.get(self.selector, "")
+
+        def is_checked(self) -> bool:
+            return self.selector in self.page.checked
+
+        def inner_text(self) -> str:
+            if self.selector == success_selector:
+                return "Sua resposta foi enviada."
+            return ""
+
+    class CapturingFakePage:
+        def __init__(self):
+            self.success_visible = False
+            self.filled = {}
+            self.clicked = []
+            self.checked = set()
+            self.visible_selectors = {
+                "xpath=//digitar_chave",
+                "xpath=//confirmar_chave",
+                "xpath=//botao_normal",
+                "xpath=//botao_retroativo",
+                "xpath=//botao_checkin",
+                "xpath=//botao_checkout",
+                send_selector,
+            }
+
+        def goto(self, url: str, timeout: int) -> None:
+            self.url = url
+
+        def wait_for_timeout(self, ms: int) -> None:
+            waits.append(ms)
+
+        def wait_for_selector(self, selector: str, state: str = "visible", timeout: int = 0):
+            if selector == success_selector and self.success_visible:
+                return True
+            if selector in self.visible_selectors:
+                return True
+            raise forms_worker_module.PlaywrightTimeoutError("timeout")
+
+        def locator(self, selector: str) -> FakeLocator:
+            return FakeLocator(self, selector)
+
+    class FakeBrowser:
+        def __init__(self, page):
+            self.page = page
+
+        def new_page(self):
+            return self.page
+
+        def close(self) -> None:
+            return None
+
+    class FakePlaywright:
+        def __init__(self, page):
+            self.chromium = __import__("types").SimpleNamespace(launch=lambda headless=True: FakeBrowser(page))
+
+    class FakePlaywrightContext:
+        def __init__(self, page):
+            self.page = page
+
+        def __enter__(self):
+            return FakePlaywright(self.page)
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    fake_page = CapturingFakePage()
+    monkeypatch.setattr(forms_worker_module, "sync_playwright", lambda: FakePlaywrightContext(fake_page))
+
+    worker = forms_worker_module.FormsWorker(assets_dir=tmp_path)
+    worker.submit_with_retries(action="checkout", chave="HR70", projeto="P80")
+
+    # 0.5 s => 500 ms deve aparecer; os valores antigos (3000, 2000, 5000) não devem aparecer
+    assert 500 in waits
+    assert 3000 not in waits
+    assert 2000 not in waits
+    assert 5000 not in waits

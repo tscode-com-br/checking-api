@@ -5786,6 +5786,7 @@ def test_run_forms_submission_worker_forever_restarts_after_unexpected_thread_ex
         def __init__(self) -> None:
             self._stop_event = threading.Event()
             self._thread = None
+            self._consumer_threads: list = []  # NOVO
             self.start_calls = 0
             self.stop_calls = 0
             self.backoff_waits: list[float] = []
@@ -5793,6 +5794,7 @@ def test_run_forms_submission_worker_forever_restarts_after_unexpected_thread_ex
         def start(self) -> None:
             self.start_calls += 1
             self._thread = DeadThread()
+            self._consumer_threads = [DeadThread()]  # NOVO
             if self.start_calls >= 2:
                 self._stop_event.set()
 
@@ -5800,9 +5802,13 @@ def test_run_forms_submission_worker_forever_restarts_after_unexpected_thread_ex
             self.stop_calls += 1
             self._stop_event.set()
             self._thread = None
+            self._consumer_threads = []  # NOVO
 
         def stop_requested(self) -> bool:
             return self._stop_event.is_set()
+
+        def has_alive_consumers(self) -> bool:  # NOVO
+            return False
 
         def mark_supervisor_restart_wait(self, *, backoff_seconds: float) -> None:
             self.backoff_waits.append(backoff_seconds)
@@ -5820,6 +5826,8 @@ def test_run_forms_submission_worker_forever_restarts_after_unexpected_thread_ex
                 "current_backoff_seconds": 0.0,
                 "restart_count": max(self.start_calls - 1, 0),
                 "last_error": "thread exited unexpectedly",
+                "concurrency": 1,              # NOVO
+                "consumer_threads_alive": 0,   # NOVO
             }
 
     fake_worker = FakeWorker()
