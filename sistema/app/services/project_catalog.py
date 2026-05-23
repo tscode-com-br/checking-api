@@ -304,3 +304,23 @@ def seed_default_projects() -> None:
         for project_name in DEFAULT_PROJECT_NAMES:
             db.add(Project(name=project_name, **default_fields))
         db.commit()
+
+
+def is_forms_enabled_for_project(db: Session, *, projeto: str | None) -> bool:
+    normalized = (projeto or "").strip().upper()
+    if not normalized:
+        return True
+    row = db.execute(
+        select(Project.forms_enabled).where(Project.name == normalized)
+    ).scalar_one_or_none()
+    return bool(row) if row is not None else True
+
+
+def is_transport_enabled_for_project(db: Session, *, projeto: str | None) -> bool:
+    normalized = (projeto or "").strip().upper()
+    if not normalized:
+        return True
+    row = db.execute(
+        select(Project.transport_enabled).where(Project.name == normalized)
+    ).scalar_one_or_none()
+    return bool(row) if row is not None else True

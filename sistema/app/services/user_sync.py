@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, object_session
 from ..models import CheckEvent, Project, User, UserSyncEvent
 from ..schemas import MobileSyncStateResponse, WebCheckHistoryResponse
 from .checking_history import record_checking_history
+from .project_catalog import is_transport_enabled_for_project
 from .time_utils import now_sgt, resolve_system_timezone_name, resolve_timezone
 from .user_activity import mark_user_active
 from .user_projects import assign_user_active_project, ensure_user_active_project_is_member
@@ -854,4 +855,5 @@ def build_web_check_history_state(db: Session, *, chave: str) -> WebCheckHistory
         ),
         last_checkin_at=state.last_checkin_at,
         last_checkout_at=state.last_checkout_at,
+        transport_enabled=is_transport_enabled_for_project(db, projeto=state.projeto),
     )

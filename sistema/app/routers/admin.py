@@ -1250,6 +1250,9 @@ def build_project_row(project: Project) -> ProjectRow:
         ),
         address=str(project.address or "").strip(),
         zip_code=str(project.zip_code or "").strip(),
+        forms_enabled=bool(project.forms_enabled),
+        transport_enabled=bool(project.transport_enabled),
+        emergency_phone=str(project.emergency_phone or "").strip(),
     )
 
 
@@ -2257,6 +2260,9 @@ def create_admin_project(
         name=payload.name,
         address=payload.address,
         zip_code=payload.zip_code,
+        forms_enabled=payload.forms_enabled,
+        transport_enabled=payload.transport_enabled,
+        emergency_phone=payload.emergency_phone,
         **build_project_fields(
             country_code=payload.country_code,
             country_name=payload.country_name,
@@ -2286,34 +2292,39 @@ def create_admin_project(
     return build_project_row(project)
 
 
-@router.put("/projects/{project_id}", response_model=ProjectRow, dependencies=[Depends(require_full_admin_session)])
+@router.put("/projects/{project_id}", response_model=ProjectRow)
 def update_admin_project(
     project_id: int,
     payload: ProjectUpdate,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(require_full_admin_session),
+    identity: AdminActorIdentity = Depends(require_admin_identity),
 ) -> ProjectRow:
     project = db.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto nao encontrado.")
 
+    update_data = payload.model_dump(exclude_unset=True)
     previous_name = project.name
     previous_country_code = project.country_code
     previous_country_name = project.country_name
     previous_timezone_name = project.timezone_name
     previous_address = str(project.address or "").strip()
     previous_zip_code = str(project.zip_code or "").strip()
-    updated_fields = build_project_fields(
-        country_code=payload.country_code,
-        country_name=payload.country_name,
-        timezone_name=payload.timezone_name,
-    )
+    previous_forms_enabled = project.forms_enabled
+    previous_transport_enabled = project.transport_enabled
+    updated_country_fields: dict | None = None
+    if any(k in update_data for k in ("country_code", "country_name", "timezone_name")):
+        updated_country_fields = build_project_fields(
+            country_code=payload.country_code,
+            country_name=payload.country_name,
+            timezone_name=payload.timezone_name,
+        )
     updated_user_links = 0
     updated_location_links = 0
     updated_admin_scopes = 0
     recreated_minimum_checkout_distances = 0
 
-    if payload.name != previous_name:
+    if "name" in update_data and payload.name is not None and payload.name != previous_name:
         existing_project = db.execute(
             select(Project).where(Project.name == payload.name, Project.id != project_id)
         ).scalar_one_or_none()
@@ -2380,11 +2391,20 @@ def update_admin_project(
                 )
             recreated_minimum_checkout_distances = len(preserved_distance_rows)
 
-    project.country_code = updated_fields["country_code"]
-    project.country_name = updated_fields["country_name"]
-    project.timezone_name = updated_fields["timezone_name"]
-    project.address = payload.address
-    project.zip_code = payload.zip_code
+    if updated_country_fields:
+        project.country_code = updated_country_fields["country_code"]
+        project.country_name = updated_country_fields["country_name"]
+        project.timezone_name = updated_country_fields["timezone_name"]
+    if "address" in update_data:
+        project.address = payload.address
+    if "zip_code" in update_data:
+        project.zip_code = payload.zip_code
+    if "forms_enabled" in update_data and payload.forms_enabled is not None:
+        project.forms_enabled = payload.forms_enabled
+    if "transport_enabled" in update_data and payload.transport_enabled is not None:
+        project.transport_enabled = payload.transport_enabled
+    if "emergency_phone" in update_data and payload.emergency_phone is not None:
+        project.emergency_phone = payload.emergency_phone
 
     log_event(
         db,
@@ -2395,7 +2415,7 @@ def update_admin_project(
         request_path=f"/api/admin/projects/{project_id}",
         http_status=200,
         details=(
-            f"updated_by={current_admin.chave}; project_id={project_id}; project_name={project.name}; "
+            f"updated_by={identity.user.chave}; project_id={project_id}; project_name={project.name}; "
             f"project_name_old={previous_name}; "
             f"country_code={previous_country_code}->{project.country_code}; "
             f"country_name={previous_country_name}->{project.country_name}; "
@@ -2410,6 +2430,32 @@ def update_admin_project(
     )
     db.commit()
     db.refresh(project)
+    # Auditoria — transições ON → OFF
+    if previous_forms_enabled and not project.forms_enabled:
+        log_event(
+            db,
+            source="admin",
+            action="proj_forms_off",
+            status="warning",
+            message=f"Forms desativado para projeto {project.name}",
+            project=project.name,
+            details=f"actor_admin_user_id={identity.admin_user.id}",
+        )
+        db.commit()
+    if previous_transport_enabled and not project.transport_enabled:
+        log_event(
+            db,
+            source="admin",
+            action="proj_trans_off",
+            status="warning",
+            message=f"Transporte desativado para projeto {project.name}",
+            project=project.name,
+            details=f"actor_admin_user_id={identity.admin_user.id}",
+        )
+        db.commit()
+    # SSE — apenas se transport_enabled mudou
+    if previous_transport_enabled != project.transport_enabled:
+        notify_web_check_data_changed("project_transport_flag")
     notify_admin_views("register", "event")
     return build_project_row(project)
 

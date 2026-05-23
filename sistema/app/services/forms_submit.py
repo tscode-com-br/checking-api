@@ -14,6 +14,7 @@ from .admin_updates import notify_admin_data_changed
 from .accident_lifecycle import fire_accident_hook_for_check_event
 from .event_logger import log_event
 from .forms_queue import enqueue_forms_submission, is_forms_worker_healthy_now, record_forms_submission_skip
+from .project_catalog import is_forms_enabled_for_project
 from .time_utils import resolve_project_timezone_name
 from .user_projects import list_user_project_names
 from .user_sync import (
@@ -90,6 +91,10 @@ def submit_forms_event(
         event_time=normalized_event_time,
         timezone_name=project_timezone_name,
     )
+    # GATE — verificar se Forms está habilitado para o projeto
+    if not is_forms_enabled_for_project(db, projeto=user.projeto):
+        should_queue_forms = False
+        skip_reason = "forms_disabled_for_project"
     apply_user_state(
         user,
         action=action,

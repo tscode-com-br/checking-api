@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -18,6 +18,9 @@ class Project(Base):
     timezone_name: Mapped[str] = mapped_column(String(64), nullable=False)
     address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     zip_code: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    forms_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    transport_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    emergency_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
 
 
 class ProjectAutoCheckoutDistance(Base):

@@ -1089,6 +1089,9 @@ class ProjectRow(BaseModel):
     timezone_label: str
     address: str
     zip_code: str
+    forms_enabled: bool
+    transport_enabled: bool
+    emergency_phone: str
 
 
 class ProjectCreate(BaseModel):
@@ -1098,6 +1101,9 @@ class ProjectCreate(BaseModel):
     timezone_name: str | None = Field(default=None, min_length=1, max_length=64)
     address: str = Field(default="", max_length=255)
     zip_code: str = Field(default="", max_length=32)
+    forms_enabled: bool = True
+    transport_enabled: bool = True
+    emergency_phone: str = Field(default="", max_length=32)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1127,6 +1133,13 @@ class ProjectCreate(BaseModel):
     @classmethod
     def validate_optional_metadata_text(cls, value: object) -> str:
         return _normalize_optional_project_metadata_text(value)
+
+    @field_validator("emergency_phone", mode="before")
+    @classmethod
+    def validate_emergency_phone(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()[:32]
 
     @model_validator(mode="after")
     def normalize_country_payload(self):
@@ -1142,16 +1155,21 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: str = Field(min_length=2, max_length=120)
+    name: str | None = Field(default=None, min_length=2, max_length=120)
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     country_name: str | None = Field(default=None, min_length=2, max_length=80)
     timezone_name: str | None = Field(default=None, min_length=1, max_length=64)
     address: str = Field(default="", max_length=255)
     zip_code: str = Field(default="", max_length=32)
+    forms_enabled: bool | None = None
+    transport_enabled: bool | None = None
+    emergency_phone: str | None = Field(default=None, max_length=32)
 
     @field_validator("name", mode="before")
     @classmethod
-    def validate_name(cls, value: str) -> str:
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _normalize_project_value(value)
 
     @field_validator("country_code", mode="before")
@@ -1178,8 +1196,17 @@ class ProjectUpdate(BaseModel):
     def validate_optional_metadata_text(cls, value: object) -> str:
         return _normalize_optional_project_metadata_text(value)
 
+    @field_validator("emergency_phone", mode="before")
+    @classmethod
+    def validate_emergency_phone(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip()[:32]
+
     @model_validator(mode="after")
     def normalize_country_payload(self):
+        if not (self.model_fields_set & {"country_code", "country_name", "timezone_name"}):
+            return self
         normalized = normalize_project_country_payload(
             country_code=self.country_code,
             country_name=self.country_name,
@@ -4117,6 +4144,7 @@ class WebCheckHistoryResponse(BaseModel):
     has_current_day_checkin: bool = False
     last_checkin_at: datetime | None = None
     last_checkout_at: datetime | None = None
+    transport_enabled: bool = True
 
 
 class WebLocationOptionsResponse(BaseModel):
