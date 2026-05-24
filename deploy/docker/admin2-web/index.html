@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Checking Admin</title>
     <base href="./admin/" />
+    <link rel="icon" type="image/svg+xml" href="/assets/img/favicon.svg?v=1" />
     <link rel="icon" type="image/png" sizes="512x512" href="/assets/img/new_icon_512.png?v=1" />
-    <link rel="shortcut icon" type="image/png" href="/assets/img/new_icon_512.png?v=1" />
     <link rel="apple-touch-icon" href="/assets/img/new_icon_512.png?v=1" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -161,17 +161,8 @@
               <span id="accidentSectionCount" class="auth-status">0 registros</span>
             </div>
           </div>
-          <div class="table-wrap">
-            <table class="responsive-table situacao-pessoal-table">
-              <thead>
-                <tr>
-                  <th>Horário</th><th>Nome</th><th>Chave</th><th>Projetos</th>
-                  <th>Local</th><th>Zona de</th><th>Situação</th><th>Contato</th><th>Registros</th>
-                </tr>
-              </thead>
-              <tbody id="situacaoPessoalBody"></tbody>
-            </table>
-          </div>
+          <nav id="accidentSubTabs" class="accident-sub-tabs" hidden></nav>
+          <div id="accidentPanels"></div>
         </section>
 
         <!-- ── Tab: Check-In ─────────────────────────────────────────── -->
@@ -802,6 +793,23 @@
           </div>
         </div>
 
+        <!-- Accident wizard: description -->
+        <div id="accidentWizardDescriptionModal" class="modal-backdrop hidden" aria-hidden="true">
+          <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardDescriptionTitle">
+            <div class="section-header modal-header"><h2 id="accidentWizardDescriptionTitle">Descrição Detalhada</h2></div>
+            <p id="accidentWizardDescriptionError" class="auth-status"></p>
+            <label style="display:block;margin-bottom:8px">
+              <textarea id="accidentWizardDescriptionText" maxlength="500" rows="5"
+                placeholder="Descreva o acidente (opcional, máx. 500 caracteres)..."
+                style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+            </label>
+            <div class="modal-footer">
+              <button id="accidentWizardDescriptionCancel" type="button" class="secondary-button">Cancelar</button>
+              <button id="accidentWizardDescriptionAdvance" type="button">Avançar</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Accident wizard: confirm -->
         <div id="accidentWizardConfirmModal" class="modal-backdrop hidden" aria-hidden="true">
           <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="accidentWizardConfirmTitle">
@@ -839,6 +847,84 @@
             <div class="modal-footer">
               <button id="accidentEndBack" type="button" class="secondary-button">Voltar</button>
               <button id="accidentEndConfirm" type="button">Confirmar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Emergency config modal -->
+        <div id="emergencyConfigModal" class="modal-backdrop hidden" aria-hidden="true">
+          <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="emergencyConfigTitle">
+            <div class="section-header modal-header">
+              <h2 id="emergencyConfigTitle">Configurar Emergência</h2>
+              <p id="emergencyConfigProjectLabel" class="section-header-copy"></p>
+            </div>
+            <label style="display:block;margin-bottom:8px">TWILIO_ACCOUNT_SID
+              <input id="ecAccountSid" type="text" placeholder="ACxxxxx" maxlength="64" style="width:100%;box-sizing:border-box" />
+            </label>
+            <label style="display:block;margin-bottom:8px">TWILIO_AUTH_TOKEN
+              <input id="ecAuthToken" type="text" placeholder="xxxxxxx" maxlength="64" style="width:100%;box-sizing:border-box" />
+            </label>
+            <label style="display:block;margin-bottom:8px">TWILIO_PHONE_NUMBER (origem)
+              <input id="ecPhoneNumber" type="tel" placeholder="+1xxxxxxxxxx (sem espaços)" maxlength="32" style="width:100%;box-sizing:border-box" />
+            </label>
+            <hr style="margin:12px 0" />
+            <label style="display:block;margin-bottom:8px">Telefone do Administrador
+              <input id="ecMobileAdmin" type="tel" placeholder="+5521999888777 (sem espaços)" maxlength="32" style="width:100%;box-sizing:border-box" />
+            </label>
+            <label style="display:block;margin-bottom:8px">Telefone de Emergência Local (destino)
+              <input id="ecEmergencyPhone" type="tel" placeholder="+65999888777 (sem espaços)" maxlength="32" style="width:100%;box-sizing:border-box" />
+            </label>
+            <label style="display:block;margin-bottom:8px">E-Mail do Serviço Local de Emergência
+              <input id="ecEmailEmergency" type="text" placeholder="a@b.com, c@d.com" style="width:100%;box-sizing:border-box" />
+            </label>
+            <div class="modal-footer" style="justify-content:flex-start;margin-bottom:0">
+              <button id="ecMessageButton" type="button" class="secondary-button">MENSAGEM</button>
+            </div>
+            <p id="emergencyConfigError" class="auth-status"></p>
+            <div class="modal-footer">
+              <button id="ecCancelButton" type="button" class="secondary-button">Cancelar</button>
+              <button id="ecSaveButton" type="button">Salvar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Emergency message modal -->
+        <div id="emergencyMessageModal" class="modal-backdrop hidden" aria-hidden="true">
+          <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="emergencyMessageTitle">
+            <div class="section-header modal-header">
+              <h2 id="emergencyMessageTitle">Mensagem de Emergência</h2>
+            </div>
+            <label style="display:block;margin-bottom:8px">Texto da mensagem (será convertido em fala):
+              <textarea id="ecMessageText" rows="8" maxlength="2000"
+                style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+            </label>
+            <div class="modal-footer" style="justify-content:flex-start;margin-bottom:0">
+              <button id="ecTermosButton" type="button" class="secondary-button">Termos Padrões</button>
+            </div>
+            <div class="modal-footer">
+              <button id="ecMessageBackButton" type="button" class="secondary-button">Voltar</button>
+              <button id="ecMessageSaveButton" type="button">Salvar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Emergency call history modal -->
+        <div id="emergencyCallHistoryModal" class="modal-backdrop hidden" aria-hidden="true">
+          <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="emergencyCallHistoryTitle">
+            <div class="section-header modal-header">
+              <h2 id="emergencyCallHistoryTitle">Histórico de Ligações</h2>
+            </div>
+            <div class="table-wrap">
+              <table class="responsive-table">
+                <thead>
+                  <tr><th>N.º</th><th>Status</th><th>Hora</th><th>Acionado por</th><th>Duração</th></tr>
+                </thead>
+                <tbody id="emergencyCallHistoryBody"></tbody>
+              </table>
+            </div>
+            <p id="emergencyCallHistoryEmpty" class="auth-status hidden">Nenhuma ligação registrada.</p>
+            <div class="modal-footer">
+              <button id="emergencyCallHistoryClose" type="button">Fechar</button>
             </div>
           </div>
         </div>

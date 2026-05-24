@@ -102,5 +102,12 @@ class Settings(BaseSettings):
     smtp_max_retries: int = 3
     smtp_accident_notify_email: str | None = None
 
+    # Twilio Voice — global fallback (per-project credentials take priority)
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_phone_number: str | None = None
+    public_base_url: str | None = None
+    twilio_status_callback_secret: str = "change-me-twilio-cb-secret"
+
 
 settings = Settings()

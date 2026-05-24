@@ -94,7 +94,7 @@ def test_submit_forms_event_returns_ok_when_accident_hook_fails(tmp_path: Path):
         original_rollback()
 
     with patch(
-        "sistema.app.services.accident_lifecycle.list_active_accident",
+        "sistema.app.services.accident_lifecycle.list_active_accidents",
         side_effect=RuntimeError("forced failure"),
     ), patch(
         "sistema.app.services.forms_submit.build_mobile_sync_state",

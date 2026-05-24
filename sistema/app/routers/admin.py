@@ -16,6 +16,7 @@ from ..database import get_database_diagnostics
 from ..models import (
     Accident,
     AccidentArchive,
+    AccidentCallLog,
     AdminAccessRequest,
     AdminUser,
     CheckEvent,
@@ -32,6 +33,7 @@ from ..models import (
     Vehicle,
 )
 from ..schemas import (
+    AccidentCallLogRow,
     AccidentClosedListResponse,
     AccidentClosedRow,
     AccidentLocationOption,
@@ -39,6 +41,8 @@ from ..schemas import (
     AccidentSummary,
     AdminAccidentOpenRequest,
     AdminAccidentStateResponse,
+    AdminActiveAccidentItem,
+    EmergencyCallResponse,
     AdminAccessRequestCreate,
     AdminActionResponse,
     DatabaseDiagnosticsResponse,
@@ -179,11 +183,18 @@ from ..services.accident_lifecycle import (
     NoActiveAccidentError,
     close_accident,
     list_active_accident,
+    list_active_accidents,
     open_accident,
 )
 from ..services.accident_numbering import format_accident_number
 from ..services.accident_archive_builder import build_and_attach_archive_for_accident
 from ..services.accident_situation_table import build_situation_rows
+from ..services.twilio_caller import (
+    EmergencyCallAlreadyFiredError,
+    EmergencyCallFailedError,
+    TwilioNotConfiguredError,
+    make_emergency_call,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -1247,6 +1258,12 @@ def build_project_row(project: Project) -> ProjectRow:
         forms_enabled=bool(project.forms_enabled),
         transport_enabled=bool(project.transport_enabled),
         emergency_phone=str(project.emergency_phone or "").strip(),
+        twilio_account_sid=str(project.twilio_account_sid or ""),
+        twilio_auth_token=str(project.twilio_auth_token or ""),
+        twilio_phone_number=str(project.twilio_phone_number or ""),
+        mobile_admin=str(project.mobile_admin or ""),
+        email_local_emergency=str(project.email_local_emergency or ""),
+        emergency_call_message=str(project.emergency_call_message or ""),
         inactivity_days_threshold=int(project.inactivity_days_threshold or 60),
         mixed_zone_interval_minutes=int(project.mixed_zone_interval_minutes or 30),
         minimum_checkout_distance_meters=int(project.minimum_checkout_distance_meters or 2000),
@@ -2008,6 +2025,7 @@ def _accident_summary(db: Session, accident: Accident) -> AccidentSummary:
         id=accident.id,
         accident_number=accident.accident_number,
         accident_number_label=format_accident_number(accident.accident_number),
+        project_id=accident.project_id,
         project_name=accident.project_name_snapshot,
         location_name=accident.location_name_snapshot,
         location_is_registered=accident.location_is_registered,
@@ -2015,18 +2033,27 @@ def _accident_summary(db: Session, accident: Accident) -> AccidentSummary:
         opened_by_label=opened_by_label,
         opened_at=accident.opened_at,
         closed_at=accident.closed_at,
+        description=accident.description or "",
     )
 
 
 @router.get("/accidents/active", response_model=AdminAccidentStateResponse, dependencies=[Depends(require_admin_session)])
 def get_active_accident_state(db: Session = Depends(get_db)) -> AdminAccidentStateResponse:
-    active = list_active_accident(db)
-    if active is None:
+    actives = list_active_accidents(db)
+    if not actives:
         return AdminAccidentStateResponse(is_active=False)
+    items = [
+        AdminActiveAccidentItem(
+            accident=_accident_summary(db, a),
+            situation_rows=build_situation_rows(db, accident=a),
+        )
+        for a in actives
+    ]
     return AdminAccidentStateResponse(
         is_active=True,
-        accident=_accident_summary(db, active),
-        situation_rows=build_situation_rows(db, accident=active),
+        active_accidents=items,
+        accident=items[0].accident,
+        situation_rows=items[0].situation_rows,
     )
 
 
@@ -2045,6 +2072,7 @@ def open_admin_accident(
             custom_location_name=payload.custom_location_name,
             opened_by_admin_id=identity.admin_user.id,
             opened_by_user_id=None,
+            description=payload.description,
         )
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Ja existe um acidente em curso.")
@@ -2062,13 +2090,45 @@ def open_admin_accident(
         details=f"accident_number={accident.accident_number} project_id={payload.project_id}",
         commit=True,
     )
+    summary = _accident_summary(db, accident)
+    rows = build_situation_rows(db, accident=accident)
+    item = AdminActiveAccidentItem(accident=summary, situation_rows=rows)
     return AdminAccidentStateResponse(
         is_active=True,
-        accident=_accident_summary(db, accident),
-        situation_rows=build_situation_rows(db, accident=accident),
+        active_accidents=[item],
+        accident=summary,
+        situation_rows=rows,
     )
 
 
+
+
+@router.post("/accidents/{accident_id}/close", response_model=AdminAccidentStateResponse)
+def close_admin_accident_by_id(
+    accident_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    identity: AdminActorIdentity = Depends(require_admin_identity),
+) -> AdminAccidentStateResponse:
+    accident = db.get(Accident, accident_id)
+    if accident is None or accident.closed_at is not None:
+        raise HTTPException(status_code=409, detail="Acidente não encontrado ou já encerrado.")
+
+    closed = close_accident(db, accident=accident, closed_by_admin_id=identity.admin_user.id)
+    background_tasks.add_task(build_and_attach_archive_for_accident, closed.id)
+
+    log_event(
+        db,
+        source="admin",
+        action="accident_close",
+        status="done",
+        message="Accident closed by admin",
+        request_path=f"/api/admin/accidents/{accident_id}/close",
+        http_status=200,
+        details=f"accident_id={closed.id}",
+        commit=True,
+    )
+    return AdminAccidentStateResponse(is_active=False)
 
 
 @router.post("/accidents/close", response_model=AdminAccidentStateResponse)
@@ -2077,6 +2137,7 @@ def close_admin_accident(
     db: Session = Depends(get_db),
     identity: AdminActorIdentity = Depends(require_admin_identity),
 ) -> AdminAccidentStateResponse:
+    """Backward-compat: close the first active accident found."""
     active = list_active_accident(db)
     if active is None:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
@@ -2096,6 +2157,103 @@ def close_admin_accident(
         commit=True,
     )
     return AdminAccidentStateResponse(is_active=False)
+
+
+@router.post("/accidents/{accident_id}/emergency-call", response_model=EmergencyCallResponse)
+def trigger_admin_emergency_call(
+    accident_id: int,
+    db: Session = Depends(get_db),
+    identity: AdminActorIdentity = Depends(require_admin_identity),
+) -> EmergencyCallResponse:
+    accident = db.get(Accident, accident_id)
+    if accident is None or accident.closed_at is not None:
+        raise HTTPException(status_code=404, detail="Acidente não encontrado ou já encerrado.")
+
+    project = db.get(Project, accident.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    admin_user_obj = db.get(User, identity.user.id)
+    reporter_name = identity.user.nome if admin_user_obj else identity.admin_user.nome_completo
+
+    try:
+        from ..services.time_utils import now_sgt as _now
+        log = make_emergency_call(
+            db,
+            accident=accident,
+            project=project,
+            triggered_by_admin_user=identity.admin_user,
+            reporter_name=reporter_name,
+            reporter_local=accident.location_name_snapshot,
+            event_time=_now(),
+        )
+    except TwilioNotConfiguredError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except EmergencyCallFailedError as exc:
+        raise HTTPException(status_code=502, detail=exc.message)
+
+    log_event(
+        db,
+        source="admin",
+        action="accident_call",
+        status="done",
+        message=f"Emergency call #{log.call_number} initiated by admin",
+        details=f"accident_id={accident_id} call_sid={log.call_sid}",
+        commit=True,
+    )
+    return EmergencyCallResponse(
+        call_number=log.call_number,
+        call_number_label=str(log.call_number).zfill(6),
+        call_sid=log.call_sid,
+        call_status=log.call_status,
+        message=f"Chamada de emergência #{str(log.call_number).zfill(6)} iniciada.",
+    )
+
+
+@router.get("/accidents/{accident_id}/call-logs", response_model=list[AccidentCallLogRow], dependencies=[Depends(require_admin_session)])
+def list_accident_call_logs(
+    accident_id: int,
+    db: Session = Depends(get_db),
+) -> list[AccidentCallLogRow]:
+    logs = db.execute(
+        select(AccidentCallLog)
+        .where(AccidentCallLog.accident_id == accident_id)
+        .order_by(AccidentCallLog.call_number)
+    ).scalars().all()
+
+    def _build_triggered_by_label(log: AccidentCallLog) -> str:
+        if log.triggered_by_user_id:
+            u = db.get(User, log.triggered_by_user_id)
+            if u:
+                return f"{u.nome_completo} ({u.chave})"
+        elif log.triggered_by_admin_id:
+            a = db.get(AdminUser, log.triggered_by_admin_id)
+            if a:
+                return f"{a.nome_completo} ({a.chave}) [admin]"
+        return "-"
+
+    return [
+        AccidentCallLogRow(
+            id=log.id,
+            call_number=log.call_number,
+            call_number_label=str(log.call_number).zfill(6),
+            call_sid=log.call_sid,
+            accident_id=log.accident_id,
+            project_id=log.project_id,
+            triggered_by_user_id=log.triggered_by_user_id,
+            triggered_by_admin_id=log.triggered_by_admin_id,
+            triggered_by_label=_build_triggered_by_label(log),
+            to_phone=log.to_phone,
+            from_phone=log.from_phone,
+            call_status=log.call_status,
+            duration_seconds=log.duration_seconds,
+            ended_by=log.ended_by,
+            error_message=log.error_message,
+            created_at=log.created_at,
+            updated_at=log.updated_at,
+        )
+        for log in logs
+    ]
 
 
 def generate_presigned_url(object_key: str, expires_in_seconds: int = 300) -> str:
@@ -2132,6 +2290,7 @@ def list_closed_accidents_endpoint(
             author_label=opened_by_label,
             opened_at=accident.opened_at,
             closed_at=accident.closed_at,
+            description=accident.description or "",
             download_url=f"/api/admin/accidents/{accident.id}/archive",
             download_ready=archive is not None,
             can_delete=(current_admin.perfil == 9),
@@ -2370,6 +2529,18 @@ def update_admin_project(
         project.transport_enabled = payload.transport_enabled
     if "emergency_phone" in update_data and payload.emergency_phone is not None:
         project.emergency_phone = payload.emergency_phone
+    if "twilio_account_sid" in update_data and payload.twilio_account_sid is not None:
+        project.twilio_account_sid = payload.twilio_account_sid
+    if "twilio_auth_token" in update_data and payload.twilio_auth_token is not None:
+        project.twilio_auth_token = payload.twilio_auth_token
+    if "twilio_phone_number" in update_data and payload.twilio_phone_number is not None:
+        project.twilio_phone_number = payload.twilio_phone_number
+    if "mobile_admin" in update_data and payload.mobile_admin is not None:
+        project.mobile_admin = payload.mobile_admin
+    if "email_local_emergency" in update_data and payload.email_local_emergency is not None:
+        project.email_local_emergency = payload.email_local_emergency
+    if "emergency_call_message" in update_data and payload.emergency_call_message is not None:
+        project.emergency_call_message = payload.emergency_call_message
     if "inactivity_days_threshold" in update_data and payload.inactivity_days_threshold is not None:
         project.inactivity_days_threshold = payload.inactivity_days_threshold
     if "mixed_zone_interval_minutes" in update_data and payload.mixed_zone_interval_minutes is not None:

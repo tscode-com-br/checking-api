@@ -1090,6 +1090,12 @@ class ProjectRow(BaseModel):
     forms_enabled: bool
     transport_enabled: bool
     emergency_phone: str
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+    mobile_admin: str = ""
+    email_local_emergency: str = ""
+    emergency_call_message: str = ""
     inactivity_days_threshold: int = 60
     mixed_zone_interval_minutes: int = 30
     minimum_checkout_distance_meters: int = 2000
@@ -1168,6 +1174,12 @@ class ProjectUpdate(BaseModel):
     forms_enabled: bool | None = None
     transport_enabled: bool | None = None
     emergency_phone: str | None = Field(default=None, max_length=32)
+    twilio_account_sid: str | None = Field(default=None, max_length=64)
+    twilio_auth_token: str | None = Field(default=None, max_length=64)
+    twilio_phone_number: str | None = Field(default=None, max_length=32)
+    mobile_admin: str | None = Field(default=None, max_length=32)
+    email_local_emergency: str | None = None
+    emergency_call_message: str | None = None
     inactivity_days_threshold: int | None = Field(default=None, ge=1, le=3650)
     mixed_zone_interval_minutes: int | None = Field(default=None, ge=1, le=1440)
     minimum_checkout_distance_meters: int | None = Field(default=None, ge=1, le=999999)
@@ -4350,18 +4362,22 @@ class SituacaoPessoalRow(BaseModel):
     chave: str
     projects: list[str]
     local: str | None
+    activity_local: str | None = None
     zone: Literal["Aguardando", "Segurança", "Acidente"]
     status: Literal["Aguardando", "OK", "AJUDA"]
     phone: str | None
     videos: list[AccidentVideoLink]
     priority: int  # 1..5
-    row_color: Literal["white", "blinking-red", "yellow", "turquoise", "light-green", "light-gray"]
+    section: int = 3  # 1=Emergência, 2=Local do Acidente, 3=Não Reportados, 4=Demais
+    awareness_status: str = "waiting"
+    row_color: Literal["white", "blinking-red", "yellow", "turquoise", "light-green", "light-gray", "light-blue"]
 
 
 class AccidentSummary(BaseModel):
     id: int
     accident_number: int
     accident_number_label: str  # zero-padded 4 digits, e.g. "0042"
+    project_id: int
     project_name: str
     location_name: str
     location_is_registered: bool
@@ -4369,18 +4385,26 @@ class AccidentSummary(BaseModel):
     opened_by_label: str
     opened_at: datetime
     closed_at: datetime | None
+    description: str = ""
+
+
+class AdminActiveAccidentItem(BaseModel):
+    accident: AccidentSummary
+    situation_rows: list["SituacaoPessoalRow"] = []
 
 
 class AdminAccidentStateResponse(BaseModel):
     is_active: bool
+    active_accidents: list[AdminActiveAccidentItem] = []
     accident: AccidentSummary | None = None
-    situation_rows: list[SituacaoPessoalRow] = []
+    situation_rows: list["SituacaoPessoalRow"] = []
 
 
 class AdminAccidentOpenRequest(BaseModel):
     project_id: int
     location_id: int | None = None
     custom_location_name: str | None = None
+    description: str = Field(default="", max_length=500)
 
     @model_validator(mode="after")
     def check_location_xor(self) -> Self:
@@ -4401,9 +4425,12 @@ class WebAccidentUserReport(BaseModel):
 
 class WebAccidentStateResponse(BaseModel):
     is_active: bool
+    accident_id: int | None = None
     accident_number_label: str | None = None
     project_name: str | None = None
     location_name: str | None = None
+    description: str | None = None
+    awareness_status: str | None = None
     current_user_report: WebAccidentUserReport | None = None
 
 
@@ -4414,6 +4441,7 @@ class WebAccidentOpenRequest(BaseModel):
     custom_location_name: str | None
     zone: Literal["safety", "accident"]
     status: Literal["ok", "help"]
+    description: str = Field(default="", max_length=500)
 
     @field_validator("chave", mode="before")
     @classmethod
@@ -4455,6 +4483,7 @@ class AccidentClosedRow(BaseModel):
     author_label: str
     opened_at: datetime
     closed_at: datetime
+    description: str = ""
     download_url: str
     download_ready: bool  # False while archive is still being built
     can_delete: bool
@@ -4462,3 +4491,47 @@ class AccidentClosedRow(BaseModel):
 
 class AccidentClosedListResponse(BaseModel):
     rows: list[AccidentClosedRow]
+
+
+class WebAccidentAcknowledgeRequest(BaseModel):
+    chave: str
+
+    @field_validator("chave", mode="before")
+    @classmethod
+    def normalize_chave(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("chave deve ser uma string.")
+        normalized = v.strip().upper()
+        if not _CHAVE_PATTERN.match(normalized):
+            raise ValueError("chave deve ter 4 caracteres alfanuméricos (A-Z, 0-9).")
+        return normalized
+
+
+class EmergencyCallResponse(BaseModel):
+    call_number: int
+    call_number_label: str  # zero-padded 6 digits
+    call_sid: str | None
+    call_status: str
+    message: str
+
+
+class AccidentCallLogRow(BaseModel):
+    id: int
+    call_number: int
+    call_number_label: str
+    call_sid: str | None
+    accident_id: int | None
+    project_id: int | None
+    triggered_by_user_id: int | None
+    triggered_by_admin_id: int | None
+    triggered_by_label: str = "-"
+    to_phone: str
+    from_phone: str
+    call_status: str
+    duration_seconds: int | None
+    ended_by: str | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

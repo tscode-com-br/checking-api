@@ -20,6 +20,7 @@ from sistema.app.models import (
     ManagedLocation,
     Project,
     User,
+    UserProjectMembership,
 )
 from sistema.app.services.accident_lifecycle import (
     AccidentAlreadyActiveError,
@@ -230,7 +231,11 @@ def test_open_prepopulates_user_reports_for_checked_in_users(tmp_path: Path):
     admin = _create_admin(db)
     u1 = _create_user(db, "U001", checkin=True)
     u2 = _create_user(db, "U002", checkin=True)
-    _create_user(db, "U003", checkin=False)  # not checked in — should be skipped
+    _create_user(db, "U003", checkin=False)  # not a project member — should be skipped
+    now = datetime.now(timezone.utc)
+    db.add(UserProjectMembership(user_id=u1.id, project_id=proj.id, created_at=now, updated_at=now))
+    db.add(UserProjectMembership(user_id=u2.id, project_id=proj.id, created_at=now, updated_at=now))
+    db.flush()
 
     accident = _open_simple(db, proj, admin)
 

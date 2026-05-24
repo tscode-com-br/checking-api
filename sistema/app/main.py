@@ -19,7 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .core.config import settings
 from .database import Base, engine, reset_database_request_context, set_database_request_context
-from .routers import admin, device, health, mobile, partner, provider, transport as transport_api, transport_ai as transport_ai_api, web_check
+from .routers import admin, device, health, mobile, partner, provider, transport as transport_api, transport_ai as transport_ai_api, twilio_callbacks, web_check
 from .services.admin_auth import seed_default_admin
 from .services.admin_updates import start_realtime_brokers, stop_realtime_brokers
 from .services.event_archives import ensure_event_archives_dir
@@ -292,6 +292,7 @@ app.include_router(transport_api.router)
 app.include_router(transport_ai_api.router)
 app.include_router(admin.router)
 app.include_router(partner.router)
+app.include_router(twilio_callbacks.router)
 
 static_dir = Path(__file__).resolve().parent / "static"
 assets_dir = Path(__file__).resolve().parents[2] / "assets"

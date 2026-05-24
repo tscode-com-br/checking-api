@@ -23,6 +23,7 @@ from sistema.app.models import (
     AdminUser,
     Project,
     User,
+    UserProjectMembership,
 )
 from sistema.app.services.accident_lifecycle import (
     fire_accident_hook_for_check_event,
@@ -120,12 +121,24 @@ def test_hook_skips_when_no_active_accident(tmp_path: Path):
     assert reports == []
 
 
+def _make_membership(db: Session, user: User, project: Project) -> None:
+    membership = UserProjectMembership(
+        user_id=user.id,
+        project_id=project.id,
+        created_at=_NOW,
+        updated_at=_NOW,
+    )
+    db.add(membership)
+    db.flush()
+
+
 def test_hook_creates_waiting_report_for_new_user_check_in(tmp_path: Path):
     db = _make_session(tmp_path)
     proj = _make_project(db)
     admin = _make_admin(db)
     accident = _make_accident(db, proj, admin)
     user = _make_user(db, "U002", checkin=False)
+    _make_membership(db, user, proj)
     db.commit()
 
     fire_accident_hook_for_check_event(db, user=user, action="checkin", event_time=_NOW)
@@ -147,6 +160,7 @@ def test_hook_updates_last_action_for_existing_user_check_out(tmp_path: Path):
     admin = _make_admin(db)
     accident = _make_accident(db, proj, admin)
     user = _make_user(db, "U003")
+    _make_membership(db, user, proj)
     db.commit()
 
     # First create a report via check-in

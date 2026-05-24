@@ -16,6 +16,7 @@ from ..models import (
     ManagedLocation,
     Project,
     User,
+    UserProjectMembership,
 )
 from .accident_numbering import format_accident_number, next_accident_number
 from .admin_updates import notify_admin_data_changed, notify_web_check_data_changed
@@ -48,15 +49,17 @@ def open_accident(
     opened_by_user_id: int | None = None,
     reporter_zone: str | None = None,
     reporter_status: str | None = None,
+    description: str = "",
 ) -> Accident:
-    # Check for existing active accident.
-    # NOTE: In Postgres production, add FOR UPDATE to the query for row-level locking.
-    # SQLite does not support FOR UPDATE, so we rely on the partial unique index instead.
+    # Per-project uniqueness: only one active accident per project at a time.
     existing = db.execute(
-        text("SELECT id FROM accidents WHERE closed_at IS NULL")
-    ).first()
+        select(Accident).where(
+            Accident.project_id == project_id,
+            Accident.closed_at.is_(None),
+        )
+    ).scalar_one_or_none()
     if existing is not None:
-        raise AccidentAlreadyActiveError("Já existe um acidente ativo")
+        raise AccidentAlreadyActiveError("Já existe um acidente ativo para este projeto")
 
     project = db.get(Project, project_id)
     if project is None:
@@ -92,21 +95,48 @@ def open_accident(
         opened_by_admin_id=opened_by_admin_id,
         opened_by_user_id=opened_by_user_id,
         opened_at=now,
+        description=description.strip(),
         created_at=now,
         updated_at=now,
     )
     db.add(accident)
     db.flush()
 
-    # Pre-populate AccidentUserReport for all currently checked-in users
-    candidates = db.execute(
-        select(User).where(User.checkin == True)  # noqa: E712
-    ).scalars().all()
+    # Pre-populate AccidentUserReport for ALL project members (not just checked-in).
+    member_user_ids = [
+        row.user_id
+        for row in db.execute(
+            select(UserProjectMembership).where(UserProjectMembership.project_id == project_id)
+        ).scalars().all()
+    ]
+
+    # Build a lookup of currently checked-in users for snapshot data
+    checked_in_users: dict[int, User] = {}
+    if member_user_ids:
+        checked_in_list = db.execute(
+            select(User).where(
+                User.id.in_(member_user_ids),
+                User.checkin == True,  # noqa: E712
+            )
+        ).scalars().all()
+        checked_in_users = {u.id: u for u in checked_in_list}
+
+    # Fetch all member Users for snapshot fields
+    member_users: dict[int, User] = {}
+    if member_user_ids:
+        all_members = db.execute(
+            select(User).where(User.id.in_(member_user_ids))
+        ).scalars().all()
+        member_users = {u.id: u for u in all_members}
 
     author_report: AccidentUserReport | None = None
 
-    for user in candidates:
+    for uid in member_user_ids:
+        user = member_users.get(uid)
+        if user is None:
+            continue
         projects = list_user_project_names(db, user)
+        checked_in_user = checked_in_users.get(uid)
         report = AccidentUserReport(
             accident_id=accident.id,
             user_id=user.id,
@@ -114,11 +144,12 @@ def open_accident(
             user_name_snapshot=user.nome,
             user_phone_snapshot=None,
             user_projects_snapshot=json.dumps(projects),
-            user_local_snapshot=user.local or "",
+            user_local_snapshot=checked_in_user.local or "" if checked_in_user else "",
             zone="waiting",
             status="waiting",
-            last_checkin_action="check-in",
-            last_action_at=user.time,
+            awareness_status="waiting",
+            last_checkin_action="check-in" if checked_in_user else None,
+            last_action_at=checked_in_user.time if checked_in_user else None,
             created_at=now,
             updated_at=now,
         )
@@ -128,12 +159,11 @@ def open_accident(
 
     if origin == "web" and opened_by_user_id is not None:
         if author_report is not None:
-            # Author was checked-in: update the pre-populated row with reported zone/status
             author_report.zone = reporter_zone or "waiting"
             author_report.status = reporter_status or "waiting"
             author_report.reported_at = now
-        else:
-            # Author was not checked-in: still create a row for them
+        elif opened_by_user_id not in member_user_ids:
+            # Author is not a member of the project — create a report anyway
             author_user = db.get(User, opened_by_user_id)
             if author_user is not None:
                 projects = list_user_project_names(db, author_user)
@@ -147,6 +177,7 @@ def open_accident(
                     user_local_snapshot=author_user.local or "",
                     zone=reporter_zone or "waiting",
                     status=reporter_status or "waiting",
+                    awareness_status="waiting",
                     reported_at=now,
                     last_checkin_action=None,
                     last_action_at=None,
@@ -195,6 +226,7 @@ def upsert_user_safety_report(
             user_local_snapshot=user.local or "",
             zone="waiting",
             status="waiting",
+            awareness_status="waiting",
             created_at=now,
             updated_at=now,
         )
@@ -265,6 +297,7 @@ def update_accident_membership_for_check_event(
     user: User,
     action: Literal["check-in", "check-out"],
     event_time: datetime,
+    local: str = "",
 ) -> AccidentUserReport:
     now = now_sgt()
     report = db.execute(
@@ -283,9 +316,10 @@ def update_accident_membership_for_check_event(
             user_name_snapshot=user.nome,
             user_phone_snapshot=None,
             user_projects_snapshot=json.dumps(projects),
-            user_local_snapshot=user.local or "",
+            user_local_snapshot=local,
             zone="waiting",
             status="waiting",
+            awareness_status="waiting",
             created_at=now,
             updated_at=now,
         )
@@ -294,6 +328,8 @@ def update_accident_membership_for_check_event(
 
     report.last_checkin_action = action
     report.last_action_at = event_time
+    if local:
+        report.user_local_snapshot = local
     report.updated_at = now
     db.commit()
 
@@ -303,10 +339,35 @@ def update_accident_membership_for_check_event(
     return report
 
 
-def list_active_accident(db: Session) -> Accident | None:
-    return db.execute(
-        select(Accident).where(Accident.closed_at.is_(None))
+def acknowledge_accident(db: Session, accident_id: int, user: User) -> None:
+    report = db.execute(
+        select(AccidentUserReport).where(
+            AccidentUserReport.accident_id == accident_id,
+            AccidentUserReport.user_id == user.id,
+        )
     ).scalar_one_or_none()
+    if report is not None and report.awareness_status != "acknowledged":
+        report.awareness_status = "acknowledged"
+        report.updated_at = now_sgt()
+        db.commit()
+        notify_admin_data_changed(
+            "accident_acknowledged",
+            metadata={"accident_id": accident_id, "user_id": user.id},
+        )
+
+
+def list_active_accidents(db: Session) -> list[Accident]:
+    return list(
+        db.execute(
+            select(Accident).where(Accident.closed_at.is_(None)).order_by(Accident.accident_number)
+        ).scalars().all()
+    )
+
+
+def list_active_accident(db: Session) -> Accident | None:
+    """Backward-compat: return the first active accident, or None."""
+    actives = list_active_accidents(db)
+    return actives[0] if actives else None
 
 
 def close_accident(
@@ -334,16 +395,19 @@ def close_accident(
 
     return accident
 
+
 def fire_accident_hook_for_check_event(
     db: "Session",
     *,
     user: "User",
     action: str,
     event_time: "datetime",
+    local: str = "",
 ) -> None:
     """Call after any successful check-in/check-out to keep AccidentUserReport in sync.
 
     Normalises 'checkin'/'checkout' to 'check-in'/'check-out'.
+    Updates all active accidents whose project the user belongs to.
     Never raises — all exceptions are swallowed with a warning log.
     """
     if action in ("checkin", "check-in"):
@@ -354,14 +418,23 @@ def fire_accident_hook_for_check_event(
         return
 
     try:
-        active = list_active_accident(db)
-        if active is not None:
+        # Resolve active accidents relevant to this user's projects
+        user_project_ids = {
+            m.project_id
+            for m in db.execute(
+                select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+            ).scalars().all()
+        }
+        actives = list_active_accidents(db)
+        relevant = [a for a in actives if a.project_id in user_project_ids]
+        for accident in relevant:
             update_accident_membership_for_check_event(
                 db,
-                accident=active,
+                accident=accident,
                 user=user,
                 action=normalized,
                 event_time=event_time,
+                local=local,
             )
     except Exception:
         _logger.warning("Accident hook failed for check event", exc_info=True)

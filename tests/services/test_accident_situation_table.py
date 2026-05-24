@@ -200,7 +200,7 @@ def test_priority_3_waiting_turquoise(tmp_path: Path):
 
     rows = build_situation_rows(db, accident=accident)
     assert rows[0].priority == 3
-    assert rows[0].row_color == "turquoise"
+    assert rows[0].row_color == "light-blue"
     assert rows[0].zone == "Aguardando"
 
 

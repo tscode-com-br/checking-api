@@ -7,11 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User
+from ..models import Accident, AccidentUserReport, AdminAccessRequest, ManagedLocation, Project, TransportRequest, User, UserProjectMembership
 from ..schemas import (
     AccidentLocationOption,
     AccidentProjectOption,
+    EmergencyCallResponse,
     ProjectRow,
+    WebAccidentAcknowledgeRequest,
     WebAccidentOpenRequest,
     WebAccidentReportRequest,
     WebAccidentStateResponse,
@@ -50,10 +52,18 @@ from ..services.admin_updates import (
 )
 from ..services.accident_lifecycle import (
     AccidentAlreadyActiveError,
+    acknowledge_accident,
     attach_video_upload,
+    list_active_accidents,
     list_active_accident,
     open_accident,
     upsert_user_safety_report,
+)
+from ..services.twilio_caller import (
+    EmergencyCallAlreadyFiredError,
+    EmergencyCallFailedError,
+    TwilioNotConfiguredError,
+    make_emergency_call,
 )
 from ..services.accident_numbering import format_accident_number
 from ..services.forms_submit import FormsSubmitChannel, submit_forms_event
@@ -892,9 +902,20 @@ def get_web_accident_state(
     db: Session = Depends(get_db),
 ) -> WebAccidentStateResponse:
     user = _require_matching_authenticated_web_user(request, db, chave)
-    active = list_active_accident(db)
-    if active is None:
+    actives = list_active_accidents(db)
+    if not actives:
         return WebAccidentStateResponse(is_active=False)
+
+    # Filter to active accidents belonging to the user's projects
+    user_project_ids = {
+        m.project_id
+        for m in db.execute(
+            select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+        ).scalars().all()
+    }
+    matching = [a for a in actives if a.project_id in user_project_ids]
+    active = matching[0] if matching else actives[0]
+
     report = db.execute(
         select(AccidentUserReport).where(
             AccidentUserReport.accident_id == active.id,
@@ -903,9 +924,12 @@ def get_web_accident_state(
     ).scalar_one_or_none()
     return WebAccidentStateResponse(
         is_active=True,
+        accident_id=active.id,
         accident_number_label=format_accident_number(active.accident_number),
         project_name=active.project_name_snapshot,
         location_name=active.location_name_snapshot,
+        description=active.description or None,
+        awareness_status=report.awareness_status if report else "waiting",
         current_user_report=WebAccidentUserReport(
             zone=("safety" if report and report.zone == "safety" else "accident" if report and report.zone == "accident" else None),
             status=("ok" if report and report.status == "ok" else "help" if report and report.status == "help" else None),
@@ -932,6 +956,7 @@ def open_web_accident(
             opened_by_user_id=user.id,
             reporter_zone=payload.zone,
             reporter_status=payload.status,
+            description=payload.description,
         )
     except AccidentAlreadyActiveError:
         raise HTTPException(status_code=409, detail="Outro usuario ja reportou um acidente.")
@@ -977,6 +1002,114 @@ def report_web_accident_status(
         commit=True,
     )
     return get_web_accident_state(request=request, chave=payload.chave, db=db)
+
+
+# ---------------------------------------------------------------------------
+# E3a — Acknowledge accident
+# ---------------------------------------------------------------------------
+
+@router.post("/check/accident/acknowledge")
+def acknowledge_web_accident(
+    payload: WebAccidentAcknowledgeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    actives = list_active_accidents(db)
+    user_project_ids = {
+        m.project_id
+        for m in db.execute(
+            select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+        ).scalars().all()
+    }
+    matching = [a for a in actives if a.project_id in user_project_ids]
+    active = matching[0] if matching else (actives[0] if actives else None)
+    if active is None:
+        raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
+
+    acknowledge_accident(db, active.id, user)
+    log_event(
+        db,
+        source="web",
+        action="accident_ack",
+        status="done",
+        message="User acknowledged accident",
+        request_path="/api/web/check/accident/acknowledge",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_id={active.id}",
+        commit=True,
+    )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# E3b — Emergency call (user-triggered)
+# ---------------------------------------------------------------------------
+
+@router.post("/check/accident/emergency-call", response_model=EmergencyCallResponse)
+def trigger_user_emergency_call(
+    payload: WebAccidentAcknowledgeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> EmergencyCallResponse:
+    user = _require_matching_authenticated_web_user(request, db, payload.chave)
+    actives = list_active_accidents(db)
+    user_project_ids = {
+        m.project_id
+        for m in db.execute(
+            select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+        ).scalars().all()
+    }
+    matching = [a for a in actives if a.project_id in user_project_ids]
+    active = matching[0] if matching else None
+    if active is None:
+        raise HTTPException(status_code=404, detail="Nenhum acidente em curso para seu projeto.")
+
+    project = db.get(Project, active.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    from ..services.time_utils import now_sgt as _now
+    try:
+        log = make_emergency_call(
+            db,
+            accident=active,
+            project=project,
+            triggered_by_user=user,
+            reporter_name=user.nome,
+            reporter_local=user.local or active.location_name_snapshot,
+            event_time=_now(),
+        )
+    except EmergencyCallAlreadyFiredError:
+        raise HTTPException(
+            status_code=409,
+            detail="Uma chamada de emergência já foi realizada por outro usuário neste acidente.",
+        )
+    except TwilioNotConfiguredError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except EmergencyCallFailedError as exc:
+        raise HTTPException(status_code=502, detail=exc.message)
+
+    log_event(
+        db,
+        source="web",
+        action="accident_call",
+        status="done",
+        message=f"Emergency call #{log.call_number} initiated by user",
+        request_path="/api/web/check/accident/emergency-call",
+        http_status=200,
+        rfid=user.chave,
+        details=f"accident_id={active.id} call_sid={log.call_sid}",
+        commit=True,
+    )
+    return EmergencyCallResponse(
+        call_number=log.call_number,
+        call_number_label=str(log.call_number).zfill(6),
+        call_sid=log.call_sid,
+        call_status=log.call_status,
+        message=f"Chamada de emergência #{str(log.call_number).zfill(6)} iniciada.",
+    )
 
 
 # ---------------------------------------------------------------------------

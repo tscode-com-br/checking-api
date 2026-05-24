@@ -13,12 +13,11 @@ from ..schemas import AccidentVideoLink, SituacaoPessoalRow
 def _derive_display(
     report: AccidentUserReport,
     opened_at: datetime,
-) -> tuple[str, str, str, int]:
-    """Return (zone_display, status_display, row_color, priority)."""
-    # Normalise opened_at for comparison: strip tz if report datetimes are naive
+) -> tuple[str, str, str, int, int]:
+    """Return (zone_display, status_display, row_color, priority, section)."""
     opened_at_cmp = opened_at.replace(tzinfo=None) if opened_at.tzinfo else opened_at
 
-    # Priority 5: user checked-out during this accident
+    # Priority 5 / Section 4: checked-out during this accident
     if (
         report.last_checkin_action == "check-out"
         and report.last_action_at is not None
@@ -34,17 +33,17 @@ def _derive_display(
             if report.status == "ok"
             else ("AJUDA" if report.status == "help" else "Aguardando")
         )
-        return zone_display, status_display, "light-gray", 5
+        return zone_display, status_display, "light-gray", 5, 4
 
     if report.zone == "accident" and report.status == "help":
-        return "Acidente", "AJUDA", "blinking-red", 1
+        return "Acidente", "AJUDA", "blinking-red", 1, 1   # Seção 1: Emergência
     if report.zone == "accident" and report.status == "ok":
-        return "Acidente", "OK", "yellow", 2
+        return "Acidente", "OK", "yellow", 2, 2             # Seção 2: Local do Acidente
     if report.zone == "waiting":
-        return "Aguardando", "Aguardando", "turquoise", 3
+        return "Aguardando", "Aguardando", "light-blue", 3, 3  # Seção 3: Não Reportados
     if report.zone == "safety" and report.status == "ok":
-        return "Segurança", "OK", "light-green", 4
-    return "Aguardando", "Aguardando", "white", 3
+        return "Segurança", "OK", "light-green", 4, 4       # Seção 4: Demais
+    return "Aguardando", "Aguardando", "light-blue", 3, 3   # fallback → seção 3
 
 
 def build_situation_rows(
@@ -64,7 +63,6 @@ def build_situation_rows(
 
     rows: list[SituacaoPessoalRow] = []
     for report in reports:
-        # Gather associated videos ordered by captured_at ASC
         raw_videos = (
             db.execute(
                 select(AccidentVideoUpload)
@@ -90,9 +88,18 @@ def build_situation_rows(
 
         event_time = report.reported_at or report.last_action_at or report.created_at
         projects: list[str] = json.loads(report.user_projects_snapshot or "[]")
-        zone_display, status_display, row_color, priority = _derive_display(
+        zone_display, status_display, row_color, priority, section = _derive_display(
             report, accident.opened_at
         )
+
+        # Derive "Atividade/Local" column
+        if report.last_checkin_action and report.user_local_snapshot:
+            action_label = "Check-In" if report.last_checkin_action == "check-in" else "Check-Out"
+            activity_local: str | None = f"{action_label}/{report.user_local_snapshot}"
+        elif report.user_local_snapshot:
+            activity_local = report.user_local_snapshot
+        else:
+            activity_local = None
 
         rows.append(
             SituacaoPessoalRow(
@@ -102,14 +109,25 @@ def build_situation_rows(
                 chave=report.user_chave_snapshot,
                 projects=projects,
                 local=report.user_local_snapshot or None,
+                activity_local=activity_local,
                 zone=zone_display,
                 status=status_display,
                 phone=report.user_phone_snapshot,
                 videos=videos,
                 priority=priority,
+                section=section,
+                awareness_status=report.awareness_status,
                 row_color=row_color,
             )
         )
 
-    rows.sort(key=lambda r: (r.priority, -r.event_time.timestamp()))
+    def _sort_key(row: SituacaoPessoalRow) -> tuple:
+        if row.section == 4:
+            acknowledged = 0 if row.awareness_status == "acknowledged" else 1
+            has_checkin = 0 if (row.activity_local and "Check-In" in row.activity_local) else 1
+            return (row.section, acknowledged, has_checkin, row.name)
+        # Within sections 1-3: sort by section, then priority, then most-recent first
+        return (row.section, row.priority, -row.event_time.timestamp(), row.name)
+
+    rows.sort(key=_sort_key)
     return rows

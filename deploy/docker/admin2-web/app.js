@@ -252,10 +252,12 @@ let reportsExportQueryString = "";
 let reportsResultsPayload = null;
 let reportsSearchUsersByChave = new Map();
 
-let accidentState = { is_active: false, accident: null, situation_rows: [] };
-let accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null };
+let accidentState = { is_active: false, active_accidents: [], accident: null, situation_rows: [] };
+let accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null, description: "" };
 let accidentRefreshDebounceTimer = null;
 let accidentPollingHandle = null;
+let _currentEmergencyProjectId = null;  // for emergency config modal
+let _activeAccidentPanelId = null;      // currently selected sub-tab accident id
 const ACCIDENT_POLL_INTERVAL_MS = 30000;
 const DEFAULT_DISPLAY_TIMEZONE = "Asia/Singapore";
 const DEFAULT_TIMEZONE_LABEL = "Singapura (+8)";
@@ -4724,10 +4726,13 @@ function makeProjectRow(project) {
   const tr = document.createElement("tr");
   const formsChecked = project.forms_enabled ? "checked" : "";
   const transportChecked = project.transport_enabled ? "checked" : "";
-  const emergencyValue = escapeHtml(project.emergency_phone || "");
   const inactivityValue = Number.isFinite(project.inactivity_days_threshold) ? project.inactivity_days_threshold : 60;
   const mixedZoneValue = Number.isFinite(project.mixed_zone_interval_minutes) ? project.mixed_zone_interval_minutes : 30;
   const checkoutDistanceValue = Number.isFinite(project.minimum_checkout_distance_meters) ? project.minimum_checkout_distance_meters : 2000;
+  const twilioConfigured = project.twilio_account_sid && project.twilio_auth_token &&
+      project.twilio_phone_number && project.mobile_admin && project.emergency_phone;
+  const emergencyBtnClass = twilioConfigured ? "emergency-config-button emergency-config-active" : "emergency-config-button emergency-config-inactive";
+  const emergencyBtnLabel = twilioConfigured ? "Ativo" : "Habilitar";
   tr.innerHTML = `
     <td>${escapeHtml(project.name)}</td>
     <td>${escapeHtml(project.country_name || "-")}</td>
@@ -4747,7 +4752,7 @@ function makeProjectRow(project) {
       </label>
     </td>
     <td>
-      <input type="tel" class="inline project-emergency-input" data-project-emergency-input="${project.id}" value="${emergencyValue}" maxlength="32" placeholder="—" />
+      <button type="button" class="${emergencyBtnClass}" data-emergency-config-open="${project.id}">${emergencyBtnLabel}</button>
     </td>
     <td>
       <input type="number" class="inline project-inactivity-input" data-project-inactivity-input="${project.id}" value="${inactivityValue}" min="1" max="3650" style="width:5em" title="Dias de inatividade até descadastro automático" />
@@ -4820,11 +4825,6 @@ function bindProjectFlagHandlers() {
   });
 
   projectsBody.addEventListener("blur", async (evt) => {
-    const emergencyInput = evt.target.closest("[data-project-emergency-input]");
-    if (emergencyInput) {
-      const projectId = emergencyInput.dataset.projectEmergencyInput;
-      await patchProjectFlag(projectId, { emergency_phone: emergencyInput.value });
-    }
     const inactivityInput = evt.target.closest("[data-project-inactivity-input]");
     if (inactivityInput) {
       const projectId = inactivityInput.dataset.projectInactivityInput;
@@ -5144,6 +5144,7 @@ async function loadAdministratorsWithProjectCatalog() {
 
 async function loadProjects() {
   const rows = await fetchJson("/api/admin/projects");
+  _allProjects = rows;  // keep for emergency config modal lookups
   setProjectCatalog(rows);
   syncProjectEditorState();
   if (locationRows.length > 0) {
@@ -5834,7 +5835,9 @@ function startRealtimeUpdates() {
     if (document.hidden) return;
     try {
       const data = JSON.parse(event.data);
-      if (data.reason && data.reason.startsWith("accident_")) {
+      if (data.reason === "emergency_call_status_update" || data.reason === "emergency_call_initiated") {
+        _handleEmergencyCallUpdate(data.metadata || {});
+      } else if (data.reason && data.reason.startsWith("accident_")) {
         scheduleAccidentRefresh();
       } else {
         requestRefreshAllTables();
@@ -7006,10 +7009,15 @@ function bindActions() {
     _hideAccidentModal("accidentWizardLocationModal");
     _showAccidentModal("accidentWizardProjectModal");
   });
-  document.getElementById("accidentWizardLocationAdvance").addEventListener("click", advanceWizardToConfirm);
+  document.getElementById("accidentWizardLocationAdvance").addEventListener("click", advanceWizardToDescription);
+  document.getElementById("accidentWizardDescriptionCancel").addEventListener("click", () => {
+    _hideAccidentModal("accidentWizardDescriptionModal");
+    _showAccidentModal("accidentWizardLocationModal");
+  });
+  document.getElementById("accidentWizardDescriptionAdvance").addEventListener("click", advanceWizardToConfirm);
   document.getElementById("accidentWizardConfirmCancel").addEventListener("click", () => {
     _hideAccidentModal("accidentWizardConfirmModal");
-    _showAccidentModal("accidentWizardLocationModal");
+    _showAccidentModal("accidentWizardDescriptionModal");
   });
   document.getElementById("accidentWizardConfirmSubmit").addEventListener("click", submitAccidentOpen);
   document.getElementById("accidentEndBack").addEventListener("click", () => _hideAccidentModal("accidentEndModal"));
@@ -7017,6 +7025,54 @@ function bindActions() {
   document.getElementById("refreshAccidentsButton").addEventListener("click", () => {
     fetchAccidentsHistory().catch((err) => console.warn("fetchAccidentsHistory failed", err));
   });
+
+  // Sub-tab switching (event delegation on #accidentSubTabs)
+  document.getElementById("accidentSubTabs").addEventListener("click", (evt) => {
+    const btn = evt.target.closest("[data-accident-tab]");
+    if (!btn) return;
+    const accidentId = parseInt(btn.dataset.accidentTab, 10);
+    _activeAccidentPanelId = accidentId;
+    document.querySelectorAll(".accident-sub-tab").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".accident-panel").forEach(p => {
+      p.style.display = p.id === `accidentPanel-${accidentId}` ? "" : "none";
+    });
+  });
+
+  // Emergency call and history (event delegation on #accidentPanels)
+  document.getElementById("accidentPanels").addEventListener("click", async (evt) => {
+    const callBtn = evt.target.closest("[data-emergency-call-accident]");
+    if (callBtn) {
+      const accidentId = parseInt(callBtn.dataset.emergencyCallAccident, 10);
+      await _triggerEmergencyCall(accidentId);
+      return;
+    }
+    const histBtn = evt.target.closest("[data-emergency-history]");
+    if (histBtn) {
+      const accidentId = parseInt(histBtn.dataset.emergencyHistory, 10);
+      await _openEmergencyCallHistory(accidentId);
+      return;
+    }
+  });
+
+  // Emergency config modal (event delegation on projects table for new button)
+  document.getElementById("projectsBody").addEventListener("click", (evt) => {
+    const configBtn = evt.target.closest("[data-emergency-config-open]");
+    if (configBtn) {
+      openEmergencyConfigModal(parseInt(configBtn.dataset.emergencyConfigOpen, 10));
+    }
+  });
+
+  // Emergency config modal events
+  document.getElementById("ecCancelButton").addEventListener("click", () => _hideAccidentModal("emergencyConfigModal"));
+  document.getElementById("ecSaveButton").addEventListener("click", saveEmergencyConfig);
+  document.getElementById("ecMessageButton").addEventListener("click", openEmergencyMessageModal);
+  document.getElementById("ecMessageBackButton").addEventListener("click", () => {
+    _hideAccidentModal("emergencyMessageModal");
+    _showAccidentModal("emergencyConfigModal");
+  });
+  document.getElementById("ecMessageSaveButton").addEventListener("click", saveEmergencyMessage);
+  document.getElementById("ecTermosButton").addEventListener("click", showEmergencyTermos);
+  document.getElementById("emergencyCallHistoryClose").addEventListener("click", () => _hideAccidentModal("emergencyCallHistoryModal"));
 
   Object.keys(presenceTableStates).forEach((tableKey) => {
     syncPresenceControls(tableKey);
@@ -7041,40 +7097,125 @@ function updateAccidentButton(state) {
 function renderAccidentTab(state) {
   const tabBtn = document.getElementById("accidentTabButton");
   if (!tabBtn) return;
-  if (state.is_active) {
+  const accidents = state.active_accidents || [];
+  if (state.is_active && accidents.length > 0) {
     tabBtn.classList.remove("hidden");
-    document.getElementById("accidentSectionTitle").textContent = `Acidente ${state.accident.accident_number_label}`;
-    document.getElementById("accidentSectionMeta").textContent =
-      `Projeto ${state.accident.project_name} — Local ${state.accident.location_name} — Aberto por ${state.accident.opened_by_label} em ${new Date(state.accident.opened_at).toLocaleString()}`;
-    renderSituacaoPessoal(state.situation_rows);
+    // Update header with count
+    const total = accidents.reduce((s, a) => s + a.situation_rows.length, 0);
+    document.getElementById("accidentSectionCount").textContent = `${total} registros`;
+    if (accidents.length === 1) {
+      const a = accidents[0].accident;
+      document.getElementById("accidentSectionTitle").textContent = `Acidente ${a.accident_number_label}`;
+      document.getElementById("accidentSectionMeta").textContent =
+        `Projeto ${a.project_name} — Local ${a.location_name} — Aberto por ${a.opened_by_label} em ${new Date(a.opened_at).toLocaleString()}`;
+    } else {
+      document.getElementById("accidentSectionTitle").textContent = `${accidents.length} Acidentes em Curso`;
+      document.getElementById("accidentSectionMeta").textContent = "";
+    }
+    _renderAccidentSubTabs(accidents);
   } else {
     tabBtn.classList.add("hidden");
+    document.getElementById("accidentSubTabs").hidden = true;
+    document.getElementById("accidentPanels").innerHTML = "";
     if (tabBtn.classList.contains("active")) {
       switchTab("checkin");
     }
   }
 }
 
+function _renderAccidentSubTabs(accidents) {
+  const subTabsEl = document.getElementById("accidentSubTabs");
+  const panelsEl = document.getElementById("accidentPanels");
+  subTabsEl.hidden = accidents.length <= 1;
+
+  // Preserve active panel selection
+  const defaultId = (_activeAccidentPanelId && accidents.some(a => a.accident.id === _activeAccidentPanelId))
+    ? _activeAccidentPanelId
+    : accidents[0].accident.id;
+  _activeAccidentPanelId = defaultId;
+
+  // Render sub-tabs
+  subTabsEl.innerHTML = accidents.map(item => {
+    const a = item.accident;
+    const active = a.id === defaultId ? " active" : "";
+    return `<button class="accident-sub-tab${active}" data-accident-tab="${a.id}">${escapeHtml(a.project_name)}-${escapeHtml(a.accident_number_label)}</button>`;
+  }).join("");
+
+  // Render panels
+  panelsEl.innerHTML = accidents.map(item => {
+    const a = item.accident;
+    const visible = a.id === defaultId ? "" : ' style="display:none"';
+    return `<div class="accident-panel" id="accidentPanel-${a.id}"${visible}>${_renderSingleAccidentPanel(item)}</div>`;
+  }).join("");
+}
+
+function _renderSingleAccidentPanel(item) {
+  const a = item.accident;
+  const rows = item.situation_rows || [];
+  const sections = [
+    { id: 1, title: "Usuários em Emergência" },
+    { id: 2, title: "Usuários no Local do Acidente" },
+    { id: 3, title: "Usuários não Reportados" },
+    { id: 4, title: "Demais Usuários" },
+  ];
+
+  const descHtml = a.description
+    ? `<p style="font-size:13px;color:var(--text-muted,#64748b);margin:4px 0 8px"><strong>Descrição:</strong> ${escapeHtml(a.description)}</p>`
+    : "";
+
+  const barHtml = `
+    <div class="emergency-call-bar" id="emergencyCallBar-${a.id}">
+      <button class="emergency-call-button" data-emergency-call-accident="${a.id}">
+        🚨 Acionar Serviço Local de Emergência
+      </button>
+      <div class="emergency-notification-bar" id="emergencyNotif-${a.id}"></div>
+      <button class="emergency-history-button" title="Histórico de ligações" data-emergency-history="${a.id}">⏱</button>
+    </div>`;
+
+  const sectionsHtml = sections.map(s => {
+    const sRows = rows.filter(r => r.section === s.id);
+    if (!sRows.length) return "";
+    const tbodyRows = sRows.map(r => {
+      const ciencia = r.awareness_status === "acknowledged" ? "Ciente" : "Aguardando";
+      return `<tr class="situacao-row situacao-row-${escapeHtml(r.row_color)}">
+        <td>${escapeHtml(formatDateTime(r.event_time))}</td>
+        <td>${escapeHtml(r.activity_local || "")}</td>
+        <td>${escapeHtml(r.name)}</td>
+        <td>${escapeHtml(r.chave)}</td>
+        <td>${escapeHtml((r.projects || []).join(", "))}</td>
+        <td>${escapeHtml(r.local || "")}</td>
+        <td>${escapeHtml(ciencia)}</td>
+        <td>${escapeHtml(r.zone)}</td>
+        <td>${escapeHtml(r.status)}</td>
+        <td>${escapeHtml(r.phone || "")}</td>
+        <td>${_renderVideosHtml(r.videos)}</td>
+      </tr>`;
+    }).join("");
+    return `<h3 class="accident-section-title">${s.title}</h3>
+      <div class="table-wrap">
+        <table class="responsive-table situacao-pessoal-table">
+          <thead><tr>
+            <th>Horário</th><th>Atividade/Local</th><th>Nome</th><th>Chave</th><th>Projetos</th>
+            <th>Local</th><th>Ciência</th><th>Zona de</th><th>Situação</th><th>Contato</th><th>Registros</th>
+          </tr></thead>
+          <tbody>${tbodyRows}</tbody>
+        </table>
+      </div>`;
+  }).join("");
+
+  return descHtml + barHtml + sectionsHtml;
+}
+
+function _renderVideosHtml(videos) {
+  if (!videos || !videos.length) return "";
+  return videos.map(v => `<a href="${escapeHtml(v.public_url)}" target="_blank" rel="noopener">${escapeHtml(v.filename || "Vídeo")}</a>`).join("<br>");
+}
+
 function renderSituacaoPessoal(rows) {
-  const tbody = document.getElementById("situacaoPessoalBody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.className = `situacao-row situacao-row-${row.row_color}`;
-    tr.appendChild(td(formatDateTime(row.event_time)));
-    tr.appendChild(td(row.name));
-    tr.appendChild(td(row.chave));
-    tr.appendChild(td(row.projects.join(", ")));
-    tr.appendChild(td(row.local || ""));
-    tr.appendChild(td(row.zone));
-    tr.appendChild(td(row.status));
-    tr.appendChild(td(row.phone || ""));
-    tr.appendChild(tdVideos(row.videos));
-    tbody.appendChild(tr);
-  });
+  // Legacy: kept for compatibility; panels now rendered via _renderSingleAccidentPanel
   document.getElementById("accidentSectionCount").textContent = `${rows.length} registros`;
 }
+
 
 function td(text) {
   const c = document.createElement("td");
@@ -7141,6 +7282,16 @@ function renderAccidentsHistory(rows) {
     }
     tr.appendChild(dl);
     const actions = document.createElement("td");
+    if (row.description) {
+      const descBtn = document.createElement("button");
+      descBtn.type = "button";
+      descBtn.className = "secondary-button";
+      descBtn.textContent = "Descrição";
+      descBtn.addEventListener("click", () => {
+        alert(`Descrição:\n\n${row.description}`);
+      });
+      actions.appendChild(descBtn);
+    }
     if (row.can_delete) {
       const btn = document.createElement("button");
       btn.className = "secondary-button delete-button";
@@ -7163,7 +7314,9 @@ function renderAccidentsHistory(rows) {
 }
 
 async function openAccidentWizard() {
-  accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null };
+  // Refresh state first so the active_accidents list is current (Bug 1 fix)
+  await fetchAccidentState().catch(() => {});
+  accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null, description: "" };
   const advanceBtn = document.getElementById("accidentWizardProjectAdvance");
   if (advanceBtn) advanceBtn.disabled = true;
   document.getElementById("accidentWizardProjectError").textContent = "";
@@ -7263,13 +7416,22 @@ function renderLocationRadios(locations) {
   }
 }
 
+function advanceWizardToDescription() {
+  document.getElementById("accidentWizardDescriptionText").value = accidentWizardData.description || "";
+  document.getElementById("accidentWizardDescriptionError").textContent = "";
+  _hideAccidentModal("accidentWizardLocationModal");
+  _showAccidentModal("accidentWizardDescriptionModal");
+}
+
 function advanceWizardToConfirm() {
+  accidentWizardData.description = (document.getElementById("accidentWizardDescriptionText").value || "").trim();
   const locName = accidentWizardData.locationName || "";
   const projName = accidentWizardData.projectName || "";
+  const desc = accidentWizardData.description ? ` — Descrição: ${accidentWizardData.description.slice(0, 60)}${accidentWizardData.description.length > 60 ? "…" : ""}` : "";
   document.getElementById("accidentWizardConfirmText").textContent =
-    `Projeto: ${projName} — Local: ${locName}`;
+    `Projeto: ${projName} — Local: ${locName}${desc}`;
   document.getElementById("accidentWizardConfirmError").textContent = "";
-  _hideAccidentModal("accidentWizardLocationModal");
+  _hideAccidentModal("accidentWizardDescriptionModal");
   _showAccidentModal("accidentWizardConfirmModal");
 }
 
@@ -7282,6 +7444,9 @@ async function submitAccidentOpen() {
       body.location_id = accidentWizardData.locationId;
     } else if (accidentWizardData.locationName) {
       body.custom_location_name = accidentWizardData.locationName;
+    }
+    if (accidentWizardData.description) {
+      body.description = accidentWizardData.description;
     }
     const response = await fetch("/api/admin/accidents/open", {
       method: "POST",
@@ -7326,8 +7491,10 @@ async function submitAccidentClose() {
   const confirmBtn = document.getElementById("accidentEndConfirm");
   if (confirmBtn) confirmBtn.disabled = true;
   document.getElementById("accidentEndError").textContent = "";
+  const accidentId = _activeAccidentPanelId || (accidentState.accident && accidentState.accident.id);
+  const url = accidentId ? `/api/admin/accidents/${accidentId}/close` : "/api/admin/accidents/close";
   try {
-    const response = await fetch("/api/admin/accidents/close", {
+    const response = await fetch(url, {
       method: "POST",
       credentials: "include",
     });
@@ -7364,9 +7531,161 @@ function _hideAccidentModal(id) {
 }
 
 function _hideAllAccidentModals() {
-  ["accidentWizardProjectModal", "accidentWizardLocationModal", "accidentWizardConfirmModal", "accidentEndModal"]
+  ["accidentWizardProjectModal", "accidentWizardLocationModal", "accidentWizardDescriptionModal",
+   "accidentWizardConfirmModal", "accidentEndModal",
+   "emergencyConfigModal", "emergencyMessageModal", "emergencyCallHistoryModal"]
     .forEach(_hideAccidentModal);
 }
+
+// ── Emergency config modal ────────────────────────────────────────────
+
+let _allProjects = [];  // populated by loadProjects(); used by emergency config modal
+
+function _getProjectById(projectId) {
+  return _allProjects.find(p => p.id === projectId) || null;
+}
+
+function openEmergencyConfigModal(projectId) {
+  const project = _getProjectById(projectId);
+  if (!project) return;
+  _currentEmergencyProjectId = projectId;
+  document.getElementById("emergencyConfigProjectLabel").textContent = project.name;
+  document.getElementById("ecAccountSid").value = project.twilio_account_sid || "";
+  document.getElementById("ecAuthToken").value = project.twilio_auth_token || "";
+  document.getElementById("ecPhoneNumber").value = project.twilio_phone_number || "";
+  document.getElementById("ecMobileAdmin").value = project.mobile_admin || "";
+  document.getElementById("ecEmergencyPhone").value = project.emergency_phone || "";
+  document.getElementById("ecEmailEmergency").value = project.email_local_emergency || "";
+  document.getElementById("emergencyConfigError").textContent = "";
+  _showAccidentModal("emergencyConfigModal");
+}
+
+async function saveEmergencyConfig() {
+  const projectId = _currentEmergencyProjectId;
+  if (!projectId) return;
+  document.getElementById("emergencyConfigError").textContent = "";
+  const payload = {
+    twilio_account_sid: document.getElementById("ecAccountSid").value.trim(),
+    twilio_auth_token: document.getElementById("ecAuthToken").value.trim(),
+    twilio_phone_number: document.getElementById("ecPhoneNumber").value.trim(),
+    mobile_admin: document.getElementById("ecMobileAdmin").value.trim(),
+    emergency_phone: document.getElementById("ecEmergencyPhone").value.trim(),
+    email_local_emergency: document.getElementById("ecEmailEmergency").value.trim(),
+    emergency_call_message: document.getElementById("ecMessageText").value.trim(),
+  };
+  try {
+    await putJson(`/api/admin/projects/${projectId}`, payload);
+    _hideAccidentModal("emergencyConfigModal");
+    await loadProjects();
+    setStatus("Configuração de emergência salva.", true);
+  } catch (err) {
+    document.getElementById("emergencyConfigError").textContent = err.message || "Erro ao salvar.";
+  }
+}
+
+function openEmergencyMessageModal() {
+  const project = _getProjectById(_currentEmergencyProjectId);
+  const existingMsg = document.getElementById("ecMessageText").value;
+  if (!existingMsg && project) {
+    // Pre-fill with default message based on country
+    const isBR = (project.country_code || "").toUpperCase() === "BR";
+    document.getElementById("ecMessageText").value = isBR ? _defaultEmergencyMessagePT() : _defaultEmergencyMessageEN();
+  }
+  _showAccidentModal("emergencyMessageModal");
+}
+
+async function saveEmergencyMessage() {
+  _hideAccidentModal("emergencyMessageModal");
+  _showAccidentModal("emergencyConfigModal");
+}
+
+function showEmergencyTermos() {
+  const terms = `Variáveis disponíveis na mensagem:\n\n` +
+    `<nome>         → Nome do usuário que acionou a ligação\n` +
+    `<hora local>   → Horário local (hh:mm) da abertura do acidente\n` +
+    `<data>         → Data (dd/mm/yyyy) da abertura do acidente\n` +
+    `<local>        → Local do acidente\n` +
+    `<projeto>      → Nome do projeto\n` +
+    `<administrador> → Telefone do Administrador (mobile_admin)\n` +
+    `<E-Mail do Serviço Local de Emergência> → E-mails cadastrados`;
+  alert(terms);
+}
+
+function _defaultEmergencyMessagePT() {
+  return `Alerta de acidente. Checking System. Alerta de acidente.
+Um acidente foi reportado pelo funcionário <nome> às <hora local> do dia <data>.
+O local reportado do acidente é <local> referente ao projeto <projeto>.
+O usuário solicita auxílio imediato no local.
+Caso haja dúvidas, ligue para o número <administrador>.
+Repetindo o número: <administrador>. Repetindo o número: <administrador>.
+Este alerta será enviado para o e-mail <E-Mail do Serviço Local de Emergência>.`;
+}
+
+function _defaultEmergencyMessageEN() {
+  return `Accident alert. Checking System. Accident alert.
+An accident was reported by employee <nome> at <hora local> on <data>.
+The reported location is <local> for project <projeto>.
+The user requests immediate assistance at the location.
+For inquiries, call <administrador>. Repeating: <administrador>. Repeating: <administrador>.
+An alert will be sent to <E-Mail do Serviço Local de Emergência>.`;
+}
+
+// ── Emergency call trigger & history ─────────────────────────────────
+
+async function _triggerEmergencyCall(accidentId) {
+  const notifEl = document.getElementById(`emergencyNotif-${accidentId}`);
+  if (notifEl) notifEl.textContent = "Aguardando…";
+  try {
+    const data = await postJson(`/api/admin/accidents/${accidentId}/emergency-call`, {});
+    if (notifEl) notifEl.textContent = `✅ Ligação N.º ${data.call_number_label} iniciada (${data.call_status}).`;
+  } catch (err) {
+    const msg = err.message || "Erro desconhecido";
+    if (notifEl) notifEl.textContent = `❌ Erro ao acionar: ${msg}`;
+  }
+}
+
+async function _openEmergencyCallHistory(accidentId) {
+  document.getElementById("emergencyCallHistoryBody").innerHTML = "";
+  document.getElementById("emergencyCallHistoryEmpty").classList.add("hidden");
+  try {
+    const logs = await fetchJson(`/api/admin/accidents/${accidentId}/call-logs`);
+    if (!logs.length) {
+      document.getElementById("emergencyCallHistoryEmpty").classList.remove("hidden");
+    } else {
+      const tbody = document.getElementById("emergencyCallHistoryBody");
+      logs.forEach(log => {
+        const tr = document.createElement("tr");
+        const duration = log.duration_seconds != null ? `${log.duration_seconds}s` : "-";
+        tr.innerHTML = `<td>${escapeHtml(log.call_number_label || String(log.call_number))}</td>
+          <td>${escapeHtml(log.call_status)}</td>
+          <td>${escapeHtml(log.created_at ? new Date(log.created_at).toLocaleString() : "-")}</td>
+          <td>${escapeHtml(log.triggered_by_label || "-")}</td>
+          <td>${escapeHtml(duration)}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+  } catch (err) {
+    document.getElementById("emergencyCallHistoryEmpty").textContent = "Erro ao carregar histórico.";
+    document.getElementById("emergencyCallHistoryEmpty").classList.remove("hidden");
+  }
+  _showAccidentModal("emergencyCallHistoryModal");
+}
+
+function _handleEmergencyCallUpdate(meta) {
+  const accidentId = meta.accident_id;
+  if (!accidentId) return;
+  const notifEl = document.getElementById(`emergencyNotif-${accidentId}`);
+  if (notifEl && meta.call_status) {
+    const statusLabels = {
+      queued: "Na fila", initiated: "Iniciada", ringing: "Chamando",
+      "in-progress": "Em andamento", completed: "Concluída",
+      failed: "Falhou", busy: "Ocupado", "no-answer": "Sem resposta", canceled: "Cancelada",
+    };
+    const label = statusLabels[meta.call_status] || meta.call_status;
+    notifEl.textContent = `📞 Ligação N.º ${meta.call_number || "?"}: ${label}`;
+  }
+}
+
 
 function scheduleAccidentRefresh() {
   if (accidentRefreshDebounceTimer !== null) clearTimeout(accidentRefreshDebounceTimer);

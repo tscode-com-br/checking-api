@@ -13,7 +13,7 @@ import zipfile
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font
 from sqlalchemy import select
 
 from ..database import SessionLocal
@@ -24,18 +24,34 @@ from .admin_updates import notify_admin_data_changed
 from .object_storage import _local_root, _use_remote, upload_stream
 from .time_utils import now_sgt
 
+# Column order in the XLSX (A=1, B=2, …)
+# A  Horário
+# B  Atividade/Local
+# C  Nome
+# D  Chave
+# E  Projetos
+# F  Local
+# G  Ciência
+# H  Zona de
+# I  Situação
+# J  Contato
+# K  Registros
 
 COLUMN_ORDER = [
     "Horário",
+    "Atividade/Local",
     "Nome",
     "Chave",
     "Projetos",
     "Local",
+    "Ciência",
     "Zona de",
     "Situação",
     "Contato",
     "Registros",
 ]
+
+_COL_REGISTROS = len(COLUMN_ORDER)  # 1-based index of "Registros" column
 
 
 def _slugify(value: str) -> str:
@@ -43,32 +59,59 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", value)[:60]
 
 
-def _build_xlsx(snapshot_rows, video_files_by_user: dict[int, list[str]]) -> BytesIO:
+def _build_xlsx(
+    accident: Accident,
+    snapshot_rows,
+    video_files_by_user_chave: dict[str, list[str]],
+) -> BytesIO:
     """Build the 'Situação de Pessoal' spreadsheet and return it as a BytesIO."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Situacao de Pessoal"
+
+    # Metadata header rows
+    bold = Font(bold=True)
+    header_rows = [
+        (f"Acidente N.º: {format_accident_number(accident.accident_number)}", ""),
+        (f"Projeto: {accident.project_name_snapshot}", ""),
+        (f"Local: {accident.location_name_snapshot}", ""),
+        (f"Data abertura: {accident.opened_at.strftime('%d/%m/%Y %H:%M') if accident.opened_at else ''}", ""),
+        (f"Descrição: {accident.description or '(sem descrição)'}", ""),
+        ("", ""),  # blank separator
+    ]
+    for label, _ in header_rows:
+        ws.append([label])
+        ws.cell(row=ws.max_row, column=1).font = bold
+
+    # Column headers
     ws.append(COLUMN_ORDER)
+    for col_idx in range(1, len(COLUMN_ORDER) + 1):
+        ws.cell(row=ws.max_row, column=col_idx).font = bold
 
     for row in snapshot_rows:
-        videos = video_files_by_user.get(row.user_id, [])
-        registros_text = "\n".join(f"Registros/{filename}" for filename in videos)
+        user_chave = row.chave
+        videos = video_files_by_user_chave.get(user_chave, [])
+        registros_text = "\n".join(f"Registros/{user_chave}/{filename}" for filename in videos)
+
+        ciencia = "Ciente" if row.awareness_status == "acknowledged" else "Aguardando"
+
         ws.append([
             row.event_time.isoformat(),
+            row.activity_local or "",
             row.name,
             row.chave,
             ", ".join(row.projects),
             row.local or "",
+            ciencia,
             row.zone,
             row.status,
             row.phone or "",
             registros_text,
         ])
-        cell = ws.cell(row=ws.max_row, column=9)
+        cell = ws.cell(row=ws.max_row, column=_COL_REGISTROS)
         cell.alignment = Alignment(wrap_text=True, vertical="top")
         if videos:
-            # Excel supports only one hyperlink per cell — link to first video.
-            cell.hyperlink = f"Registros/{videos[0]}"
+            cell.hyperlink = f"Registros/{user_chave}/{videos[0]}"
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -98,6 +141,10 @@ def build_and_attach_archive_for_accident(accident_id: int) -> None:
             return
 
         snapshot_rows = build_situation_rows(db, accident=accident)
+
+        # Build chave lookup from snapshot_rows
+        chave_by_user_id: dict[int, str] = {row.user_id: row.chave for row in snapshot_rows}
+
         videos = (
             db.execute(
                 select(AccidentVideoUpload).where(
@@ -108,26 +155,36 @@ def build_and_attach_archive_for_accident(accident_id: int) -> None:
             .all()
         )
 
-        # Build user_id -> filenames mapping and fetch raw bytes
-        video_files_by_user: dict[int, list[str]] = {}
-        video_payloads: dict[str, bytes] = {}
-        for video in videos:
-            ext = video.content_type.split("/")[-1]
-            if ext == "quicktime":
-                ext = "mov"
-            filename = f"{video.user_id}-{_slugify(video.idempotency_key)}.{ext}"
-            video_files_by_user.setdefault(video.user_id, []).append(filename)
-            video_payloads[filename] = _read_video_bytes(video.object_key)
+        # Build user_chave -> [filename, ...] and ZIP payloads
+        # Filenames use zero-padded index within each user's videos
+        video_files_by_user_chave: dict[str, list[str]] = {}
+        video_payloads: dict[str, bytes] = {}  # key = full zip path
 
-        xlsx_buffer = _build_xlsx(snapshot_rows, video_files_by_user)
+        # Group videos by user to generate per-user sequential index
+        videos_by_user: dict[int, list[AccidentVideoUpload]] = {}
+        for video in videos:
+            videos_by_user.setdefault(video.user_id, []).append(video)
+
+        for user_id, user_videos in videos_by_user.items():
+            user_chave = chave_by_user_id.get(user_id) or str(user_id)
+            for idx, video in enumerate(user_videos, start=1):
+                ext = video.content_type.split("/")[-1]
+                if ext == "quicktime":
+                    ext = "mov"
+                filename = f"{idx:02d}_{_slugify(video.idempotency_key)}.{ext}"
+                zip_path = f"Registros/{user_chave}/{filename}"
+                video_files_by_user_chave.setdefault(user_chave, []).append(filename)
+                video_payloads[zip_path] = _read_video_bytes(video.object_key)
+
+        xlsx_buffer = _build_xlsx(accident, snapshot_rows, video_files_by_user_chave)
 
         # Build ZIP
         zip_buffer = BytesIO()
         xlsx_name = f"{format_accident_number(accident.accident_number)}.xlsx"
         with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(xlsx_name, xlsx_buffer.getvalue())
-            for filename, payload in video_payloads.items():
-                zf.writestr(f"Registros/{filename}", payload)
+            for zip_path, payload in video_payloads.items():
+                zf.writestr(zip_path, payload)
         zip_buffer.seek(0)
 
         # Upload XLSX and ZIP to storage
@@ -146,7 +203,8 @@ def build_and_attach_archive_for_accident(accident_id: int) -> None:
             content_type="application/zip",
         )
 
-        size_bytes = len(zip_buffer.getvalue())
+        size_bytes = zip_buffer.seek(0, 2) or 0
+        zip_buffer.seek(0)
 
         archive = AccidentArchive(
             accident_id=accident.id,
@@ -162,7 +220,6 @@ def build_and_attach_archive_for_accident(accident_id: int) -> None:
         db.add(archive)
         db.commit()
 
-    # Re-publish so the UI can refresh with archive_ready=True
     notify_admin_data_changed(
         "accident_closed",
         metadata={"accident_id": accident_id, "archive_ready": True},

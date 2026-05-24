@@ -21,6 +21,12 @@ class Project(Base):
     forms_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
     transport_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
     emergency_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    twilio_account_sid: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    twilio_auth_token: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    twilio_phone_number: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    mobile_admin: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    email_local_emergency: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    emergency_call_message: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     inactivity_days_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default=text("60"))
     mixed_zone_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30, server_default=text("30"))
     minimum_checkout_distance_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=2000, server_default=text("2000"))
@@ -749,15 +755,8 @@ class Accident(Base):
     __table_args__ = (
         UniqueConstraint("accident_number", name="uq_accidents_accident_number"),
         Index(
-            "ix_accidents_single_active",
-            "closed_at",
-            unique=True,
-            postgresql_where=text("closed_at IS NULL"),
-            sqlite_where=text("closed_at IS NULL"),
-        ),
-        Index(
-            "ix_accidents_single_active_guard",
-            text("(1)"),
+            "ix_accidents_single_active_per_project",
+            "project_id",
             unique=True,
             postgresql_where=text("closed_at IS NULL"),
             sqlite_where=text("closed_at IS NULL"),
@@ -789,6 +788,7 @@ class Accident(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     closed_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     archive_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -816,6 +816,10 @@ class AccidentUserReport(Base):
             "status IN ('waiting', 'ok', 'help')",
             name="ck_accident_user_reports_status_allowed",
         ),
+        CheckConstraint(
+            "awareness_status IN ('waiting', 'acknowledged')",
+            name="ck_accident_user_reports_awareness_allowed",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -831,6 +835,7 @@ class AccidentUserReport(Base):
     reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_checkin_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_action_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    awareness_status: Mapped[str] = mapped_column(String(16), nullable=False, default="waiting", server_default="waiting")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -868,6 +873,39 @@ class AccidentArchive(Base):
     zip_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AccidentCallLog(Base):
+    __tablename__ = "accident_call_logs"
+    __table_args__ = (
+        UniqueConstraint("call_number", name="uq_accident_call_logs_call_number"),
+        CheckConstraint(
+            "call_status IN ('queued','initiated','ringing','in-progress','completed',"
+            "'failed','busy','no-answer','canceled')",
+            name="ck_accident_call_logs_status_allowed",
+        ),
+        CheckConstraint(
+            "ended_by IN ('system','receiver') OR ended_by IS NULL",
+            name="ck_accident_call_logs_ended_by",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    call_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    call_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    accident_id: Mapped[int | None] = mapped_column(ForeignKey("accidents.id", ondelete="SET NULL"), nullable=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    triggered_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    triggered_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"), nullable=True)
+    to_phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    from_phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    call_status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", server_default="queued")
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ended_by: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    message_twiml: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class EmailDeliveryLog(Base):

@@ -252,7 +252,7 @@ def test_archive_zip_contains_videos_subfolder(tmp_path: Path):
     registros = [n for n in names if n.startswith("Registros/")]
     assert len(registros) == 1, f"Expected 1 Registros/ entry, got {names}"
     expected_slug = _slugify("idem-abc")
-    assert registros[0] == f"Registros/{user.id}-{expected_slug}.mp4", registros[0]
+    assert registros[0] == f"Registros/{user.chave}/01_{expected_slug}.mp4", registros[0]
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +262,16 @@ def test_archive_zip_contains_videos_subfolder(tmp_path: Path):
 
 def test_xlsx_columns_match_spec():
     """The XLSX first row must exactly match COLUMN_ORDER."""
+    from types import SimpleNamespace
     from sistema.app.schemas import SituacaoPessoalRow
 
+    accident_stub = SimpleNamespace(
+        accident_number=1,
+        project_name_snapshot="Test Project",
+        location_name_snapshot="Test Location",
+        opened_at=_NOW,
+        description="",
+    )
     row = SituacaoPessoalRow(
         user_id=1,
         event_time=_NOW,
@@ -278,10 +286,11 @@ def test_xlsx_columns_match_spec():
         priority=4,
         row_color="light-green",
     )
-    buf = _build_xlsx([row], video_files_by_user={})
+    buf = _build_xlsx(accident_stub, [row], video_files_by_user_chave={})
     wb = load_workbook(buf)
     ws = wb.active
-    header = [ws.cell(row=1, column=i + 1).value for i in range(len(COLUMN_ORDER))]
+    # 5 metadata rows + 1 blank separator = 6 rows before the column header row (row 7)
+    header = [ws.cell(row=7, column=i + 1).value for i in range(len(COLUMN_ORDER))]
     assert header == COLUMN_ORDER
 
 
@@ -292,8 +301,16 @@ def test_xlsx_columns_match_spec():
 
 def test_xlsx_handles_zero_videos():
     """XLSX built without any videos must still open correctly with empty Registros cell."""
+    from types import SimpleNamespace
     from sistema.app.schemas import SituacaoPessoalRow
 
+    accident_stub = SimpleNamespace(
+        accident_number=2,
+        project_name_snapshot="Test Project",
+        location_name_snapshot="Test Location",
+        opened_at=_NOW,
+        description="",
+    )
     row = SituacaoPessoalRow(
         user_id=2,
         event_time=_NOW,
@@ -306,13 +323,14 @@ def test_xlsx_handles_zero_videos():
         phone=None,
         videos=[],
         priority=3,
-        row_color="turquoise",
+        row_color="light-blue",
     )
-    buf = _build_xlsx([row], video_files_by_user={})
+    buf = _build_xlsx(accident_stub, [row], video_files_by_user_chave={})
     wb = load_workbook(buf)
     ws = wb.active
-    # Data row is row 2
-    registros_cell = ws.cell(row=2, column=9).value
+    # 5 metadata rows + 1 blank separator + 1 column header = data starts at row 8
+    registros_col = COLUMN_ORDER.index("Registros") + 1
+    registros_cell = ws.cell(row=8, column=registros_col).value
     assert registros_cell == "" or registros_cell is None
 
 
