@@ -122,12 +122,13 @@ def build_situation_rows(
         )
 
     def _sort_key(row: SituacaoPessoalRow) -> tuple:
-        if row.section == 4:
+        if row.section in (3, 4):
             acknowledged = 0 if row.awareness_status == "acknowledged" else 1
             has_checkin = 0 if (row.activity_local and "Check-In" in row.activity_local) else 1
-            return (row.section, acknowledged, has_checkin, row.name)
-        # Within sections 1-3: sort by section, then priority, then most-recent first
-        return (row.section, row.priority, -row.event_time.timestamp(), row.name)
+            event_ts = -row.event_time.timestamp()
+            return (row.section, acknowledged, event_ts, has_checkin, row.name)
+        # Within sections 1-2: sort by section, then priority, then most-recent first
+        return (row.section, row.priority, -row.event_time.timestamp(), 0, row.name)
 
     rows.sort(key=_sort_key)
     return rows

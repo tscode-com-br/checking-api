@@ -7003,6 +7003,10 @@ function bindActions() {
       }
     });
   }
+  const accidentReportNewBtn = document.getElementById("accidentReportNewButton");
+  if (accidentReportNewBtn) {
+    accidentReportNewBtn.addEventListener("click", () => openAccidentWizard());
+  }
   document.getElementById("accidentWizardProjectCancel").addEventListener("click", () => _hideAccidentModal("accidentWizardProjectModal"));
   document.getElementById("accidentWizardProjectAdvance").addEventListener("click", advanceWizardToLocations);
   document.getElementById("accidentWizardLocationCancel").addEventListener("click", () => {
@@ -7088,10 +7092,18 @@ function applyAccidentTheme(isActive) {
 
 function updateAccidentButton(state) {
   const btn = document.getElementById("accidentToggleButton");
+  const newBtn = document.getElementById("accidentReportNewButton");
   if (!btn) return;
   btn.classList.remove("hidden");
   btn.setAttribute("aria-pressed", state.is_active ? "true" : "false");
-  btn.querySelector(".accident-button-label").textContent = state.is_active ? "Acidente Reportado" : "Reportar Acidente";
+  btn.querySelector(".accident-button-label").textContent = state.is_active ? "Finalizar Acidente" : "Reportar Acidente";
+  if (newBtn) {
+    if (state.is_active) {
+      newBtn.classList.remove("hidden");
+    } else {
+      newBtn.classList.add("hidden");
+    }
+  }
 }
 
 function renderAccidentTab(state) {
@@ -7105,16 +7117,19 @@ function renderAccidentTab(state) {
     document.getElementById("accidentSectionCount").textContent = `${total} registros`;
     if (accidents.length === 1) {
       const a = accidents[0].accident;
+      tabBtn.textContent = `Acidente ${a.project_name}-${a.accident_number_label}`;
       document.getElementById("accidentSectionTitle").textContent = `Acidente ${a.accident_number_label}`;
       document.getElementById("accidentSectionMeta").textContent =
         `Projeto ${a.project_name} — Local ${a.location_name} — Aberto por ${a.opened_by_label} em ${new Date(a.opened_at).toLocaleString()}`;
     } else {
+      tabBtn.textContent = `Acidente (${accidents.length})`;
       document.getElementById("accidentSectionTitle").textContent = `${accidents.length} Acidentes em Curso`;
       document.getElementById("accidentSectionMeta").textContent = "";
     }
     _renderAccidentSubTabs(accidents);
   } else {
     tabBtn.classList.add("hidden");
+    tabBtn.textContent = "Acidente";
     document.getElementById("accidentSubTabs").hidden = true;
     document.getElementById("accidentPanels").innerHTML = "";
     if (tabBtn.classList.contains("active")) {
@@ -7138,7 +7153,7 @@ function _renderAccidentSubTabs(accidents) {
   subTabsEl.innerHTML = accidents.map(item => {
     const a = item.accident;
     const active = a.id === defaultId ? " active" : "";
-    return `<button class="accident-sub-tab${active}" data-accident-tab="${a.id}">${escapeHtml(a.project_name)}-${escapeHtml(a.accident_number_label)}</button>`;
+    return `<button class="accident-sub-tab${active}" data-accident-tab="${a.id}">Acidente ${escapeHtml(a.project_name)}-${escapeHtml(a.accident_number_label)}</button>`;
   }).join("");
 
   // Render panels

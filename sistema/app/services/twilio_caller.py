@@ -113,9 +113,8 @@ def _substitute_placeholders(
 
 
 def _next_call_number(db: Session) -> int:
-    """Concurrency-safe: lock the max row before computing next."""
     result = db.execute(
-        select(func.coalesce(func.max(AccidentCallLog.call_number), 0) + 1).with_for_update()
+        select(func.coalesce(func.max(AccidentCallLog.call_number), 0) + 1)
     ).scalar()
     return int(result)
 
