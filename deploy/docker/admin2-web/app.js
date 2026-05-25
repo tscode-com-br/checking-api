@@ -2189,6 +2189,14 @@ function showAuthShell(message = "", kind = "info") {
   applyAccidentTheme(false);
   stopRealtimeUpdates();
   stopAutoRefresh();
+  // Wipe the in-memory emergency notification buffers so the next session
+  // re-hydrates fresh from the persisted feed.
+  _emergencyNotifications.clear();
+  _emergencyHydratedAccidents.clear();
+  _emergencyServerNotificationIds.clear();
+  _emergencyRequestedTimers.forEach(handle => clearTimeout(handle));
+  _emergencyRequestedTimers.clear();
+  _emergencySeenStatusByCall.clear();
   setAuthStatus(message, kind);
   resetReportsView();
   clearStatus();
@@ -7162,6 +7170,16 @@ function _renderAccidentSubTabs(accidents) {
     const visible = a.id === defaultId ? "" : ' style="display:none"';
     return `<div class="accident-panel" id="accidentPanel-${a.id}"${visible}>${_renderSingleAccidentPanel(item)}</div>`;
   }).join("");
+
+  // Repaint the in-memory emergency notification feed for each accident — the
+  // panel HTML was just rebuilt, but SSE-driven notifications must survive
+  // partial re-renders (see _emergencyNotifications). Also fire-and-forget
+  // the one-time hydration from the persisted feed so the admin sees the
+  // history after a page refresh (phase 8.2).
+  accidents.forEach(item => {
+    _renderEmergencyNotifications(item.accident.id);
+    _hydrateEmergencyNotifications(item.accident.id).catch(() => {});
+  });
 }
 
 function _renderSingleAccidentPanel(item) {
@@ -7332,9 +7350,22 @@ async function openAccidentWizard() {
   // Refresh state first so the active_accidents list is current (Bug 1 fix)
   await fetchAccidentState().catch(() => {});
   accidentWizardData = { projectId: null, projectName: null, locationId: null, locationName: null, locationRegistered: null, description: "" };
-  const advanceBtn = document.getElementById("accidentWizardProjectAdvance");
-  if (advanceBtn) advanceBtn.disabled = true;
+  // Defensive reset of every wizard button. Without this, a previous successful
+  // submission would leave Confirmar permanently disabled (the modal is hidden
+  // before the disabled flag is cleared), forcing the admin to refresh the page
+  // to open a second accident.
+  const projectAdvance = document.getElementById("accidentWizardProjectAdvance");
+  if (projectAdvance) projectAdvance.disabled = true;
+  const locationAdvance = document.getElementById("accidentWizardLocationAdvance");
+  if (locationAdvance) locationAdvance.disabled = true;
+  const descriptionAdvance = document.getElementById("accidentWizardDescriptionAdvance");
+  if (descriptionAdvance) descriptionAdvance.disabled = false;
+  const confirmSubmit = document.getElementById("accidentWizardConfirmSubmit");
+  if (confirmSubmit) confirmSubmit.disabled = false;
   document.getElementById("accidentWizardProjectError").textContent = "";
+  document.getElementById("accidentWizardLocationError").textContent = "";
+  document.getElementById("accidentWizardDescriptionError").textContent = "";
+  document.getElementById("accidentWizardConfirmError").textContent = "";
   try {
     const response = await fetch("/api/admin/accidents/wizard/projects", { credentials: "include" });
     if (!response.ok) {
@@ -7453,6 +7484,9 @@ function advanceWizardToConfirm() {
 async function submitAccidentOpen() {
   const submitBtn = document.getElementById("accidentWizardConfirmSubmit");
   if (submitBtn) submitBtn.disabled = true;
+  // try/finally guarantees the button is always re-enabled before this function
+  // returns — including the success path where we hide the modal. Otherwise the
+  // next time the wizard opens, Confirmar would still be disabled.
   try {
     const body = { project_id: accidentWizardData.projectId };
     if (accidentWizardData.locationId !== null && accidentWizardData.locationId !== undefined) {
@@ -7473,7 +7507,6 @@ async function submitAccidentOpen() {
       const err = await response.json().catch(() => ({ detail: "Erro ao abrir acidente." }));
       document.getElementById("accidentWizardConfirmError").textContent =
         _formatAccidentErrorDetail(err.detail) || "Erro ao abrir acidente.";
-      if (submitBtn) submitBtn.disabled = false;
       return;
     }
     _hideAccidentModal("accidentWizardConfirmModal");
@@ -7482,6 +7515,7 @@ async function submitAccidentOpen() {
   } catch (err) {
     console.warn("submitAccidentOpen failed", err);
     document.getElementById("accidentWizardConfirmError").textContent = "Erro de conexão.";
+  } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
@@ -7645,17 +7679,210 @@ For inquiries, call <administrador>. Repeating: <administrador>. Repeating: <adm
 An alert will be sent to <E-Mail do Serviço Local de Emergência>.`;
 }
 
-// ── Emergency call trigger & history ─────────────────────────────────
+// ── Emergency call trigger, notification feed & history ───────────────
+//
+// Item 3.2.5 of docs/temp002_alteracoes.txt requires a persistent notification
+// bar that stacks status lines for the emergency call (not the previous "last
+// status wins" overlay). Each SSE event arrives with a canonical metadata
+// shape (see twilio_caller._build_call_notification_metadata) and is rendered
+// by _buildNotificationLine into the localized pt-BR text.
+//
+// The buffer survives partial re-renders of the accident panel: when the panel
+// HTML is regenerated, _renderSingleAccidentPanel calls
+// _renderEmergencyNotifications to repaint the <ul> from the in-memory map.
+
+const _emergencyNotifications = new Map();        // accidentId → [{ts, line, statusEvent, callNumber, id?}]
+const _emergencyRequestedTimers = new Map();      // callNumber → setTimeout handle for the 30s fallback
+const _emergencySeenStatusByCall = new Map();     // callNumber → Set<statusEvent> already received
+const _emergencyHydratedAccidents = new Set();    // accidentIds whose feed was already loaded from /notifications
+const _emergencyServerNotificationIds = new Map(); // accidentId → Set<notification.id> (dedup SSE vs server fetch)
+const _EMERGENCY_FALLBACK_DELAY_MS = 30000;
+const _EMERGENCY_MAX_NOTIFICATIONS_PER_ACCIDENT = 200;
+
+function _formatNotificationTimestamp(value) {
+  let date = null;
+  if (value instanceof Date) date = value;
+  else if (typeof value === "string" && value) date = new Date(value);
+  if (!date || Number.isNaN(date.getTime())) date = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function _formatCallNumberLabel(meta) {
+  if (meta && meta.call_number_label) return String(meta.call_number_label);
+  if (meta && meta.call_number != null) return String(meta.call_number).padStart(6, "0");
+  return "000000";
+}
+
+function _buildNotificationLine(meta) {
+  const ts = _formatNotificationTimestamp(meta && meta.occurred_at);
+  const label = _formatCallNumberLabel(meta);
+  const project = (meta && meta.project_name) || "(projeto desconhecido)";
+  const triggererName = (meta && meta.triggered_by_name) || "(desconhecido)";
+  const triggererChave = (meta && meta.triggered_by_chave) || "";
+  const triggererLabel = triggererChave
+    ? `${triggererName} (${triggererChave})`
+    : triggererName;
+  const channel = meta && meta.triggered_by_role === "user"
+    ? "através da aplicação web"
+    : "através do website do administrador";
+  const duration = (meta && meta.duration_seconds != null) ? meta.duration_seconds : null;
+  const endedBy = (meta && meta.ended_by) || "system";
+
+  switch (meta && meta.status_event) {
+    case "requested":
+      return `(${ts}) Ligação ${label} solicitada por ${triggererLabel}, ${channel}, para o projeto ${project}.`;
+    case "initiated":
+    case "ringing":
+      return `(${ts}) A ligação ${label} está sendo completada.`;
+    case "answered":
+      return `(${ts}) A ligação ${label} foi atendida.`;
+    case "completed": {
+      const finalizedBy = endedBy === "receiver" ? "pelo receptor" : "pelo sistema";
+      const durationPart = duration != null ? ` Duração total: ${duration} segundos.` : "";
+      return `(${ts}) A ligação ${label} foi finalizada ${finalizedBy}.${durationPart}`;
+    }
+    case "fallback_success":
+      return `(${ts}) A ligação ${label} foi solicitada com sucesso.`;
+    case "failed":
+      return `(${ts}) A ligação ${label} falhou.`;
+    case "busy":
+      return `(${ts}) A ligação ${label} terminou — destino ocupado.`;
+    case "no_answer":
+      return `(${ts}) A ligação ${label} terminou sem resposta.`;
+    case "canceled":
+      return `(${ts}) A ligação ${label} foi cancelada.`;
+    default: {
+      const status = (meta && meta.call_status) || "atualização";
+      return `(${ts}) Ligação ${label}: ${status}.`;
+    }
+  }
+}
+
+function _appendEmergencyNotification(accidentId, meta) {
+  if (!accidentId) return;
+  const line = _buildNotificationLine(meta);
+  const list = _emergencyNotifications.get(accidentId) || [];
+  list.push({
+    ts: (meta && meta.occurred_at) || new Date().toISOString(),
+    line,
+    statusEvent: meta && meta.status_event,
+    callNumber: meta && meta.call_number,
+  });
+  if (list.length > _EMERGENCY_MAX_NOTIFICATIONS_PER_ACCIDENT) {
+    list.splice(0, list.length - _EMERGENCY_MAX_NOTIFICATIONS_PER_ACCIDENT);
+  }
+  _emergencyNotifications.set(accidentId, list);
+  _renderEmergencyNotifications(accidentId);
+}
+
+async function _hydrateEmergencyNotifications(accidentId) {
+  // Fetches the persisted notification feed for `accidentId` once per session
+  // (per accident). Subsequent SSE pushes use _appendEmergencyNotification.
+  // The notification.id is tracked to deduplicate live SSE events that arrive
+  // after a fetch (e.g. browser refresh during an active call).
+  if (!accidentId) return;
+  if (_emergencyHydratedAccidents.has(accidentId)) return;
+  _emergencyHydratedAccidents.add(accidentId);
+  try {
+    const rows = await fetchJson(`/api/admin/accidents/${accidentId}/notifications`);
+    if (!Array.isArray(rows)) return;
+    const seen = _emergencyServerNotificationIds.get(accidentId) || new Set();
+    const list = _emergencyNotifications.get(accidentId) || [];
+    rows.forEach(row => {
+      if (row && row.id != null) seen.add(row.id);
+      list.push({
+        ts: row.occurred_at || new Date().toISOString(),
+        line: row.message_pt || "",
+        statusEvent: row.event_type || "",
+        callNumber: null,
+        id: row.id,
+      });
+    });
+    // Keep oldest at the bottom, newest at the top when rendered (see _renderEmergencyNotifications).
+    list.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    if (list.length > _EMERGENCY_MAX_NOTIFICATIONS_PER_ACCIDENT) {
+      list.splice(0, list.length - _EMERGENCY_MAX_NOTIFICATIONS_PER_ACCIDENT);
+    }
+    _emergencyNotifications.set(accidentId, list);
+    _emergencyServerNotificationIds.set(accidentId, seen);
+    _renderEmergencyNotifications(accidentId);
+  } catch (err) {
+    // Hydration failure is non-fatal — the live SSE feed still works. Allow a
+    // retry on the next render so a transient network error does not freeze
+    // the buffer empty forever.
+    _emergencyHydratedAccidents.delete(accidentId);
+  }
+}
+
+function _renderEmergencyNotifications(accidentId) {
+  const notifEl = document.getElementById(`emergencyNotif-${accidentId}`);
+  if (!notifEl) return;
+  const list = _emergencyNotifications.get(accidentId) || [];
+  if (!list.length) {
+    notifEl.innerHTML = "";
+    return;
+  }
+  // Newest at the top so the latest update is always visible without scrolling.
+  const items = list.slice().reverse().map(item =>
+    `<li class="emergency-notification-line">${escapeHtml(item.line)}</li>`
+  ).join("");
+  notifEl.innerHTML = `<ul class="emergency-notification-list">${items}</ul>`;
+}
+
+function _scheduleEmergencyFallback(meta) {
+  if (!meta || meta.status_event !== "requested") return;
+  const callNumber = meta.call_number;
+  if (callNumber == null) return;
+  // Replace any previous pending timer for this call.
+  if (_emergencyRequestedTimers.has(callNumber)) {
+    clearTimeout(_emergencyRequestedTimers.get(callNumber));
+  }
+  const handle = setTimeout(() => {
+    _emergencyRequestedTimers.delete(callNumber);
+    const seen = _emergencySeenStatusByCall.get(callNumber) || new Set();
+    // If we still have not received any status update past 'requested', emit
+    // the item 5.5.1 confirmation so the admin sees the call did go through.
+    const followupEvents = ["initiated", "ringing", "answered", "completed",
+                            "failed", "busy", "no_answer", "canceled"];
+    if (!followupEvents.some(ev => seen.has(ev))) {
+      _appendEmergencyNotification(meta.accident_id, {
+        ...meta,
+        status_event: "fallback_success",
+        occurred_at: new Date().toISOString(),
+      });
+    }
+  }, _EMERGENCY_FALLBACK_DELAY_MS);
+  _emergencyRequestedTimers.set(callNumber, handle);
+}
+
+function _markEmergencyStatusSeen(meta) {
+  if (!meta || meta.call_number == null || !meta.status_event) return;
+  const set = _emergencySeenStatusByCall.get(meta.call_number) || new Set();
+  set.add(meta.status_event);
+  _emergencySeenStatusByCall.set(meta.call_number, set);
+}
 
 async function _triggerEmergencyCall(accidentId) {
-  const notifEl = document.getElementById(`emergencyNotif-${accidentId}`);
-  if (notifEl) notifEl.textContent = "Aguardando…";
+  // The HTTP response is informational; the actual notification feed is driven
+  // by the SSE that the backend emits inside make_emergency_call (status_event
+  // 'requested') and by subsequent Twilio status callbacks.
   try {
-    const data = await postJson(`/api/admin/accidents/${accidentId}/emergency-call`, {});
-    if (notifEl) notifEl.textContent = `✅ Ligação N.º ${data.call_number_label} iniciada (${data.call_status}).`;
+    await postJson(`/api/admin/accidents/${accidentId}/emergency-call`, {});
   } catch (err) {
     const msg = err.message || "Erro desconhecido";
-    if (notifEl) notifEl.textContent = `❌ Erro ao acionar: ${msg}`;
+    // Surface the error as a notification line in the same feed, so the admin
+    // sees something even when the backend rejects the request.
+    _appendEmergencyNotification(accidentId, {
+      accident_id: accidentId,
+      status_event: "failed",
+      occurred_at: new Date().toISOString(),
+      call_number: 0,
+      call_number_label: "------",
+      project_name: "",
+      triggered_by_name: msg,
+    });
   }
 }
 
@@ -7671,7 +7898,7 @@ async function _openEmergencyCallHistory(accidentId) {
       logs.forEach(log => {
         const tr = document.createElement("tr");
         const duration = log.duration_seconds != null ? `${log.duration_seconds}s` : "-";
-        tr.innerHTML = `<td>${escapeHtml(log.call_number_label || String(log.call_number))}</td>
+        tr.innerHTML = `<td>${escapeHtml(log.call_number_label || String(log.call_number).padStart(6, "0"))}</td>
           <td>${escapeHtml(log.call_status)}</td>
           <td>${escapeHtml(log.created_at ? new Date(log.created_at).toLocaleString() : "-")}</td>
           <td>${escapeHtml(log.triggered_by_label || "-")}</td>
@@ -7687,18 +7914,11 @@ async function _openEmergencyCallHistory(accidentId) {
 }
 
 function _handleEmergencyCallUpdate(meta) {
-  const accidentId = meta.accident_id;
+  const accidentId = meta && meta.accident_id;
   if (!accidentId) return;
-  const notifEl = document.getElementById(`emergencyNotif-${accidentId}`);
-  if (notifEl && meta.call_status) {
-    const statusLabels = {
-      queued: "Na fila", initiated: "Iniciada", ringing: "Chamando",
-      "in-progress": "Em andamento", completed: "Concluída",
-      failed: "Falhou", busy: "Ocupado", "no-answer": "Sem resposta", canceled: "Cancelada",
-    };
-    const label = statusLabels[meta.call_status] || meta.call_status;
-    notifEl.textContent = `📞 Ligação N.º ${meta.call_number || "?"}: ${label}`;
-  }
+  _markEmergencyStatusSeen(meta);
+  _appendEmergencyNotification(accidentId, meta);
+  _scheduleEmergencyFallback(meta);
 }
 
 

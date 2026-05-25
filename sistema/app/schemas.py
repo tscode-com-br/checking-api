@@ -4423,15 +4423,33 @@ class WebAccidentUserReport(BaseModel):
     reported_at: datetime | None
 
 
+class WebAccidentActiveItem(BaseModel):
+    accident_id: int
+    accident_number_label: str
+    project_id: int
+    project_name: str
+    location_name: str
+    description: str | None = None
+    awareness_status: str
+    current_user_report: WebAccidentUserReport | None = None
+
+
 class WebAccidentStateResponse(BaseModel):
     is_active: bool
+    # Legacy / compatibility fields, populated from the FIRST item in
+    # active_accidents when there is at least one. Keep these so older clients
+    # continue to work unchanged.
     accident_id: int | None = None
     accident_number_label: str | None = None
+    project_id: int | None = None
     project_name: str | None = None
     location_name: str | None = None
     description: str | None = None
     awareness_status: str | None = None
     current_user_report: WebAccidentUserReport | None = None
+    # New: one entry per active accident relevant to the authenticated user
+    # (typically filtered by their project memberships). Empty when is_active=False.
+    active_accidents: list[WebAccidentActiveItem] = []
 
 
 class WebAccidentOpenRequest(BaseModel):
@@ -4495,6 +4513,10 @@ class AccidentClosedListResponse(BaseModel):
 
 class WebAccidentAcknowledgeRequest(BaseModel):
     chave: str
+    # Optional: when present, acknowledge this specific accident. When omitted
+    # (None), the endpoint falls back to the legacy behaviour and acknowledges
+    # the first active accident matching the user's projects.
+    accident_id: int | None = None
 
     @field_validator("chave", mode="before")
     @classmethod
@@ -4513,6 +4535,19 @@ class EmergencyCallResponse(BaseModel):
     call_sid: str | None
     call_status: str
     message: str
+
+
+class AccidentCallNotificationRow(BaseModel):
+    """A persisted notification line for an emergency call (Phase 8.2)."""
+    id: int
+    call_log_id: int
+    accident_id: int
+    event_type: str
+    message_pt: str
+    occurred_at: datetime
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class AccidentCallLogRow(BaseModel):

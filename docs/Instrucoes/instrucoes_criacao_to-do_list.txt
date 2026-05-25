@@ -1,0 +1,14 @@
+Para que cada item de to-do seja consumível por um agente sem contexto, mantenha esta estrutura:
+
+1. **Linha 1**: "Você é um agente de IA implementando/corrigindo/validando ... no projeto 'Checking'. Raiz: c:/dev/projetos/checkcheck."
+2. **OBJETIVO** — descrição curta do que entregar.
+3. **ARQUIVOS A ESTUDAR ANTES DE EDITAR** — lista absoluta e completa.
+4. **ARQUIVOS A MODIFICAR** — lista esperada (pode mudar).
+5. **PASSOS** — numerados, com detalhes mecânicos.
+6. **ANTI-PADRÕES** — armadilhas conhecidas.
+7. **CRITÉRIO DE ACEITAÇÃO** — funcional, testável.
+8. **MEMÓRIA / NOTAS PÓS-FASE** — o que registrar para futuras conversas.
+
+> Os agentes não devem **assumir** que migrations 0060+ existem — sempre fazer Glob `alembic/versions/*.py` para descobrir o próximo número livre.
+>
+> Os agentes não devem **commitar** sem autorização explícita do usuário; finalizar cada fase com `git status` e aguardar instruções.

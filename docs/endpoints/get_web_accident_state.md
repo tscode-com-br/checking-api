@@ -2,28 +2,31 @@
 
 ## Visão Geral
 
-Retorna o estado do Modo Acidente do ponto de vista do usuário autenticado no Check Web. Se há um acidente ativo, inclui o relatório atual do usuário (zona e status informados).
+Retorna o estado atual do Modo Acidente do ponto de vista do usuário autenticado. Indica se há um ou mais acidentes ativos, qual é o status de awareness do usuário (se já reconheceu o acidente), e qual é o relatório de situação já enviado (zona e status de segurança).
 
-| Atributo          | Valor                                               |
-|-------------------|-----------------------------------------------------|
-| **Método**        | `GET`                                               |
-| **Path**          | `/api/web/check/accident/state`                     |
-| **Autenticação**  | Sessão web (cookie `web_session_id`) + parâmetro `chave` |
-| **Formato**       | `application/json`                                  |
+O endpoint prioriza acidentes cujo projeto pertença aos projetos cadastrados do usuário. Caso nenhum acidente corresponda ao projeto do usuário, retorna todos os acidentes ativos (comportamento legado de fallback global).
+
+| Atributo         | Valor                                          |
+|------------------|------------------------------------------------|
+| **Método**       | `GET`                                          |
+| **Path**         | `/api/web/check/accident/state`                |
+| **Autenticação** | Cookie de sessão + chave deve corresponder     |
 
 ---
 
 ## Autenticação
 
-Requer sessão web válida associada ao `chave` informado. O `chave` deve coincidir com o usuário da sessão ativa.
+Requer cookie de sessão `web_user_chave`. O valor do cookie deve coincidir com o parâmetro `chave`. Em caso de falha retorna `401`.
 
 ---
 
-## Parâmetros de Query
+## Parâmetros
 
-| Parâmetro | Tipo     | Obrigatório | Descrição                                    |
-|-----------|----------|-------------|----------------------------------------------|
-| `chave`   | `string` | ✅           | Código de 4 caracteres alfanuméricos do usuário |
+### Query Parameters
+
+| Parâmetro | Tipo   | Obrigatório | Descrição                                                    |
+|-----------|--------|-------------|--------------------------------------------------------------|
+| `chave`   | string | Sim         | Chave do usuário (4 caracteres alfanuméricos, ex.: `"AB12"`) |
 
 ---
 
@@ -34,69 +37,99 @@ Requer sessão web válida associada ao `chave` informado. O `chave` deve coinci
 ```json
 {
   "is_active": false,
+  "accident_id": null,
   "accident_number_label": null,
+  "project_id": null,
   "project_name": null,
   "location_name": null,
-  "current_user_report": null
+  "description": null,
+  "awareness_status": null,
+  "current_user_report": null,
+  "active_accidents": []
 }
 ```
 
-### Com acidente ativo, usuário sem relatório
+### Com acidente ativo
 
 ```json
 {
   "is_active": true,
-  "accident_number_label": "0004",
-  "project_name": "PROJETO ALFA",
-  "location_name": "Bloco C",
-  "current_user_report": null
-}
-```
-
-### Com acidente ativo, usuário com relatório
-
-```json
-{
-  "is_active": true,
-  "accident_number_label": "0004",
-  "project_name": "PROJETO ALFA",
-  "location_name": "Bloco C",
+  "accident_id": 5,
+  "accident_number_label": "ACC-0005",
+  "project_id": 3,
+  "project_name": "Projeto Norte",
+  "location_name": "Área de Extração B",
+  "description": "Acidente com equipamento pesado na via principal.",
+  "awareness_status": "acknowledged",
   "current_user_report": {
     "zone": "safety",
     "status": "ok",
-    "reported_at": "2026-05-18T09:35:00+08:00"
-  }
+    "reported_at": "2026-05-25T14:32:10+08:00"
+  },
+  "active_accidents": [
+    {
+      "accident_id": 5,
+      "accident_number_label": "ACC-0005",
+      "project_id": 3,
+      "project_name": "Projeto Norte",
+      "location_name": "Área de Extração B",
+      "description": "Acidente com equipamento pesado na via principal.",
+      "awareness_status": "acknowledged",
+      "current_user_report": {
+        "zone": "safety",
+        "status": "ok",
+        "reported_at": "2026-05-25T14:32:10+08:00"
+      }
+    }
+  ]
 }
 ```
 
 ### Campos da resposta
 
-| Campo                   | Tipo                             | Descrição                                        |
-|-------------------------|----------------------------------|--------------------------------------------------|
-| `is_active`             | `boolean`                        | Se há acidente em curso                          |
-| `accident_number_label` | `string` \| `null`               | Número formatado, ex: `"0004"`                   |
-| `project_name`          | `string` \| `null`               | Projeto do acidente                              |
-| `location_name`         | `string` \| `null`               | Local do acidente                                |
-| `current_user_report`   | `object` \| `null`               | Relatório do usuário para este acidente          |
-| └ `zone`                | `"safety"` \| `"accident"` \| `null` | Zona informada pelo usuário                 |
-| └ `status`              | `"ok"` \| `"help"` \| `null`    | Status informado pelo usuário                    |
-| └ `reported_at`         | `string` (ISO 8601) \| `null`    | Quando o relatório foi enviado                   |
+| Campo                  | Tipo                       | Descrição                                                                             |
+|------------------------|----------------------------|---------------------------------------------------------------------------------------|
+| `is_active`            | bool                       | `true` se há ao menos um acidente ativo relevante para o usuário                     |
+| `accident_id`          | int \| null                | ID do primeiro acidente ativo (compatibilidade com clientes legados)                  |
+| `accident_number_label`| string \| null             | Número formatado do primeiro acidente (ex.: `"ACC-0005"`)                            |
+| `project_id`           | int \| null                | ID do projeto do primeiro acidente                                                    |
+| `project_name`         | string \| null             | Nome do projeto                                                                       |
+| `location_name`        | string \| null             | Nome do local do acidente                                                             |
+| `description`          | string \| null             | Descrição textual do acidente                                                         |
+| `awareness_status`     | `"waiting"` \| `"acknowledged"` \| null | Status de awareness do usuário no primeiro acidente                   |
+| `current_user_report`  | objeto \| null             | Relatório de situação já enviado pelo usuário (ver abaixo)                            |
+| `active_accidents`     | array                      | Lista de todos os acidentes ativos relevantes ao usuário (um objeto por acidente)     |
+
+### Campos de `current_user_report`
+
+| Campo         | Tipo                              | Descrição                                                               |
+|---------------|-----------------------------------|-------------------------------------------------------------------------|
+| `zone`        | `"safety"` \| `"accident"` \| null | Zona onde o usuário está (`null` se ainda não reportou)                |
+| `status`      | `"ok"` \| `"help"` \| null        | Status de segurança do usuário (`null` se ainda não reportou)          |
+| `reported_at` | datetime \| null                  | Timestamp do último reporte (ISO 8601)                                 |
+
+### Valores de `awareness_status`
+
+| Valor          | Significado                                                   |
+|----------------|---------------------------------------------------------------|
+| `"waiting"`    | Usuário ainda não reconheceu o acidente (padrão inicial)      |
+| `"acknowledged"` | Usuário já clicou em "Ciente" no app                        |
 
 ---
 
 ## Códigos de status HTTP
 
-| Código | Significado                                         |
-|--------|-----------------------------------------------------|
-| `200`  | Sucesso                                             |
-| `401`  | Sessão ausente, expirada, ou `chave` não coincide   |
-| `422`  | `chave` ausente ou fora do formato (≠ 4 chars)      |
+| Código | Significado                                       |
+|--------|---------------------------------------------------|
+| `200`  | Estado retornado com sucesso                      |
+| `401`  | Sessão inválida ou expirada, ou chave não confere |
+| `422`  | Parâmetro `chave` inválido                        |
 
 ---
 
 ## Side effects
 
-Nenhum. Endpoint somente de leitura.
+Nenhum.
 
 ---
 
@@ -104,7 +137,6 @@ Nenhum. Endpoint somente de leitura.
 
 ```bash
 curl -s \
-  -H "Cookie: web_session_id=<sua_sessao_web>" \
-  "http://127.0.0.1:8000/api/web/check/accident/state?chave=APF1" \
-  | python3 -m json.tool
+  --cookie "session=<cookie_de_sessao>" \
+  "http://127.0.0.1:8000/api/web/check/accident/state?chave=AB12"
 ```

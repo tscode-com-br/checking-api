@@ -2783,7 +2783,11 @@
       });
     }
 
-    if (window.AccidentMode) window.AccidentMode.onLogout();
+    if (window.AccidentMode) {
+      window.AccidentMode.requestAutoCheckin = null;
+      window.AccidentMode.requestAutoCheckinWithRetries = null;
+      window.AccidentMode.onLogout();
+    }
   }
 
   function clearProtectedClientState() {
@@ -4600,7 +4604,53 @@
 
       await runLifecycleUpdateSequence({ ignoreCooldown: true, triggerSource: 'startup' });
       authenticatedApplicationReadyFingerprint = passwordVerificationFingerprint;
-      if (window.AccidentMode) window.AccidentMode.onLogin();
+      if (window.AccidentMode) {
+        window.AccidentMode.requestAutoCheckin = function () {
+          runLifecycleUpdateSequence({ suppressStatus: true }).catch(() => {});
+        };
+        // Used by Modo Acidente: try up to `maxAttempts` automatic check-ins
+        // when the user is in check-out at the moment the accident is opened.
+        // Resolves to true as soon as a fresh check-in is detected (last_checkin_at
+        // newer than the snapshot taken before the first attempt); resolves to
+        // false after exhausting all attempts without a successful check-in.
+        // Never blocks the UI — each attempt awaits runLifecycleUpdateSequence
+        // and a short 1500 ms delay between attempts gives the GPS time to
+        // produce a fresher fix.
+        window.AccidentMode.requestAutoCheckinWithRetries = async function (maxAttempts) {
+          const attempts = Number.isFinite(maxAttempts) && maxAttempts > 0
+            ? Math.trunc(maxAttempts)
+            : 3;
+          if (!gpsLocationPermissionGranted) return false;
+          if (!isAutomaticActivitiesEnabled()) return false;
+
+          const beforeIso = latestHistoryState && latestHistoryState.last_checkin_at;
+          const beforeMs = beforeIso ? new Date(beforeIso).getTime() : 0;
+
+          for (let i = 0; i < attempts; i += 1) {
+            if (!gpsLocationPermissionGranted) return false;
+            if (!isAutomaticActivitiesEnabled()) return false;
+
+            await runLifecycleUpdateSequence({
+              ignoreCooldown: true,
+              suppressStatus: true,
+              triggerSource: 'accident-auto-checkin',
+              forceRefresh: true,
+            }).catch(function () { /* swallow — we evaluate latestHistoryState below */ });
+
+            const afterIso = latestHistoryState && latestHistoryState.last_checkin_at;
+            const afterMs = afterIso ? new Date(afterIso).getTime() : 0;
+            if (afterMs > beforeMs) {
+              return true;
+            }
+
+            if (i < attempts - 1) {
+              await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+            }
+          }
+          return false;
+        };
+        window.AccidentMode.onLogin();
+      }
       return true;
     })();
 
@@ -5897,6 +5947,9 @@
     if (payload && payload.state) {
       latestHistoryState = payload.state;
       applyHistoryState(payload.state);
+      if (window.AccidentMode && window.AccidentMode.onCheckWebState) {
+        window.AccidentMode.onCheckWebState(payload.state);
+      }
     }
 
     if (!suppressStatus) {
@@ -5935,6 +5988,9 @@
     const remoteState = settings.remoteState || await fetchWebState(chave);
     latestHistoryState = remoteState;
     applyHistoryState(remoteState);
+    if (window.AccidentMode && window.AccidentMode.onCheckWebState) {
+      window.AccidentMode.onCheckWebState(remoteState);
+    }
 
     if (
       locationPayload
@@ -6899,6 +6955,9 @@
       }
 
       applyHistoryState(payload);
+      if (window.AccidentMode && window.AccidentMode.onCheckWebState) {
+        window.AccidentMode.onCheckWebState(payload);
+      }
       if (!payload.found) {
         if (!settings.suppressMessages) {
           setHistoryMessage(t('history.notFoundMessage'));

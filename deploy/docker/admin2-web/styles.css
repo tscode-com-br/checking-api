@@ -1317,6 +1317,22 @@ button.cadastro-section-toggle:hover { background: transparent; color: var(--tex
   flex: 1;
   font-size: 13px;
   color: var(--text, #0f172a);
+  max-height: 180px;
+  overflow-y: auto;
+}
+.emergency-notification-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.emergency-notification-line {
+  padding: 4px 8px;
+  border-bottom: 1px dashed var(--border, #e2e8f0);
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.emergency-notification-line:last-child {
+  border-bottom: none;
 }
 .emergency-history-button {
   background: var(--surface, #f8fafc);

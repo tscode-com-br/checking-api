@@ -156,6 +156,8 @@ resposta a acidentes em campo.
 | `accident_user_reports` | Situação de cada usuário no acidente (zona + status) |
 | `accident_video_uploads` | Vídeos enviados por usuários durante o acidente |
 | `accident_archives` | Metadata do ZIP/XLSX gerado ao encerrar |
+| `accident_call_logs` | Log de cada chamada Twilio (`call_number` sequencial vitalício, status, duração) |
+| `accident_call_notifications` | Feed persistente de notificações pt-BR por chamada — alimenta a barra do admin após refresh (migration 0077) |
 | `email_delivery_logs` | Fila e histórico de emails de emergência enviados |
 
 Todas declaradas em `sistema/app/models.py`.

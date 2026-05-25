@@ -2,21 +2,20 @@
 
 ## Visão Geral
 
-Atualiza a zona e o status do usuário durante um acidente ativo. Pode ser chamado múltiplas vezes — cada chamada sobrescreve o relatório anterior do mesmo usuário. Se o usuário reportar `status="help"` pela primeira vez, o sistema dispara em background o envio de emails de alerta para os admins.
+Atualiza ou cria o relatório de situação do usuário autenticado para o acidente em curso. O usuário informa em qual zona se encontra e qual é seu status de segurança. Se o usuário reportar `status="help"` pela primeira vez, um e-mail de alerta é enviado em background para os responsáveis.
 
-| Atributo          | Valor                                               |
-|-------------------|-----------------------------------------------------|
-| **Método**        | `POST`                                              |
-| **Path**          | `/api/web/check/accident/report`                    |
-| **Autenticação**  | Sessão web (cookie `web_session_id`) + campo `chave` no body |
-| **Content-Type**  | `application/json`                                  |
-| **Formato**       | `application/json`                                  |
+| Atributo         | Valor                                          |
+|------------------|------------------------------------------------|
+| **Método**       | `POST`                                         |
+| **Path**         | `/api/web/check/accident/report`               |
+| **Autenticação** | Cookie de sessão + chave deve corresponder     |
+| **Content-Type** | `application/json`                             |
 
 ---
 
 ## Autenticação
 
-Requer sessão web válida. O campo `chave` no body deve corresponder ao usuário da sessão ativa.
+Requer cookie de sessão `web_user_chave`. O campo `chave` no body deve coincidir com o valor no cookie. Em caso de falha retorna `401`.
 
 ---
 
@@ -24,35 +23,58 @@ Requer sessão web válida. O campo `chave` no body deve corresponder ao usuári
 
 ```json
 {
-  "chave": "CEL2",
-  "zone": "accident",
-  "status": "help"
+  "chave": "AB12",
+  "zone": "safety",
+  "status": "ok"
 }
 ```
 
-| Campo    | Tipo                       | Obrigatório | Descrição                                    |
-|----------|----------------------------|-------------|----------------------------------------------|
-| `chave`  | `string` (4 chars A-Z/0-9) | ✅           | Código do usuário                            |
-| `zone`   | `"safety"` \| `"accident"` | ✅           | Zona onde o usuário se encontra              |
-| `status` | `"ok"` \| `"help"`         | ✅           | Estado do usuário                            |
+### Campos do request body
+
+| Campo    | Tipo   | Obrigatório | Restrições                       | Descrição                                                   |
+|----------|--------|-------------|----------------------------------|-------------------------------------------------------------|
+| `chave`  | string | Sim         | 4 caracteres alfanuméricos       | Chave do usuário                                            |
+| `zone`   | string | Sim         | `"safety"` ou `"accident"`       | Zona onde o usuário está                                    |
+| `status` | string | Sim         | `"ok"` ou `"help"`               | Status de segurança do usuário                              |
+
+### Valores de zona
+
+| Valor       | Significado                                               |
+|-------------|-----------------------------------------------------------|
+| `"safety"`  | Usuário está em área segura, fora da zona de risco        |
+| `"accident"`| Usuário está dentro da zona do acidente                   |
+
+> **Nota:** a zona `"waiting"` (estado inicial antes de qualquer reporte) não pode ser enviada neste endpoint — ela é atribuída automaticamente pelo sistema ao registrar o usuário no acidente.
+
+### Valores de status
+
+| Valor    | Significado                                                           |
+|----------|-----------------------------------------------------------------------|
+| `"ok"`   | Usuário está bem, não precisa de socorro                              |
+| `"help"` | Usuário precisa de socorro — dispara envio de e-mail de alerta em background |
 
 ---
 
-## Resposta (200)
+## Resposta
 
-Retorna o estado atual do acidente do ponto de vista do usuário.
+A resposta é idêntica a `GET /api/web/check/accident/state` após o reporte.
 
 ```json
 {
   "is_active": true,
-  "accident_number_label": "0004",
-  "project_name": "PROJETO ALFA",
-  "location_name": "Bloco C",
+  "accident_id": 5,
+  "accident_number_label": "ACC-0005",
+  "project_id": 3,
+  "project_name": "Projeto Norte",
+  "location_name": "Área de Extração B",
+  "description": "Acidente com equipamento pesado.",
+  "awareness_status": "acknowledged",
   "current_user_report": {
-    "zone": "accident",
-    "status": "help",
-    "reported_at": "2026-05-18T10:05:00+08:00"
-  }
+    "zone": "safety",
+    "status": "ok",
+    "reported_at": "2026-05-25T14:35:00+08:00"
+  },
+  "active_accidents": [...]
 }
 ```
 
@@ -62,48 +84,38 @@ Retorna o estado atual do acidente do ponto de vista do usuário.
 
 | Código | Significado                                               |
 |--------|-----------------------------------------------------------|
-| `200`  | Relatório atualizado com sucesso                          |
-| `401`  | Sessão ausente, expirada, ou `chave` não coincide         |
-| `409`  | Nenhum acidente em curso (`"Nenhum acidente em curso."`)  |
-| `422`  | Validação falhou: campos inválidos ou ausentes            |
-
-### Exemplo de erro 409
-
-```json
-{ "detail": "Nenhum acidente em curso." }
-```
+| `200`  | Reporte registrado ou atualizado com sucesso              |
+| `401`  | Sessão inválida ou expirada, ou chave não confere         |
+| `409`  | Nenhum acidente em curso (`is_active=false`)              |
+| `422`  | Campos inválidos (zona ou status fora dos valores aceitos) |
 
 ---
 
 ## Side effects
 
-- **Emails de alerta (background task):** Se `status="help"` e o usuário ainda não havia reportado `help` neste acidente, `queue_help_request_emails` é chamado em background:
-  - Enfileira emails na tabela `email_delivery_logs` para todos os admins configurados
-  - `deliver_pending_emails` é executado em seguida via background task
-- `notify_admin_data_changed("accident_report")` — atualiza painel admin via SSE
-- `notify_web_check_data_changed("accident_report")` — notifica todos os Check Web via SSE
-- `log_event(action="accident_report", source="web", rfid=chave)` — grava evento na aba "Eventos"
+- Cria ou atualiza o registro em `accident_user_reports` para o par `(accident_id, user_id)`.
+- Se `status="help"` e é a primeira vez que o usuário reporta `help` neste acidente: enfileira e-mail de alerta via `queue_help_request_emails` (executado em background após a resposta HTTP).
+- Grava evento em `check_events` com `action="accident_report"`.
+- Emite notificações SSE admin e web-check.
 
 ---
 
 ## Exemplo cURL (ambiente local)
 
 ```bash
-# Usuário reportando que está na zona de acidente e precisa de ajuda
 curl -s -X POST \
-  -H "Cookie: web_session_id=<sua_sessao_web>" \
+  --cookie "session=<cookie_de_sessao>" \
   -H "Content-Type: application/json" \
-  -d '{"chave": "CEL2", "zone": "accident", "status": "help"}' \
-  http://127.0.0.1:8000/api/web/check/accident/report \
-  | python3 -m json.tool
+  -d '{"chave": "AB12", "zone": "safety", "status": "ok"}' \
+  "http://127.0.0.1:8000/api/web/check/accident/report"
 ```
 
+### Exemplo reportando necessidade de socorro
+
 ```bash
-# Usuário atualizando para zona de segurança
 curl -s -X POST \
-  -H "Cookie: web_session_id=<sua_sessao_web>" \
+  --cookie "session=<cookie_de_sessao>" \
   -H "Content-Type: application/json" \
-  -d '{"chave": "CEL2", "zone": "safety", "status": "ok"}' \
-  http://127.0.0.1:8000/api/web/check/accident/report \
-  | python3 -m json.tool
+  -d '{"chave": "AB12", "zone": "accident", "status": "help"}' \
+  "http://127.0.0.1:8000/api/web/check/accident/report"
 ```

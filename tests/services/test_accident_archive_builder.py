@@ -457,3 +457,138 @@ def test_archive_publishes_ready_event(tmp_path: Path):
         "accident_closed",
         metadata={"accident_id": accident.id, "archive_ready": True},
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 / prompt 7.1 — Accident.description in the generated XLSX
+# ---------------------------------------------------------------------------
+
+
+def _read_xlsx_from_local_zip(tmp_path: Path, accident_label: str):
+    """Extract the XLSX from the locally-stored archive ZIP and load it with openpyxl."""
+    zip_path = (
+        tmp_path
+        / "accidents_local_storage"
+        / "accidents"
+        / accident_label
+        / "archive"
+        / f"{accident_label}.zip"
+    )
+    assert zip_path.exists(), f"archive ZIP not generated at {zip_path}"
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        xlsx_name = f"{accident_label}.xlsx"
+        assert xlsx_name in names, f"{xlsx_name} missing from ZIP: {names}"
+        with zf.open(xlsx_name) as xlsx_fp:
+            buffer = BytesIO(xlsx_fp.read())
+    return load_workbook(buffer), zip_path
+
+
+def test_xlsx_header_row5_includes_accident_description_with_accents_and_emoji(tmp_path: Path):
+    """Phase 7 / item 2.3: the generated XLSX header row 5 must contain the accident description.
+
+    UTF-8 accents and emoji must survive round-tripping through the archive
+    pipeline (openpyxl → zip → openpyxl). We verify against the exact prefix
+    "Descrição: <text>" that _build_xlsx writes at line 79.
+    """
+    description = "Descrição com acentuação áéíóú, ç e emoji 🚨 — relatório completo."
+
+    db = _make_session(tmp_path)
+    proj = _make_project(db)
+    admin = _make_admin(db)
+    accident = _make_accident(db, proj, admin, accident_number=11)
+    accident.description = description
+    user = _make_user(db, "U201")
+    _make_report(db, accident, user)
+    db.commit()
+    accident_label = format_accident_number(accident.accident_number)
+
+    with (
+        patch("sistema.app.services.accident_archive_builder.SessionLocal", return_value=db),
+        patch("sistema.app.services.object_storage.settings", _local_settings(tmp_path)),
+        patch("sistema.app.services.accident_archive_builder._use_remote", return_value=False),
+        patch("sistema.app.services.accident_archive_builder.notify_admin_data_changed"),
+    ):
+        build_and_attach_archive_for_accident(accident.id)
+
+    wb, _zip_path = _read_xlsx_from_local_zip(tmp_path, accident_label)
+    ws = wb.active
+
+    # Header rows in _build_xlsx (linha 74-81):
+    #   row 1: Acidente N.º
+    #   row 2: Projeto
+    #   row 3: Local
+    #   row 4: Data abertura
+    #   row 5: Descrição
+    #   row 6: blank
+    a5 = ws.cell(row=5, column=1).value
+    assert a5 == f"Descrição: {description}", (
+        f"Expected description on A5, got {a5!r}"
+    )
+    # Belt and suspenders — emoji and accents must be exactly preserved.
+    assert "🚨" in a5
+    assert "áéíóú" in a5
+    assert "ç" in a5
+
+
+def test_xlsx_header_row5_uses_placeholder_when_description_is_empty(tmp_path: Path):
+    """When accident.description == '' (default), the XLSX shows 'Descrição: (sem descrição)'.
+
+    Pins the fallback in _build_xlsx so closing an accident without ever filling
+    the description still produces a readable header.
+    """
+    db = _make_session(tmp_path)
+    proj = _make_project(db)
+    admin = _make_admin(db)
+    accident = _make_accident(db, proj, admin, accident_number=12)
+    # description defaults to "" via the column default; do not override.
+    user = _make_user(db, "U202")
+    _make_report(db, accident, user)
+    db.commit()
+    accident_label = format_accident_number(accident.accident_number)
+
+    with (
+        patch("sistema.app.services.accident_archive_builder.SessionLocal", return_value=db),
+        patch("sistema.app.services.object_storage.settings", _local_settings(tmp_path)),
+        patch("sistema.app.services.accident_archive_builder._use_remote", return_value=False),
+        patch("sistema.app.services.accident_archive_builder.notify_admin_data_changed"),
+    ):
+        build_and_attach_archive_for_accident(accident.id)
+
+    wb, _zip_path = _read_xlsx_from_local_zip(tmp_path, accident_label)
+    ws = wb.active
+    a5 = ws.cell(row=5, column=1).value
+    assert a5 == "Descrição: (sem descrição)", f"Expected fallback placeholder, got {a5!r}"
+
+
+def test_xlsx_description_does_not_disturb_column_header_row7(tmp_path: Path):
+    """Pinning that adding the Descrição header row did not push COLUMN_ORDER off row 7.
+
+    test_xlsx_columns_match_spec already asserts this for the synthetic accident
+    stub; here we assert it again for the full archive-builder pipeline so a
+    regression in either layer is caught.
+    """
+    db = _make_session(tmp_path)
+    proj = _make_project(db)
+    admin = _make_admin(db)
+    accident = _make_accident(db, proj, admin, accident_number=13)
+    accident.description = "qualquer texto aqui"
+    user = _make_user(db, "U203")
+    _make_report(db, accident, user)
+    db.commit()
+    accident_label = format_accident_number(accident.accident_number)
+
+    with (
+        patch("sistema.app.services.accident_archive_builder.SessionLocal", return_value=db),
+        patch("sistema.app.services.object_storage.settings", _local_settings(tmp_path)),
+        patch("sistema.app.services.accident_archive_builder._use_remote", return_value=False),
+        patch("sistema.app.services.accident_archive_builder.notify_admin_data_changed"),
+    ):
+        build_and_attach_archive_for_accident(accident.id)
+
+    wb, _zip_path = _read_xlsx_from_local_zip(tmp_path, accident_label)
+    ws = wb.active
+    header_row = [ws.cell(row=7, column=i + 1).value for i in range(len(COLUMN_ORDER))]
+    assert header_row == COLUMN_ORDER, (
+        f"Column header row 7 drifted from COLUMN_ORDER: {header_row!r}"
+    )

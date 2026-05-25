@@ -14,6 +14,7 @@ from ..schemas import (
     EmergencyCallResponse,
     ProjectRow,
     WebAccidentAcknowledgeRequest,
+    WebAccidentActiveItem,
     WebAccidentOpenRequest,
     WebAccidentReportRequest,
     WebAccidentStateResponse,
@@ -906,7 +907,9 @@ def get_web_accident_state(
     if not actives:
         return WebAccidentStateResponse(is_active=False)
 
-    # Filter to active accidents belonging to the user's projects
+    # Prefer accidents the user belongs to. Fall back to the full list when
+    # the user has no membership match (legacy behaviour kept so the banner
+    # still shows for everyone during a global accident).
     user_project_ids = {
         m.project_id
         for m in db.execute(
@@ -914,27 +917,55 @@ def get_web_accident_state(
         ).scalars().all()
     }
     matching = [a for a in actives if a.project_id in user_project_ids]
-    active = matching[0] if matching else actives[0]
+    relevant = matching if matching else actives
 
-    report = db.execute(
-        select(AccidentUserReport).where(
-            AccidentUserReport.accident_id == active.id,
-            AccidentUserReport.user_id == user.id,
-        )
-    ).scalar_one_or_none()
+    items: list[WebAccidentActiveItem] = []
+    for accident in relevant:
+        report = db.execute(
+            select(AccidentUserReport).where(
+                AccidentUserReport.accident_id == accident.id,
+                AccidentUserReport.user_id == user.id,
+            )
+        ).scalar_one_or_none()
+        current_user_report = None
+        if report is not None:
+            current_user_report = WebAccidentUserReport(
+                zone=(
+                    "safety" if report.zone == "safety"
+                    else "accident" if report.zone == "accident"
+                    else None
+                ),
+                status=(
+                    "ok" if report.status == "ok"
+                    else "help" if report.status == "help"
+                    else None
+                ),
+                reported_at=report.reported_at,
+            )
+        items.append(WebAccidentActiveItem(
+            accident_id=accident.id,
+            accident_number_label=format_accident_number(accident.accident_number),
+            project_id=accident.project_id,
+            project_name=accident.project_name_snapshot,
+            location_name=accident.location_name_snapshot,
+            description=accident.description or None,
+            awareness_status=report.awareness_status if report else "waiting",
+            current_user_report=current_user_report,
+        ))
+
+    # Legacy/compat scalars come from the first relevant accident.
+    first = items[0]
     return WebAccidentStateResponse(
         is_active=True,
-        accident_id=active.id,
-        accident_number_label=format_accident_number(active.accident_number),
-        project_name=active.project_name_snapshot,
-        location_name=active.location_name_snapshot,
-        description=active.description or None,
-        awareness_status=report.awareness_status if report else "waiting",
-        current_user_report=WebAccidentUserReport(
-            zone=("safety" if report and report.zone == "safety" else "accident" if report and report.zone == "accident" else None),
-            status=("ok" if report and report.status == "ok" else "help" if report and report.status == "help" else None),
-            reported_at=report.reported_at if report else None,
-        ) if report else None,
+        accident_id=first.accident_id,
+        accident_number_label=first.accident_number_label,
+        project_id=first.project_id,
+        project_name=first.project_name,
+        location_name=first.location_name,
+        description=first.description,
+        awareness_status=first.awareness_status,
+        current_user_report=first.current_user_report,
+        active_accidents=items,
     )
 
 
@@ -1016,18 +1047,28 @@ def acknowledge_web_accident(
 ) -> dict:
     user = _require_matching_authenticated_web_user(request, db, payload.chave)
     actives = list_active_accidents(db)
-    user_project_ids = {
-        m.project_id
-        for m in db.execute(
-            select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
-        ).scalars().all()
-    }
-    matching = [a for a in actives if a.project_id in user_project_ids]
-    active = matching[0] if matching else (actives[0] if actives else None)
-    if active is None:
+    if not actives:
         raise HTTPException(status_code=409, detail="Nenhum acidente em curso.")
 
-    acknowledge_accident(db, active.id, user)
+    if payload.accident_id is not None:
+        # Targeted ack: caller must explicitly identify which active accident
+        # to acknowledge. Reject if the id is not currently active.
+        target = next((a for a in actives if a.id == payload.accident_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Acidente não está ativo.")
+    else:
+        # Legacy fallback: pick the first active accident matching the user's
+        # projects, or the first global active accident if none match.
+        user_project_ids = {
+            m.project_id
+            for m in db.execute(
+                select(UserProjectMembership).where(UserProjectMembership.user_id == user.id)
+            ).scalars().all()
+        }
+        matching = [a for a in actives if a.project_id in user_project_ids]
+        target = matching[0] if matching else actives[0]
+
+    acknowledge_accident(db, target.id, user)
     log_event(
         db,
         source="web",
@@ -1037,10 +1078,10 @@ def acknowledge_web_accident(
         request_path="/api/web/check/accident/acknowledge",
         http_status=200,
         rfid=user.chave,
-        details=f"accident_id={active.id}",
+        details=f"accident_id={target.id}",
         commit=True,
     )
-    return {"ok": True}
+    return {"ok": True, "accident_id": target.id}
 
 
 # ---------------------------------------------------------------------------

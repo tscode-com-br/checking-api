@@ -3,6 +3,23 @@
 
   const RecordingState = { stream: null, recorder: null, chunks: [], dialog: null };
 
+  // i18n helper — uses window.CheckingWebI18n.t when available; otherwise
+  // returns the pt-BR fallback text (which is the canonical wording required
+  // by item 5.2 of docs/temp002_alteracoes.txt — do not change these strings
+  // without explicit authorization).
+  function tt(key, fallback) {
+    const i18n = window.CheckingWebI18n;
+    if (i18n && typeof i18n.t === "function") {
+      try {
+        const result = i18n.t(key);
+        if (typeof result === "string" && result && result !== key) return result;
+      } catch (_) {
+        // fall through to fallback
+      }
+    }
+    return fallback;
+  }
+
   function getMimeType() {
     const candidates = ["video/webm;codecs=vp9,opus", "video/webm", "video/mp4"];
     for (const m of candidates) {
@@ -59,7 +76,13 @@
         : Date.now().toString(36) + Math.random().toString(36).slice(2)
     );
     fd.append("video", blob, `recording.${mime.includes("mp4") ? "mp4" : "webm"}`);
-    setStatus("Enviando vídeo…");
+    // Item 5.2 spec: these three texts are the user-visible contract for the
+    // video upload feedback. Do not change them without explicit authorization.
+    const sendingText = tt("accident.video.sending", "Enviando o registro...");
+    const sentText = tt("accident.video.sent", "Registro enviado com sucesso.");
+    const errorText = tt("accident.video.error", "Erro: registro não enviado.");
+    setStatus(sendingText);
+    setExternalStatus(sendingText);
     try {
       const resp = await fetch("/api/web/check/accident/video", {
         method: "POST",
@@ -67,9 +90,11 @@
         credentials: "include",
       });
       if (!resp.ok) throw new Error("upload failed");
-      setStatus("Vídeo enviado.");
+      setStatus(sentText);
+      setExternalStatus(sentText);
     } catch (err) {
-      setStatus("Falha ao enviar vídeo: " + err.message);
+      setStatus(errorText);
+      setExternalStatus(errorText);
     } finally {
       cleanup();
     }
@@ -114,6 +139,11 @@
     if (RecordingState.dialog) {
       RecordingState.dialog.statusEl.textContent = msg;
     }
+  }
+
+  function setExternalStatus(msg) {
+    const el = document.getElementById("notificationLineSecondary");
+    if (el) el.textContent = msg;
   }
 
   function cleanup() {

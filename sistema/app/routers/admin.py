@@ -17,6 +17,7 @@ from ..models import (
     Accident,
     AccidentArchive,
     AccidentCallLog,
+    AccidentCallNotification,
     AdminAccessRequest,
     AdminUser,
     CheckEvent,
@@ -34,6 +35,7 @@ from ..models import (
 )
 from ..schemas import (
     AccidentCallLogRow,
+    AccidentCallNotificationRow,
     AccidentClosedListResponse,
     AccidentClosedRow,
     AccidentLocationOption,
@@ -2254,6 +2256,28 @@ def list_accident_call_logs(
         )
         for log in logs
     ]
+
+
+@router.get(
+    "/accidents/{accident_id}/notifications",
+    response_model=list[AccidentCallNotificationRow],
+    dependencies=[Depends(require_admin_session)],
+)
+def list_accident_call_notifications(
+    accident_id: int,
+    db: Session = Depends(get_db),
+) -> list[AccidentCallNotificationRow]:
+    """Return the persisted emergency-call notification feed for an accident.
+
+    Ordered by occurred_at ascending so the front can simply append on top
+    of any items it already holds from prior SSE pushes.
+    """
+    rows = db.execute(
+        select(AccidentCallNotification)
+        .where(AccidentCallNotification.accident_id == accident_id)
+        .order_by(AccidentCallNotification.occurred_at.asc(), AccidentCallNotification.id.asc())
+    ).scalars().all()
+    return [AccidentCallNotificationRow.model_validate(row) for row in rows]
 
 
 def generate_presigned_url(object_key: str, expires_in_seconds: int = 300) -> str:

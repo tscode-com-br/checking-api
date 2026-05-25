@@ -278,7 +278,10 @@ def test_videos_included_per_user(tmp_path: Path):
 
     rows = build_situation_rows(db, accident=accident)
     assert len(rows[0].videos) == 1
-    assert rows[0].videos[0].public_url == "https://example.com/vid1.mp4"
+    # Phase 9.1: the URL is now regenerated from object_key at read-time so
+    # private DO Spaces objects still yield a working presigned URL for the
+    # admin. In dev (local storage) that resolves to the local-asset endpoint.
+    assert rows[0].videos[0].public_url == "/api/admin/accidents/local-asset/videos/vid1.mp4"
 
 
 def test_videos_ordered_by_captured_at_asc(tmp_path: Path):

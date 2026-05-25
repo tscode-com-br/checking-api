@@ -1,11 +1,30 @@
 (function () {
   "use strict";
 
-  let state = { is_active: false, accident: null, current_user_report: null };
+  let state = { is_active: false, accident: null, current_user_report: null, active_accidents: [] };
   let eventSource = null;
   let pollingHandle = null;
   let refreshDebounce = null;
   let wizardData = {};
+  // Set of accident ids whose ack dialog has already been displayed in this
+  // session. Used together with _ackDialogQueue to avoid re-showing dialogs
+  // on every refreshState() invocation while still permitting a fresh dialog
+  // for genuinely new accidents.
+  const _ackShownForAccidentIds = new Set();
+  const _ackDialogQueue = [];
+  let _ackDialogShowing = false;
+  let _canReportAccident = false;
+  // Latest /api/web/check/state snapshot pushed in by app.js — needed to
+  // compare the user's current check-in status (and current projeto) against
+  // the active accident's project.
+  let _latestWebCheckState = null;
+  // Tracks which accidents we have already attempted an auto check-in for in
+  // this session. Prevents the retry loop from re-firing on every refresh.
+  // Possible values per id:
+  //   'pending'  → retries in flight
+  //   'success'  → check-in landed, nothing else to do
+  //   'failed'   → 3 attempts exhausted, fall back to manual check-in message
+  const _autoCheckinAttemptStatus = new Map();
 
   // ---------------------------------------------------------------------------
   // i18n helper — usa window.CheckingWebI18n.t quando disponivel; cai no
@@ -51,11 +70,43 @@
       );
       if (!resp.ok) return;
       state = await resp.json();
+      if (!Array.isArray(state.active_accidents)) state.active_accidents = [];
+
+      // Prune the "already shown" tracker so dialogs reappear if the same
+      // accident_id ever resurfaces after being closed and reopened. We keep
+      // only ids still present in active_accidents.
+      const liveIds = new Set(state.active_accidents.map(function (a) { return a.accident_id; }));
+      Array.from(_ackShownForAccidentIds).forEach(function (id) {
+        if (!liveIds.has(id)) _ackShownForAccidentIds.delete(id);
+      });
+
       applyTheme(state.is_active);
       renderBanner(state);
       renderInquiryCard(state);
       updateReportButton(state);
+
+      // State-based gate (NOT transition-based): enqueue an ack dialog for
+      // every active accident the user has not acknowledged yet AND has not
+      // already been queued in this session. Resilient to many refreshes
+      // (SSE + polling + bootstrap) — the Set guarantees idempotency.
+      state.active_accidents.forEach(function (item) {
+        if (!item || !item.accident_id) return;
+        if (item.awareness_status === "acknowledged") return;
+        if (_ackShownForAccidentIds.has(item.accident_id)) return;
+        if (_ackDialogQueue.some(function (q) { return q.accident_id === item.accident_id; })) return;
+        _ackShownForAccidentIds.add(item.accident_id);
+        _ackDialogQueue.push(item);
+      });
+      _processAckQueue();
     } catch (_) {}
+  }
+
+  function _processAckQueue() {
+    if (_ackDialogShowing) return;
+    const next = _ackDialogQueue.shift();
+    if (!next) return;
+    _ackDialogShowing = true;
+    showAccidentAckDialog(next);
   }
 
   // ---------------------------------------------------------------------------
@@ -84,29 +135,226 @@
   // Inquiry card
   // ---------------------------------------------------------------------------
 
+  // A user is considered to have reported when the backend has a non-null
+  // reported_at on their AccidentUserReport. open_accident seeds a 'waiting'
+  // report for every project member, so checking only `current_user_report`
+  // would wrongly flag users who have not interacted yet.
+  function _userHasReported(report) {
+    return !!(report && report.reported_at);
+  }
+
+  // The accident project matches the user's currently checked-in project.
+  // Compare by name (state.project_name vs webState.projeto) — both refer to
+  // the project's `name` field. Returns false when either side is missing.
+  function _userCheckedInAtAccidentProject(s, webState) {
+    if (!webState || webState.current_action !== "checkin") return false;
+    const userProject = (webState.projeto || "").trim();
+    const accidentProject = (s && s.project_name ? String(s.project_name) : "").trim();
+    return !!userProject && userProject === accidentProject;
+  }
+
+  function _userInCheckout(webState) {
+    return !!(webState && webState.current_action === "checkout");
+  }
+
   function renderInquiryCard(s) {
     const card = document.getElementById("accidentInquiryCard");
     const history = document.querySelector(".history-card:not(.accident-inquiry-card)");
     if (!card) return;
-    if (s.is_active) {
+    if (!s.is_active) {
+      _showInquiryCard(card, false);
+      if (history) history.hidden = false;
+      _hidePostReportState();
+      _hideManualCheckinMessage();
+      return;
+    }
+
+    // Accident is active. Decide between the four scenarios from item 4.1:
+    //  (1) user is checked-in at the accident's project  → normal card (zone buttons / post-report)
+    //  (2) user is checked-in at ANOTHER project          → hide the card, keep theme on
+    //  (3) user is in check-out:
+    //      3a) atividades automáticas ON + not yet tried  → try auto check-in (3x)
+    //      3b) atividades automáticas ON + tried & failed → show manual check-in message
+    //      3c) atividades automáticas OFF                 → hide the card
+    const webState = _latestWebCheckState;
+    const accidentId = s.accident_id || null;
+
+    if (_userCheckedInAtAccidentProject(s, webState)) {
+      // Scenario (1): normal flow.
+      _showInquiryCard(card, true);
+      _hideManualCheckinMessage();
+      const hasReported = _userHasReported(s.current_user_report);
+      if (history) history.hidden = hasReported ? false : true;
+      if (hasReported) {
+        _showPostReportState();
+      } else {
+        resetInquiryCard();
+      }
+      return;
+    }
+
+    // Scenarios (2)/(3): user is not checked-in at the accident's project.
+    if (history) history.hidden = false;
+
+    if (_userInCheckout(webState)) {
+      const autoEnabled = _isAutomaticActivitiesEnabledNow();
+      const status = accidentId ? _autoCheckinAttemptStatus.get(accidentId) : undefined;
+      if (autoEnabled && status === undefined) {
+        // Scenario (3a): kick off the retry loop. Hide the card while it runs.
+        _showInquiryCard(card, false);
+        _hidePostReportState();
+        _hideManualCheckinMessage();
+        _runAutoCheckinForAccident(accidentId);
+        return;
+      }
+      if (autoEnabled && status === "pending") {
+        _showInquiryCard(card, false);
+        _hidePostReportState();
+        _hideManualCheckinMessage();
+        return;
+      }
+      if (status === "failed") {
+        // Scenario (3b): retries exhausted — surface the manual check-in copy.
+        _showInquiryCard(card, true);
+        _hidePostReportState();
+        _showManualCheckinMessage();
+        return;
+      }
+      // Scenario (3c): no auto activities, no retries → keep the theme only.
+      _showInquiryCard(card, false);
+      _hidePostReportState();
+      _hideManualCheckinMessage();
+      return;
+    }
+
+    // Scenario (2): user is checked-in somewhere else (or has never checked
+    // in today). Keep the theme on, hide the inquiry card.
+    _showInquiryCard(card, false);
+    _hidePostReportState();
+    _hideManualCheckinMessage();
+  }
+
+  function _showInquiryCard(card, visible) {
+    if (!card) return;
+    if (visible) {
       card.hidden = false;
       card.classList.remove("is-hidden");
-      resetInquiryCard();
-      if (history) history.hidden = s.current_user_report ? false : true;
     } else {
       card.hidden = true;
       card.classList.add("is-hidden");
-      if (history) history.hidden = false;
     }
+  }
+
+  function _isAutomaticActivitiesEnabledNow() {
+    const toggle = document.getElementById("automaticActivitiesToggle");
+    return !!(toggle && toggle.checked);
+  }
+
+  function _runAutoCheckinForAccident(accidentId) {
+    if (!accidentId) return;
+    if (_autoCheckinAttemptStatus.get(accidentId)) return;
+    _autoCheckinAttemptStatus.set(accidentId, "pending");
+
+    const helper = window.AccidentMode && window.AccidentMode.requestAutoCheckinWithRetries;
+    if (typeof helper !== "function") {
+      // No retry helper available — treat as failed so the manual message shows.
+      _autoCheckinAttemptStatus.set(accidentId, "failed");
+      scheduleRefresh();
+      return;
+    }
+
+    Promise.resolve(helper(3)).then(function (success) {
+      if (success) {
+        _autoCheckinAttemptStatus.set(accidentId, "success");
+      } else {
+        _autoCheckinAttemptStatus.set(accidentId, "failed");
+        // If the user had auto activities on and we exhausted retries, the
+        // item 4.1 spec asks us to disable it so subsequent activity goes via
+        // explicit user action. Guard against unchecking when the user is
+        // somehow now in check-in (shouldn't happen, but defensive).
+        const toggle = document.getElementById("automaticActivitiesToggle");
+        const webState = _latestWebCheckState;
+        if (toggle && toggle.checked && _userInCheckout(webState)) {
+          toggle.checked = false;
+          try { toggle.dispatchEvent(new Event("change", { bubbles: true })); } catch (_) {}
+        }
+      }
+      scheduleRefresh();
+    }).catch(function () {
+      _autoCheckinAttemptStatus.set(accidentId, "failed");
+      scheduleRefresh();
+    });
+  }
+
+  function _showManualCheckinMessage() {
+    const card = document.getElementById("accidentInquiryCard");
+    if (!card) return;
+    const safetyBtn = document.getElementById("accidentZoneSafetyButton");
+    const accidentBtn = document.getElementById("accidentZoneAccidentButton");
+    if (safetyBtn) { safetyBtn.hidden = true; safetyBtn.classList.add("is-hidden"); }
+    if (accidentBtn) { accidentBtn.hidden = true; accidentBtn.classList.add("is-hidden"); }
+    let msgEl = document.getElementById("accidentManualCheckinMessage");
+    if (!msgEl) {
+      msgEl = document.createElement("p");
+      msgEl.id = "accidentManualCheckinMessage";
+      msgEl.className = "notification-line accident-manual-checkin-message";
+      msgEl.style.color = "#c8222a";
+      msgEl.style.fontWeight = "700";
+      const titleEl = document.getElementById("accidentInquiryTitle");
+      if (titleEl && titleEl.parentNode === card) {
+        card.insertBefore(msgEl, titleEl.nextSibling);
+      } else {
+        card.appendChild(msgEl);
+      }
+    }
+    msgEl.textContent = tt(
+      "accident.fallback.manualCheckin",
+      "Situação de Acidente. Realize o check-in manual IMEDIATAMENTE."
+    );
+    msgEl.hidden = false;
+    msgEl.classList.remove("is-hidden");
+  }
+
+  function _hideManualCheckinMessage() {
+    const msgEl = document.getElementById("accidentManualCheckinMessage");
+    if (!msgEl) return;
+    msgEl.hidden = true;
+    msgEl.classList.add("is-hidden");
+  }
+
+  function _showPostReportState() {
+    const safetyBtn = document.getElementById("accidentZoneSafetyButton");
+    const accidentBtn = document.getElementById("accidentZoneAccidentButton");
+    const msg = document.getElementById("accidentSituationSentMsg");
+    const btn = document.getElementById("accidentTriggerEmergencyButton");
+    if (safetyBtn) { safetyBtn.hidden = true; safetyBtn.classList.add("is-hidden"); }
+    if (accidentBtn) { accidentBtn.hidden = true; accidentBtn.classList.add("is-hidden"); }
+    if (msg) { msg.textContent = "Situação atual enviada."; msg.hidden = false; msg.classList.remove("is-hidden"); }
+    if (btn) { btn.hidden = false; btn.classList.remove("is-hidden"); }
+  }
+
+  function _hidePostReportState() {
+    const safetyBtn = document.getElementById("accidentZoneSafetyButton");
+    const accidentBtn = document.getElementById("accidentZoneAccidentButton");
+    const msg = document.getElementById("accidentSituationSentMsg");
+    const btn = document.getElementById("accidentTriggerEmergencyButton");
+    if (safetyBtn) { safetyBtn.hidden = false; safetyBtn.classList.remove("is-hidden"); }
+    if (accidentBtn) { accidentBtn.hidden = false; accidentBtn.classList.remove("is-hidden"); }
+    if (msg) { msg.hidden = true; msg.classList.add("is-hidden"); }
+    if (btn) { btn.hidden = true; btn.classList.add("is-hidden"); }
   }
 
   function resetInquiryCard() {
     const title = document.getElementById("accidentInquiryTitle");
     const safetyBtn = document.getElementById("accidentZoneSafetyButton");
     const accidentBtn = document.getElementById("accidentZoneAccidentButton");
+    const msg = document.getElementById("accidentSituationSentMsg");
+    const btn = document.getElementById("accidentTriggerEmergencyButton");
     if (title) title.textContent = "Estou em:";
-    if (safetyBtn) { safetyBtn.textContent = "Zona de Segurança"; safetyBtn.onclick = null; }
-    if (accidentBtn) { accidentBtn.textContent = "Zona de Acidente"; accidentBtn.onclick = null; }
+    if (safetyBtn) { safetyBtn.textContent = "Zona de Segurança"; safetyBtn.onclick = null; safetyBtn.hidden = false; safetyBtn.classList.remove("is-hidden"); }
+    if (accidentBtn) { accidentBtn.textContent = "Zona de Acidente"; accidentBtn.onclick = null; accidentBtn.hidden = false; accidentBtn.classList.remove("is-hidden"); }
+    if (msg) { msg.hidden = true; msg.classList.add("is-hidden"); }
+    if (btn) { btn.hidden = true; btn.classList.add("is-hidden"); }
   }
 
   // ---------------------------------------------------------------------------
@@ -116,9 +364,16 @@
   function updateReportButton(s) {
     const btn = document.getElementById("accidentReportButton");
     if (!btn) return;
-    btn.hidden = false;
     btn.setAttribute("aria-pressed", s.is_active ? "true" : "false");
     applyReportButtonLabel();
+    _applyReportButtonVisibility();
+  }
+
+  function _applyReportButtonVisibility() {
+    const btn = document.getElementById("accidentReportButton");
+    if (!btn) return;
+    // During an active accident always show the button; otherwise respect check-in state
+    btn.hidden = !state.is_active && !_canReportAccident;
   }
 
   // ---------------------------------------------------------------------------
@@ -205,7 +460,12 @@
           body: JSON.stringify({ chave: getCurrentChave(), zone: zone, status: status }),
         });
       } catch (_) {}
+      _showPostReportState();
       refreshState();
+      // Auto-trigger emergency call when user reports "help"
+      if (zone === "accident" && status === "help") {
+        _autoTriggerEmergencyCall();
+      }
     };
   }
 
@@ -216,7 +476,21 @@
   async function openAccidentWizard() {
     const chave = getCurrentChave();
     if (!chave) return;
-    wizardData = { projectId: null, projectName: "", locationId: null, locationName: "", locationRegistered: false, zone: null, status: null };
+    wizardData = { projectId: null, projectName: "", locationId: null, locationName: "", locationRegistered: false, zone: null, status: null, description: "" };
+
+    // Defensive reset of every wizard button. The accidentReportConfirmDialog
+    // is shared between askConfirm (post-report flow) and the wizard's final
+    // step (open a new accident). Without this reset a stale `disabled` from
+    // a previous interaction could prevent the admin from confirming a new
+    // accident during an active one — exactly the bug reported in item 5.3.
+    const confirmSubmit = document.getElementById("accidentReportConfirmSubmit");
+    if (confirmSubmit) confirmSubmit.disabled = false;
+    const locationAdvance = document.getElementById("accidentReportLocationAdvance");
+    if (locationAdvance) locationAdvance.disabled = true;
+    const situationAdvance = document.getElementById("accidentReportSituationAdvance");
+    if (situationAdvance) situationAdvance.disabled = true;
+    const descriptionAdvance = document.getElementById("accidentReportDescriptionAdvance");
+    if (descriptionAdvance) descriptionAdvance.disabled = false;
 
     const projDialog = document.getElementById("accidentReportProjectDialog");
     const projBackdrop = document.getElementById("accidentReportProjectBackdrop");
@@ -318,7 +592,7 @@
       });
     }
 
-    locAdvance.onclick = function () { advanceWizardToSituation(locDialog, locBackdrop); };
+    locAdvance.onclick = function () { advanceWizardToDescription(locDialog, locBackdrop); };
   }
 
   function renderLocationRadios(locations, advanceBtn, customInput) {
@@ -343,6 +617,46 @@
       label.appendChild(span);
       locOptions.appendChild(label);
     });
+  }
+
+  function advanceWizardToDescription(prevDialog, prevBackdrop) {
+    hideDialog(prevDialog, prevBackdrop);
+    const descDialog = document.getElementById("accidentReportDescriptionDialog");
+    const descBackdrop = document.getElementById("accidentReportDescriptionBackdrop");
+    const descText = document.getElementById("accidentReportDescriptionText");
+    const descError = document.getElementById("accidentReportDescriptionError");
+    const descAdvance = document.getElementById("accidentReportDescriptionAdvance");
+    const descCancel = document.getElementById("accidentReportDescriptionCancel");
+
+    // FAILHARD: the description step is a hard requirement of item 4.6 — never
+    // skip it silently. If the markup or any control is missing, surface a
+    // console error so misconfigured front deploys are caught in the dev tools
+    // instead of leading users straight to "Sua Situação".
+    if (!descDialog || !descAdvance || !descCancel || !descText) {
+      console.error(
+        "[accident wizard] accidentReportDescriptionDialog markup is incomplete; " +
+        "the Descrição Detalhada step cannot be displayed. Check check/index.html."
+      );
+      return;
+    }
+
+    descText.value = wizardData.description || "";
+    if (descError) descError.textContent = "";
+    // Avançar is always enabled — description is optional, but the user must
+    // pass through the step (no silent skipping per item 4.6).
+    descAdvance.disabled = false;
+    showDialog(descDialog, descBackdrop);
+
+    descCancel.onclick = function () {
+      hideDialog(descDialog, descBackdrop);
+    };
+    descAdvance.onclick = function () {
+      // Capture the (possibly empty) description and persist it through to
+      // POST /api/web/check/accident/open. Trim trailing whitespace; an empty
+      // string is a valid value (description is optional).
+      wizardData.description = (descText.value || "").trim();
+      advanceWizardToSituation(descDialog, descBackdrop);
+    };
   }
 
   function advanceWizardToSituation(prevDialog, prevBackdrop) {
@@ -391,8 +705,11 @@
     document.getElementById("accidentReportConfirmCancel").onclick = function () {
       hideDialog(confirmDialog, confirmBackdrop);
     };
-    document.getElementById("accidentReportConfirmSubmit").onclick = async function () {
+    const submitBtn = document.getElementById("accidentReportConfirmSubmit");
+    submitBtn.onclick = async function () {
       if (errorEl) errorEl.textContent = "";
+      submitBtn.disabled = true;
+      let success = false;
       try {
         const resp = await fetch("/api/web/check/accident/open", {
           method: "POST",
@@ -405,6 +722,7 @@
             custom_location_name: wizardData.locationId ? null : wizardData.locationName,
             zone: wizardData.zone,
             status: wizardData.status,
+            description: wizardData.description || "",
           }),
         });
         if (!resp.ok) {
@@ -412,12 +730,19 @@
           if (errorEl) errorEl.textContent = err.detail || "Erro ao reportar acidente.";
           return;
         }
+        success = true;
       } catch (_) {
         if (errorEl) errorEl.textContent = "Erro ao reportar acidente.";
-        return;
+      } finally {
+        // Always re-enable the button before returning so the next time the
+        // wizard opens (e.g. opening a second accident in another project)
+        // Confirmar starts in the enabled state.
+        submitBtn.disabled = false;
       }
-      hideDialog(confirmDialog, confirmBackdrop);
-      refreshState();
+      if (success) {
+        hideDialog(confirmDialog, confirmBackdrop);
+        refreshState();
+      }
     };
   }
 
@@ -443,6 +768,90 @@
         }
       };
     }
+    const newBtn = document.getElementById("accidentActionsNewButton");
+    if (newBtn) {
+      newBtn.onclick = function () {
+        hideDialog(dialog, backdrop);
+        openAccidentWizard();
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Accident acknowledged dialog
+  // ---------------------------------------------------------------------------
+
+  function showAccidentAckDialog(item) {
+    const dialog = document.getElementById("accidentAckDialog");
+    const backdrop = document.getElementById("accidentAckBackdrop");
+    if (!dialog) {
+      _ackDialogShowing = false;
+      _processAckQueue();
+      return;
+    }
+
+    const projEl = document.getElementById("accidentAckProject");
+    const locEl = document.getElementById("accidentAckLocation");
+    const detEl = document.getElementById("accidentAckDetails");
+    if (projEl) projEl.textContent = item.project_name || "";
+    if (locEl) locEl.textContent = item.location_name || "";
+    if (detEl) detEl.textContent = item.description || "";
+    showDialog(dialog, backdrop);
+
+    document.getElementById("accidentAckButton").onclick = async function () {
+      hideDialog(dialog, backdrop);
+      try {
+        await fetch("/api/web/check/accident/acknowledge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            chave: getCurrentChave(),
+            accident_id: item.accident_id || null,
+          }),
+        });
+      } catch (_) {}
+      if (window.AccidentMode && window.AccidentMode.requestAutoCheckin) {
+        window.AccidentMode.requestAutoCheckin();
+      }
+      _ackDialogShowing = false;
+      // Continue to next queued dialog (if any). Drain synchronously so the
+      // user sees them in immediate succession.
+      _processAckQueue();
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Emergency call
+  // ---------------------------------------------------------------------------
+
+  async function _triggerEmergencyCall() {
+    const chave = getCurrentChave();
+    if (!chave) return;
+    const notifEl = document.getElementById("notificationLineSecondary");
+    if (notifEl) notifEl.textContent = "Acionando serviço de emergência…";
+    try {
+      const resp = await fetch("/api/web/check/accident/emergency-call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ chave: chave }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (notifEl) notifEl.textContent = "✅ Ligação de emergência N.º " + (data.call_number_label || data.call_number) + " iniciada.";
+      } else if (resp.status === 409) {
+        if (notifEl) notifEl.textContent = "Ligação de emergência já foi realizada neste acidente.";
+      } else {
+        if (notifEl) notifEl.textContent = "Erro ao acionar serviço de emergência.";
+      }
+    } catch (_) {
+      if (notifEl) notifEl.textContent = "Erro de conexão ao acionar emergência.";
+    }
+  }
+
+  function _autoTriggerEmergencyCall() {
+    _triggerEmergencyCall().catch(function () {});
   }
 
   // ---------------------------------------------------------------------------
@@ -455,6 +864,11 @@
       if (state.is_active) openAccidentActionsDialog();
       else openAccidentWizard();
     });
+  }
+
+  const emergencyTriggerBtn = document.getElementById("accidentTriggerEmergencyButton");
+  if (emergencyTriggerBtn) {
+    emergencyTriggerBtn.addEventListener("click", function () { _triggerEmergencyCall(); });
   }
 
   const zoneSafetyBtn = document.getElementById("accidentZoneSafetyButton");
@@ -521,10 +935,32 @@
       stopEventSource();
       stopPolling();
       applyTheme(false);
-      state = { is_active: false, accident: null, current_user_report: null };
+      state = { is_active: false, accident: null, current_user_report: null, active_accidents: [] };
+      _canReportAccident = false;
+      _ackShownForAccidentIds.clear();
+      _ackDialogQueue.length = 0;
+      _ackDialogShowing = false;
+      _latestWebCheckState = null;
+      _autoCheckinAttemptStatus.clear();
     },
     // Re-aplica os labels do botao 'Reportar Acidente' / 'Acidente Reportado'
     // sem alterar visibilidade. Chamado por app.js apos mudanca de idioma.
     refreshLabels: function () { applyReportButtonLabel(); },
+    // Called by app.js after each fetch of /check/state to update button visibility
+    // and to provide the latest user activity context (current_action, projeto)
+    // used by renderInquiryCard to decide between the 4 scenarios of item 4.1.
+    onCheckWebState: function (webState) {
+      _latestWebCheckState = webState || null;
+      _canReportAccident = !!(
+        webState && webState.has_current_day_checkin && webState.current_action === "checkin"
+      );
+      _applyReportButtonVisibility();
+      // Re-render so a fresh /check/state can flip the inquiry card visibility
+      // (e.g. user transitioned from check-out to check-in while modo acidente
+      // was active — the auto check-in retry resolved successfully).
+      renderInquiryCard(state);
+    },
+    // Exposed by app.js after login; triggers a lifecycle update cycle (auto check-in if GPS available)
+    requestAutoCheckin: null,
   };
 })();

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, viewport-fit=cover, shrink-to-fit=no" />
     <title></title>
     <base href="./user/" />
+    <link rel="icon" type="image/svg+xml" href="/assets/img/favicon.svg?v=1" />
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/site_icon.png?v=1" />
-    <link rel="shortcut icon" type="image/png" href="/assets/img/site_icon.png?v=1" />
     <link rel="apple-touch-icon" href="/assets/img/site_icon.png?v=1" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -74,6 +74,13 @@
               <button id="accidentZoneSafetyButton" type="button" class="accident-inquiry-button">Zona de Segurança</button>
               <button id="accidentZoneAccidentButton" type="button" class="accident-inquiry-button">Zona de Acidente</button>
             </div>
+            <p id="accidentSituationSentMsg" class="notification-line is-hidden" hidden></p>
+            <button id="accidentTriggerEmergencyButton" type="button"
+              class="submit-button is-hidden"
+              style="width:100%;background:#c8222a;margin-top:8px;font-weight:700"
+              hidden>
+              Acionar Serviço de Emergência
+            </button>
           </section>
 
           <section class="notification-card" aria-live="polite" aria-atomic="true">
@@ -632,10 +639,32 @@
             <h2 id="accidentActionsTitle">Ações de Emergência</h2>
             <div class="password-dialog-actions">
               <button id="accidentActionsVideoButton" type="button" class="submit-button">Gravar Vídeo</button>
-              <button type="button" class="secondary-button" disabled>Reportar Novo Acidente</button>
+              <button id="accidentActionsNewButton" type="button" class="secondary-button">Reportar Novo Acidente</button>
             </div>
             <div class="password-dialog-actions">
               <button id="accidentActionsClose" type="button" class="secondary-button">Fechar</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Accident acknowledged dialog -->
+        <div id="accidentAckBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentAckDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentAckTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentAckTitle">Acidente Reportado</h2>
+            <p><strong>Projeto:</strong> <span id="accidentAckProject"></span></p>
+            <p><strong>Local:</strong> <span id="accidentAckLocation"></span></p>
+            <p id="accidentAckDetails"></p>
+            <p style="font-weight:600;color:#c8222a">Realize check-in IMEDIATAMENTE, caso esteja no ambiente de trabalho.</p>
+            <div class="password-dialog-actions">
+              <button id="accidentAckButton" type="button" class="submit-button">Ciente</button>
             </div>
           </div>
         </section>
@@ -683,6 +712,31 @@
             <div class="password-dialog-actions">
               <button id="accidentReportLocationCancel" type="button" class="secondary-button">Cancelar</button>
               <button id="accidentReportLocationAdvance" type="button" class="submit-button" disabled>Avançar</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Accident report: description step (new) -->
+        <div id="accidentReportDescriptionBackdrop" class="password-dialog-backdrop is-hidden" hidden></div>
+        <section
+          id="accidentReportDescriptionDialog"
+          class="password-dialog is-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="accidentReportDescriptionTitle"
+          hidden
+        >
+          <div class="password-dialog-card">
+            <h2 id="accidentReportDescriptionTitle">Descrição Detalhada</h2>
+            <p id="accidentReportDescriptionError" class="check-error"></p>
+            <label style="display:block;margin-bottom:8px">
+              <textarea id="accidentReportDescriptionText" maxlength="500" rows="5"
+                placeholder="Descreva o ocorrido (opcional, máx. 500 caracteres)..."
+                style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+            </label>
+            <div class="password-dialog-actions">
+              <button id="accidentReportDescriptionCancel" type="button" class="secondary-button">Cancelar</button>
+              <button id="accidentReportDescriptionAdvance" type="button" class="submit-button">Avançar</button>
             </div>
           </div>
         </section>

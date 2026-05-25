@@ -8,6 +8,25 @@ from sqlalchemy.orm import Session
 
 from ..models import Accident, AccidentUserReport, AccidentVideoUpload
 from ..schemas import AccidentVideoLink, SituacaoPessoalRow
+from .object_storage import generate_presigned_url
+
+
+def _resolve_video_public_url(video: AccidentVideoUpload) -> str:
+    """Return a URL the admin can use to play the video.
+
+    Generates a fresh URL from the stored object_key so:
+      - dev (local storage) → /api/admin/accidents/local-asset/<key>
+      - prod (DO Spaces, ACL=private) → presigned URL valid for 5 minutes
+    Falls back to the persisted public_url if presigning fails (extremely
+    defensive — keeps the link working even if storage misconfigures).
+    """
+    object_key = (video.object_key or "").strip()
+    if not object_key:
+        return video.public_url or ""
+    try:
+        return generate_presigned_url(object_key=object_key, expires_in_seconds=300)
+    except Exception:
+        return video.public_url or ""
 
 
 def _derive_display(
@@ -78,7 +97,16 @@ def build_situation_rows(
         videos = [
             AccidentVideoLink(
                 video_id=v.id,
-                public_url=v.public_url,
+                # Always derive the URL from the object_key at read-time:
+                # - In dev (local storage), object_storage.generate_presigned_url
+                #   returns the /api/admin/accidents/local-asset/<key> endpoint
+                #   that admin.serve_local_asset serves.
+                # - In prod (DO Spaces with ACL=private), it returns a signed
+                #   URL valid for `expires_in_seconds`, so the admin can play
+                #   the video without it being publicly accessible.
+                # Falls back to the persisted public_url if presigning is
+                #   unavailable (e.g. missing object_key — should not happen).
+                public_url=_resolve_video_public_url(v),
                 captured_at=v.captured_at,
                 content_type=v.content_type,
                 size_bytes=v.size_bytes,

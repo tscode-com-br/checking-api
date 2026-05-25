@@ -496,6 +496,29 @@
           reportNew: 'Reportar Novo Acidente',
           back: 'Voltar',
         },
+        ack: {
+          title: 'Acidente Reportado',
+          checkinReminder: 'Realize check-in IMEDIATAMENTE, caso esteja no ambiente de trabalho.',
+          button: 'Ciente',
+        },
+        situationSent: 'Situação atual enviada.',
+        triggerEmergency: 'Acionar Serviço de Emergência',
+        description: {
+          title: 'Descrição Detalhada',
+          placeholder: 'Descreva o ocorrido (opcional, máx. 500 caracteres)...',
+        },
+        // TODO i18n: translate to en/zh/ms/id/tl. Today only pt exists, which
+        // acts as the fallback for every other locale via window.CheckingWebI18n.t().
+        fallback: {
+          manualCheckin: 'Situação de Acidente. Realize o check-in manual IMEDIATAMENTE.',
+        },
+        // Item 5.2 — exact pt-BR wording is part of the spec. Do not edit
+        // without explicit authorization. // TODO i18n: translate to other 5 locales.
+        video: {
+          sending: 'Enviando o registro...',
+          sent: 'Registro enviado com sucesso.',
+          error: 'Erro: registro não enviado.',
+        },
         settings: {
           permitAudioVideo: 'Permitir Audio & Video',
           permitted: 'Audio & Video permitido',

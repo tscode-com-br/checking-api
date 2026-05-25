@@ -798,6 +798,11 @@ class Accident(Base):
     user_reports = relationship("AccidentUserReport", cascade="all, delete-orphan")
     video_uploads = relationship("AccidentVideoUpload", cascade="all, delete-orphan")
     archive = relationship("AccidentArchive", cascade="all, delete-orphan", uselist=False)
+    call_notifications = relationship(
+        "AccidentCallNotification",
+        cascade="all, delete-orphan",
+        primaryjoin="Accident.id == AccidentCallNotification.accident_id",
+    )
 
 
 class AccidentUserReport(Base):
@@ -906,6 +911,34 @@ class AccidentCallLog(Base):
     message_twiml: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AccidentCallNotification(Base):
+    """One row per SSE notification fired for an emergency call.
+
+    Persists the localized pt-BR message text so the admin can refresh the page
+    and still see the notification feed (item 3.2.3 of docs/temp002_alteracoes.txt).
+    The same text is also broadcast live via notify_admin_data_changed.
+
+    Cascade is ON DELETE CASCADE on both FKs so deleting the call log or
+    accident automatically removes the notification rows.
+    """
+    __tablename__ = "accident_call_notifications"
+    __table_args__ = (
+        Index("ix_accident_call_notifications_accident_occurred", "accident_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    call_log_id: Mapped[int] = mapped_column(
+        ForeignKey("accident_call_logs.id", ondelete="CASCADE"), nullable=False
+    )
+    accident_id: Mapped[int] = mapped_column(
+        ForeignKey("accidents.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    message_pt: Mapped[str] = mapped_column(Text, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class EmailDeliveryLog(Base):

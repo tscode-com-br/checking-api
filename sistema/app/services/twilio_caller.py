@@ -119,6 +119,193 @@ def _next_call_number(db: Session) -> int:
     return int(result)
 
 
+def format_call_number(call_number: int) -> str:
+    """Zero-padded 6-digit label for an AccidentCallLog.call_number (vitalício)."""
+    return str(int(call_number)).zfill(6)
+
+
+def _resolve_triggered_by(
+    *,
+    triggered_by_user: User | None,
+    triggered_by_admin_user: AdminUser | None,
+    reporter_name_fallback: str,
+) -> tuple[str, str, str]:
+    """Return (display_name, chave, role) for SSE metadata.
+
+    role is "admin" when an AdminUser drove the call, "user" otherwise.
+    """
+    if triggered_by_admin_user is not None:
+        return (
+            triggered_by_admin_user.nome_completo or reporter_name_fallback or "(desconhecido)",
+            triggered_by_admin_user.chave or "",
+            "admin",
+        )
+    if triggered_by_user is not None:
+        return (
+            triggered_by_user.nome or reporter_name_fallback or "(desconhecido)",
+            triggered_by_user.chave or "",
+            "user",
+        )
+    return (reporter_name_fallback or "(desconhecido)", "", "user")
+
+
+def _build_call_notification_metadata(
+    *,
+    log: AccidentCallLog,
+    accident: Accident,
+    project: Project,
+    triggered_by_name: str,
+    triggered_by_chave: str,
+    triggered_by_role: str,
+    status_event: str,
+    occurred_at: datetime,
+    duration_seconds: int | None = None,
+    ended_by: str | None = None,
+) -> dict:
+    """Canonical SSE metadata for any emergency-call notification.
+
+    The front (admin2/app.js) uses status_event to choose a localized line via
+    _buildNotificationLine. All notifications carry the same shape so the
+    notification feed can be persisted/rendered uniformly.
+    """
+    return {
+        "call_number": log.call_number,
+        "call_number_label": format_call_number(log.call_number),
+        "accident_id": accident.id,
+        "project_id": project.id,
+        "project_name": accident.project_name_snapshot,
+        "triggered_by_name": triggered_by_name,
+        "triggered_by_chave": triggered_by_chave,
+        "triggered_by_role": triggered_by_role,
+        "call_status": log.call_status,
+        "status_event": status_event,
+        "occurred_at": occurred_at.isoformat() if occurred_at else None,
+        "duration_seconds": duration_seconds,
+        "ended_by": ended_by,
+    }
+
+
+def _format_notification_timestamp_pt(value: datetime, timezone_name: str | None = None) -> str:
+    """Format `value` as 'dd/mm/yyyy hh:mm:ss' in the project's timezone.
+
+    Mirrors the front helper `_formatNotificationTimestamp` in admin2/app.js,
+    but server-side we use the project's timezone (not the browser's) so the
+    persisted message_pt is consistent for every admin who later reads it.
+    """
+    if value is None:
+        value = now_sgt()
+    try:
+        tz = ZoneInfo(timezone_name) if timezone_name else None
+    except Exception:
+        tz = None
+    if tz is not None:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        value = value.astimezone(tz)
+    return value.strftime("%d/%m/%Y %H:%M:%S")
+
+
+def _format_notification_message_pt(metadata: dict, *, timezone_name: str | None = None) -> str:
+    """Server-side mirror of admin2/app.js _buildNotificationLine.
+
+    Produces the localized pt-BR notification line that the front would show.
+    We persist this string so a refreshed admin sees the exact same text.
+    """
+    occurred_at = metadata.get("occurred_at")
+    if isinstance(occurred_at, str):
+        try:
+            ts_dt = datetime.fromisoformat(occurred_at)
+        except ValueError:
+            ts_dt = now_sgt()
+    elif isinstance(occurred_at, datetime):
+        ts_dt = occurred_at
+    else:
+        ts_dt = now_sgt()
+    ts = _format_notification_timestamp_pt(ts_dt, timezone_name)
+
+    label = metadata.get("call_number_label") or str(metadata.get("call_number") or 0).zfill(6)
+    project = metadata.get("project_name") or "(projeto desconhecido)"
+    triggerer_name = metadata.get("triggered_by_name") or "(desconhecido)"
+    triggerer_chave = metadata.get("triggered_by_chave") or ""
+    triggerer_label = f"{triggerer_name} ({triggerer_chave})" if triggerer_chave else triggerer_name
+    channel = (
+        "através da aplicação web"
+        if metadata.get("triggered_by_role") == "user"
+        else "através do website do administrador"
+    )
+    duration = metadata.get("duration_seconds")
+    ended_by = metadata.get("ended_by") or "system"
+    status_event = metadata.get("status_event")
+
+    if status_event == "requested":
+        return f"({ts}) Ligação {label} solicitada por {triggerer_label}, {channel}, para o projeto {project}."
+    if status_event in ("initiated", "ringing"):
+        return f"({ts}) A ligação {label} está sendo completada."
+    if status_event == "answered":
+        return f"({ts}) A ligação {label} foi atendida."
+    if status_event == "completed":
+        finalized_by = "pelo receptor" if ended_by == "receiver" else "pelo sistema"
+        duration_part = f" Duração total: {duration} segundos." if duration is not None else ""
+        return f"({ts}) A ligação {label} foi finalizada {finalized_by}.{duration_part}"
+    if status_event == "fallback_success":
+        return f"({ts}) A ligação {label} foi solicitada com sucesso."
+    if status_event == "failed":
+        return f"({ts}) A ligação {label} falhou."
+    if status_event == "busy":
+        return f"({ts}) A ligação {label} terminou — destino ocupado."
+    if status_event == "no_answer":
+        return f"({ts}) A ligação {label} terminou sem resposta."
+    if status_event == "canceled":
+        return f"({ts}) A ligação {label} foi cancelada."
+    status = metadata.get("call_status") or "atualização"
+    return f"({ts}) Ligação {label}: {status}."
+
+
+def record_call_notification(
+    db: Session,
+    *,
+    log: AccidentCallLog,
+    metadata: dict,
+    project_timezone_name: str | None = None,
+) -> "AccidentCallNotification":
+    """Persist a single notification line for `log` and return the row.
+
+    The caller still drives notify_admin_data_changed for the live SSE; this
+    function only handles durable storage so the admin can refresh the page.
+    """
+    from ..models import AccidentCallNotification  # local import to avoid cycle at top
+
+    if not metadata or not log or not log.accident_id:
+        # Fail-safe: do not persist incomplete rows. The live SSE may still be
+        # useful even when persistence is impossible.
+        raise ValueError("record_call_notification requires log.accident_id and metadata")
+
+    occurred_at_raw = metadata.get("occurred_at")
+    if isinstance(occurred_at_raw, datetime):
+        occurred_at = occurred_at_raw
+    elif isinstance(occurred_at_raw, str):
+        try:
+            occurred_at = datetime.fromisoformat(occurred_at_raw)
+        except ValueError:
+            occurred_at = now_sgt()
+    else:
+        occurred_at = now_sgt()
+
+    message_pt = _format_notification_message_pt(metadata, timezone_name=project_timezone_name)
+    now = now_sgt()
+    row = AccidentCallNotification(
+        call_log_id=log.id,
+        accident_id=log.accident_id,
+        event_type=str(metadata.get("status_event") or metadata.get("call_status") or "unknown")[:32],
+        message_pt=message_pt,
+        occurred_at=occurred_at,
+        created_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def make_emergency_call(
     db: Session,
     *,
@@ -192,6 +379,35 @@ def make_emergency_call(
     db.add(log)
     db.commit()
 
+    triggered_by_name, triggered_by_chave, triggered_by_role = _resolve_triggered_by(
+        triggered_by_user=triggered_by_user,
+        triggered_by_admin_user=triggered_by_admin_user,
+        reporter_name_fallback=reporter_name,
+    )
+
+    # Fire the canonical "requested" notification immediately after the log row
+    # is committed. This matches item 3.2.5.1 of docs/temp002_alteracoes.txt and
+    # — critically — guarantees the front shows a confirmation even when the
+    # Twilio SDK is unavailable or when no status callbacks ever arrive
+    # (item 5.5.1 fallback).
+    requested_metadata = _build_call_notification_metadata(
+        log=log,
+        accident=accident,
+        project=project,
+        triggered_by_name=triggered_by_name,
+        triggered_by_chave=triggered_by_chave,
+        triggered_by_role=triggered_by_role,
+        status_event="requested",
+        occurred_at=log.created_at,
+    )
+    # Persist so the admin can refresh and still see the line (item 3.2.3).
+    record_call_notification(
+        db, log=log, metadata=requested_metadata,
+        project_timezone_name=project.timezone_name,
+    )
+    db.commit()
+    notify_admin_data_changed("emergency_call_initiated", metadata=requested_metadata)
+
     try:
         from twilio.rest import Client  # lazy import — not installed in dev by default
 
@@ -214,16 +430,43 @@ def make_emergency_call(
         log.call_sid = call.sid
         log.call_status = "initiated"
     except ImportError:
+        # SDK absent (typical dev environment): keep the log queued and DO NOT
+        # raise. The "requested" SSE already informed the front; status
+        # callbacks would never arrive anyway. The caller still gets a valid
+        # AccidentCallLog row back.
         _logger.warning("Twilio SDK not installed — call queued but not sent")
-        log.call_status = "failed"
         log.error_message = "Twilio SDK not installed (twilio>=9.0.0 required)"
+        log.updated_at = now_sgt()
         db.commit()
-        raise EmergencyCallFailedError("Twilio SDK não instalado no servidor.")
+        return log
     except Exception as exc:
         log.call_status = "failed"
         log.error_message = str(exc)[:1000]
+        log.updated_at = now_sgt()
         db.commit()
         _logger.error("Twilio call failed", exc_info=True)
+        # Surface a "failed" SSE so the front can show the error line. The
+        # initial "requested" SSE has already been delivered.
+        failed_metadata = _build_call_notification_metadata(
+            log=log,
+            accident=accident,
+            project=project,
+            triggered_by_name=triggered_by_name,
+            triggered_by_chave=triggered_by_chave,
+            triggered_by_role=triggered_by_role,
+            status_event="failed",
+            occurred_at=log.updated_at,
+        )
+        try:
+            record_call_notification(
+                db, log=log, metadata=failed_metadata,
+                project_timezone_name=project.timezone_name,
+            )
+            db.commit()
+        except Exception:
+            _logger.warning("Failed to persist 'failed' call notification", exc_info=True)
+            db.rollback()
+        notify_admin_data_changed("emergency_call_status_update", metadata=failed_metadata)
         raise EmergencyCallFailedError(str(exc)) from exc
 
     log.updated_at = now_sgt()
@@ -236,15 +479,6 @@ def make_emergency_call(
         reporter_name=reporter_name,
         call_number=call_number,
         event_time=event_time,
-    )
-
-    notify_admin_data_changed(
-        "emergency_call_initiated",
-        metadata={
-            "call_number": call_number,
-            "accident_id": accident.id,
-            "project_id": project.id,
-        },
     )
 
     return log
